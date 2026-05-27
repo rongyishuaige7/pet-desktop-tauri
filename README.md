@@ -266,41 +266,6 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 - 当前主要面向 Linux。
 - 当前打包目标主要是 deb。
 
-## 推荐提交内容
-
-应该提交：
-
-```text
-README.md
-.gitignore
-package.json
-package-lock.json
-index.html
-vite.config.ts
-tsconfig.json
-src/
-src-tauri/Cargo.toml
-src-tauri/Cargo.lock
-src-tauri/build.rs
-src-tauri/tauri.conf.json
-src-tauri/capabilities/
-src-tauri/icons/
-src-tauri/src/
-src-tauri/gen/
-tools/
-```
-
-不要提交：
-
-```text
-node_modules/
-dist/
-src-tauri/target/
-.env
-.env.*
-*.log
-```
-
 ## License
 
-尚未指定开源协议。如果要公开协作，建议补充 `LICENSE` 文件，例如 MIT、Apache-2.0 或 GPL-3.0。
+MIT
