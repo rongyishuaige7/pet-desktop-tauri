@@ -1,28 +1,19 @@
 # 桌面贴贴宠物
 
-一个 Linux 桌面宠物 MVP。应用提供一个 Tauri + React 的管理界面，用来导入猫/狗动作帧包、预览动画和切换动作；同时启动一个透明置顶的原生 GTK 宠物窗口，在桌面上播放宠物动画。
+一个 Linux 桌面宠物应用原型。它用 Tauri + React 提供管理界面，用 Rust + GTK 创建一个透明置顶的原生桌面宠物窗口，让本地动作帧包里的猫猫狗狗在桌面上活动。
 
-当前版本的主流程是“导入本地动作帧包”，不再依赖在线生图服务才能运行。项目中仍保留了 Minimax 图像生成和参考图上传相关代码，作为后续重新接入 AI 生成链路的基础。
+当前版本的核心路线是“导入本地动作帧包并播放”，因此不依赖在线 AI 服务也能运行。仓库里保留了 Minimax 图像生成和参考图上传链路，方便后续继续扩展为“上传宠物照片 -> 生成动作帧 -> 桌面宠物”的完整工作流。
 
-## 功能
+## 功能特性
 
-- 导入 6 组本地动作帧：
-  - 待机 `idle`
-  - 坐下 `sit`
-  - 睡觉 `sleep`
-  - 开心 `happy`
-  - 走路 `walk`
-  - 跳跃 `jump`
-- 每组动作支持 PNG / JPG / WebP 帧图。
-- 主界面预览当前宠物动作动画。
-- 桌面宠物窗口透明、置顶、可拖拽。
-- 桌面宠物右键菜单可切换动作。
-- 关闭主界面时只隐藏窗口，宠物继续运行。
-- 系统托盘提供：
-  - 打开主界面
-  - 退出应用
-- 宠物数据保存到浏览器 IndexedDB。
-- 帧包目录和缩放比例保存到 localStorage。
+- 本地导入 6 组动作帧：待机、坐下、睡觉、开心、走路、跳跃。
+- 支持 PNG、JPG、WebP 帧图，透明 PNG 效果最佳。
+- 管理界面可预览动画、切换动作、调整宠物缩放比例。
+- 原生 GTK 桌面宠物窗口透明、置顶、可拖拽。
+- 宠物窗口右键菜单可直接切换动作。
+- 关闭管理界面后，宠物窗口继续运行。
+- 系统托盘支持重新打开管理界面和退出应用。
+- 宠物配置保存到 IndexedDB，帧包目录和缩放比例保存到 localStorage。
 
 ## 技术栈
 
@@ -31,168 +22,27 @@
 - Vite
 - TypeScript
 - Rust
-- GTK 3
-- GDK Pixbuf
+- GTK 3 / GDK Pixbuf
 - Tauri tray icon
 
-## 项目架构
+## 运行效果
+
+建议后续在这里补充截图或 GIF：
 
 ```text
-pet-desktop-tauri/
-  README.md
-  package.json
-  package-lock.json
-  index.html
-  vite.config.ts
-  tsconfig.json
-  src/
-    main.tsx
-    styles.css
-    types.ts
-    storage.ts
-    generator.ts
-    vite-env.d.ts
-  src-tauri/
-    Cargo.toml
-    Cargo.lock
-    build.rs
-    tauri.conf.json
-    capabilities/
-      default.json
-    icons/
-      icon.png
-    src/
-      main.rs
-      lib.rs
-      native_pet.rs
-    gen/
-      schemas/
-  tools/
-    upload-server.mjs
-    nginx-upload-static.conf
+docs/screenshots/studio.png
+docs/screenshots/desktop-pet.gif
 ```
 
-## 文件说明
+## 快速开始
 
-### 根目录
-
-| 文件 | 作用 |
-| --- | --- |
-| `README.md` | 项目说明文档。 |
-| `package.json` | 前端依赖、Tauri CLI 依赖和 npm 脚本。 |
-| `package-lock.json` | npm 依赖锁定文件，建议提交。 |
-| `index.html` | Vite 前端 HTML 入口。 |
-| `vite.config.ts` | Vite 配置，开发端口固定为 `1420`。 |
-| `tsconfig.json` | TypeScript 编译配置。 |
-
-### 前端 `src/`
-
-| 文件 | 作用 |
-| --- | --- |
-| `src/main.tsx` | React 主入口。包含管理界面、动作帧导入、预览播放、宠物窗口 UI、动作切换和缩放控制。 |
-| `src/styles.css` | 管理界面和宠物窗口样式。 |
-| `src/types.ts` | 宠物类型、动作枚举、帧集合类型和存储 key。 |
-| `src/storage.ts` | IndexedDB 持久化、BroadcastChannel 同步、动作切换后同步 Rust 原生窗口。 |
-| `src/generator.ts` | 旧版/预留生成器。支持 Minimax 关键图生成、本地 Canvas 兜底生成和多帧渲染，目前不是主界面主流程。 |
-| `src/vite-env.d.ts` | Vite 类型声明。 |
-
-### Tauri / Rust `src-tauri/`
-
-| 文件 | 作用 |
-| --- | --- |
-| `src-tauri/Cargo.toml` | Rust crate 配置和依赖。启用了 Tauri `tray-icon` 功能。 |
-| `src-tauri/Cargo.lock` | Rust 依赖锁定文件，应用项目建议提交。 |
-| `src-tauri/build.rs` | Tauri 构建脚本入口。 |
-| `src-tauri/tauri.conf.json` | Tauri 应用配置、窗口配置、构建配置和 deb 打包配置。 |
-| `src-tauri/capabilities/default.json` | Tauri 权限配置。 |
-| `src-tauri/icons/icon.png` | 应用图标。 |
-| `src-tauri/src/main.rs` | Rust 二进制入口，调用库里的 `run()`。 |
-| `src-tauri/src/lib.rs` | Tauri 主逻辑。注册命令、启动原生宠物窗口、创建托盘菜单、拦截主界面关闭事件、处理 Minimax 和上传接口。 |
-| `src-tauri/src/native_pet.rs` | 原生 GTK 透明宠物窗口。负责读取帧图、绘制动画、拖拽、右键动作菜单和缩放。 |
-| `src-tauri/gen/schemas/` | Tauri 生成的 schema 文件。可以提交，用于配置校验和 IDE 辅助。 |
-
-### 工具 `tools/`
-
-| 文件 | 作用 |
-| --- | --- |
-| `tools/upload-server.mjs` | 简单 HTTP 上传服务。用于把本地参考图上传成公网 URL，供 Minimax 图生图使用。 |
-| `tools/nginx-upload-static.conf` | 上传服务的 nginx 静态文件和反代配置示例。 |
-
-## 帧包规范
-
-默认帧包目录：
-
-```text
-/data/大帅哥小项目/frame-slicer
-```
-
-目录结构：
-
-```text
-frame-slicer/
-  idle/
-    000.png
-    001.png
-    ...
-  sit/
-  sleep/
-  happy/
-  walk/
-  jump/
-```
-
-要求：
-
-- 必须包含 `idle`、`sit`、`sleep`、`happy`、`walk`、`jump` 六个目录。
-- 每个目录至少 5 张图片。
-- 支持 `png`、`jpg`、`jpeg`、`webp`。
-- 文件名按字典序排序，建议使用 `000.png`、`001.png`、`002.png` 这种命名。
-- 透明 PNG 效果最好。
-
-## 数据流
-
-```text
-本地帧包
--> React 管理界面调用 Tauri 命令 load_preset_frame_pack
--> Rust 读取动作目录并转成 data URL
--> 前端保存 PetProfile 到 IndexedDB
--> 前端通知 BroadcastChannel
--> Rust 原生 GTK 宠物窗口读取同一个帧包目录
--> 桌面宠物窗口播放动画
-```
-
-动作切换：
-
-```text
-主界面按钮 / 宠物右键菜单
--> setCurrentAction
--> 更新 IndexedDB
--> 调用 set_native_pet_action
--> GTK 窗口切换动作
-```
-
-主界面关闭：
-
-```text
-点击关闭按钮
--> Tauri CloseRequested
--> prevent_close
--> hide studio 窗口
--> 进程继续运行
--> GTK 宠物窗口继续存在
-```
-
-## 开发环境
-
-### Node.js 依赖
+### 1. 安装依赖
 
 ```bash
 npm install
 ```
 
-### Linux 系统依赖
-
-不同发行版包名会有差异。Debian / Ubuntu 系可参考：
+Debian / Ubuntu 系统依赖可参考：
 
 ```bash
 sudo apt update
@@ -208,7 +58,41 @@ sudo apt install -y \
   librsvg2-dev
 ```
 
-## 开发运行
+### 2. 准备动作帧包
+
+应用默认读取：
+
+```text
+/data/大帅哥小项目/frame-slicer
+```
+
+也可以在界面中手动修改帧包目录。
+
+帧包目录结构：
+
+```text
+frame-slicer/
+  idle/
+    000.png
+    001.png
+    002.png
+    003.png
+    004.png
+  sit/
+  sleep/
+  happy/
+  walk/
+  jump/
+```
+
+要求：
+
+- 必须包含 `idle`、`sit`、`sleep`、`happy`、`walk`、`jump` 六个目录。
+- 每个动作目录至少 5 张图片。
+- 支持 `png`、`jpg`、`jpeg`、`webp`。
+- 文件名按字典序排序，建议使用 `000.png`、`001.png` 这种编号。
+
+### 3. 开发运行
 
 ```bash
 npm run tauri:dev
@@ -226,23 +110,13 @@ http://localhost:1420
 Could not connect to localhost: Connection refused
 ```
 
-这种情况请使用 `npm run tauri:dev`，或者执行正式构建后的 release 二进制。
+这种情况请使用 `npm run tauri:dev`，或者运行正式构建产物。
 
-## 正式构建
-
-推荐使用：
+### 4. 正式构建
 
 ```bash
 npm run tauri:build
 ```
-
-不要单独用下面这个命令生成最终应用：
-
-```bash
-cargo build --release
-```
-
-原因是单独的 Cargo 构建可能不会完整走 Tauri 的前端资源嵌入流程，运行后可能仍尝试连接 `localhost:1420`。
 
 构建产物：
 
@@ -251,7 +125,7 @@ src-tauri/target/release/pet_desktop_tauri
 src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0_amd64.deb
 ```
 
-运行 release 二进制：
+运行二进制：
 
 ```bash
 ./src-tauri/target/release/pet_desktop_tauri
@@ -263,16 +137,99 @@ src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0_amd64.deb
 sudo apt install "./src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0_amd64.deb"
 ```
 
+不要用 `cargo build --release` 作为最终应用构建命令。它可能不会完整执行 Tauri 的前端资源嵌入流程，导致应用运行后仍尝试连接 `localhost:1420`。
+
+## 操作说明
+
+- 点击“预置帧包”页签，填写本地帧包目录。
+- 点击“一键导入并保存预置帧包”。
+- 在管理界面右侧预览动画并切换动作。
+- 拖拽桌面宠物窗口可以移动位置。
+- 右键桌面宠物窗口可以切换动作。
+- 关闭管理界面不会退出应用，宠物会继续留在桌面。
+- 从系统托盘选择“打开主界面”可以恢复管理界面。
+- 从系统托盘选择“退出应用”才会完全退出。
+
+## 项目架构
+
+```text
+pet-desktop-tauri/
+  src/                 React 管理界面
+  src-tauri/           Tauri / Rust 桌面能力
+  tools/               辅助工具脚本
+  package.json         前端依赖和 npm 脚本
+  src-tauri/Cargo.toml Rust 依赖和 crate 配置
+```
+
+运行时结构：
+
+```text
+React 管理界面
+-> Tauri command
+-> Rust 后端读取帧包、控制原生窗口
+-> GTK 透明置顶窗口播放桌面宠物
+```
+
+## 关键文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `src/main.tsx` | React 主入口，包含管理界面、帧包导入、动画预览、动作切换和缩放控制。 |
+| `src/styles.css` | 管理界面和宠物窗口样式。 |
+| `src/types.ts` | 宠物类型、动作枚举、帧集合类型和存储 key。 |
+| `src/storage.ts` | IndexedDB 持久化、BroadcastChannel 同步、动作切换同步。 |
+| `src/generator.ts` | 预留生成器逻辑，包含 Minimax 和本地 Canvas 生成链路，目前不是主流程。 |
+| `src-tauri/src/lib.rs` | Tauri 主逻辑，注册命令、启动 GTK 宠物窗口、托盘菜单、窗口关闭拦截、Minimax/上传命令。 |
+| `src-tauri/src/native_pet.rs` | 原生 GTK 宠物窗口，负责帧读取、绘制、动画计时、拖拽和右键菜单。 |
+| `src-tauri/tauri.conf.json` | Tauri 应用窗口、构建和打包配置。 |
+| `src-tauri/capabilities/default.json` | Tauri 权限配置。 |
+| `tools/upload-server.mjs` | 参考图上传服务示例，用于 Minimax 图生图公网 URL。 |
+| `tools/nginx-upload-static.conf` | 上传服务的 nginx 配置示例。 |
+
+## 数据流
+
+导入帧包：
+
+```text
+本地帧包目录
+-> load_preset_frame_pack
+-> Rust 读取 idle/sit/sleep/happy/walk/jump
+-> 前端保存 PetProfile 到 IndexedDB
+-> 通知 BroadcastChannel
+-> 原生 GTK 宠物窗口读取同一帧包目录并播放
+```
+
+动作切换：
+
+```text
+管理界面按钮 / 宠物右键菜单
+-> setCurrentAction
+-> 更新 IndexedDB
+-> 调用 set_native_pet_action
+-> GTK 窗口切换动作
+```
+
+窗口关闭：
+
+```text
+点击管理界面关闭按钮
+-> Tauri CloseRequested
+-> prevent_close
+-> hide studio 窗口
+-> 应用进程继续运行
+-> 桌面宠物继续存在
+```
+
 ## Minimax 预留链路
 
-项目保留了 Minimax 图像生成相关代码：
+仓库中保留了 AI 生成相关实现：
 
-- 前端：`src/generator.ts`
-- Rust 命令：`generate_minimax_image`
-- 参考图上传命令：`upload_reference_image`
-- 上传服务：`tools/upload-server.mjs`
+- `src/generator.ts`
+- `generate_minimax_image`
+- `upload_reference_image`
+- `tools/upload-server.mjs`
 
-上传服务启动示例：
+上传服务示例：
 
 ```bash
 mkdir -p /opt/pet-upload
@@ -298,21 +255,20 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 }
 ```
 
-注意：不要把 API Key、token、cookie 或任何私密配置提交到 GitHub。
+不要把 API Key、token、cookie 或任何私密配置提交到仓库。
 
-## 当前边界
+## 当前限制
 
 - 目前主流程依赖现成动作帧包，暂未内置完整 AI 生成流程。
-- 还没有开机自启动。
-- 还没有持久化桌面宠物窗口位置。
-- 目前主要面向 Linux。
-- 当前 bundle 配置主要生成 deb 包。
+- 默认帧包目录是本机路径，其他用户需要在界面中改成自己的帧包目录。
+- 暂未持久化桌面宠物窗口位置。
+- 暂未实现开机自启动。
+- 当前主要面向 Linux。
+- 当前打包目标主要是 deb。
 
-## GitHub 上传建议
+## 推荐提交内容
 
-应该提交源码、配置、锁文件、图标和工具脚本；不要提交依赖目录和构建产物。
-
-建议提交：
+应该提交：
 
 ```text
 README.md
@@ -347,4 +303,4 @@ src-tauri/target/
 
 ## License
 
-如果要公开发布，建议补充一个明确的开源协议文件，例如 `MIT`、`Apache-2.0` 或 `GPL-3.0`。
+尚未指定开源协议。如果要公开协作，建议补充 `LICENSE` 文件，例如 MIT、Apache-2.0 或 GPL-3.0。
