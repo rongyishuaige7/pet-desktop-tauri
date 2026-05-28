@@ -1,0 +1,13 @@
+{
+  "id": "dog-example",
+  "species": "dog",
+  "pet_name": "示例小狗",
+  "reference_image_url": "https://example.com/uploads/example-dog.png",
+  "appearance_notes": "金色小狗，圆眼睛，短吻部，耳朵自然下垂，胸口颜色略浅，尾巴蓬松上翘。保持金色毛发和温顺表情，不要添加项圈、衣服或铃铛。",
+  "style_notes": "Q 版贴纸桌面宠物风格，比例稳定，动作清楚，白色描边干净，适合小尺寸桌面悬浮显示。",
+  "character_prompt_template": "character-model-sheet-v1",
+  "action_prompt_template": "action-frame-pack-v1",
+  "actions": ["idle", "sit", "sleep", "happy", "walk", "jump"],
+  "provider": "minimax",
+  "model": "image-01"
+}

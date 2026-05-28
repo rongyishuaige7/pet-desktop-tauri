@@ -1,0 +1,13 @@
+{
+  "id": "cat-example",
+  "species": "cat",
+  "pet_name": "示例小猫",
+  "reference_image_url": "https://example.com/uploads/example-cat.png",
+  "appearance_notes": "黑白短毛猫，圆脸，白色鼻口区域，黑色耳朵，胸口和四只爪子为白色，尾巴以黑色为主。保持黑白毛色分区，不要改成橘猫或棕色猫。",
+  "style_notes": "Q 版贴纸桌面宠物风格，轮廓圆润，白色描边清晰，角色完整居中，背景简单干净。",
+  "character_prompt_template": "character-model-sheet-v1",
+  "action_prompt_template": "action-frame-pack-v1",
+  "actions": ["idle", "sit", "sleep", "happy", "walk", "jump"],
+  "provider": "minimax",
+  "model": "image-01"
+}

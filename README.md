@@ -25,6 +25,16 @@
 - GTK 3 / GDK Pixbuf
 - Tauri tray icon
 
+## 平台支持
+
+当前版本主要面向 Linux。管理界面基于 Tauri + React，具备跨平台基础；桌面宠物窗口当前使用 GTK 原生实现，因此暂不支持 Windows 和 macOS。
+
+桌面宠物窗口的技术取舍记录见：
+
+```text
+docs/adr/0001-native-pet-window-per-platform.md
+```
+
 ## 运行效果
 
 建议后续在这里补充截图或 GIF：
@@ -183,6 +193,7 @@ React 管理界面
 | `src-tauri/src/native_pet.rs` | 原生 GTK 宠物窗口，负责帧读取、绘制、动画计时、拖拽和右键菜单。 |
 | `src-tauri/tauri.conf.json` | Tauri 应用窗口、构建和打包配置。 |
 | `src-tauri/capabilities/default.json` | Tauri 权限配置。 |
+| `prompts/` | AI 角色原型图和动作帧生成的 prompt 模板。 |
 | `tools/upload-server.mjs` | 参考图上传服务示例，用于 Minimax 图生图公网 URL。 |
 | `tools/nginx-upload-static.conf` | 上传服务的 nginx 配置示例。 |
 
@@ -225,9 +236,12 @@ React 管理界面
 仓库中保留了 AI 生成相关实现：
 
 - `src/generator.ts`
+- `prompts/`
 - `generate_minimax_image`
 - `upload_reference_image`
 - `tools/upload-server.mjs`
+
+AI 角色原型图和动作帧 prompt 模板保存在 `prompts/`。这些模板只保存通用结构和可复用描述，真实生成记录建议放在本地 `generation-runs/`，不要提交 API Key、私有图片 URL、用户原图或未脱敏生成参数。
 
 上传服务示例：
 
@@ -263,7 +277,7 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 - 默认帧包目录是本机路径，其他用户需要在界面中改成自己的帧包目录。
 - 暂未持久化桌面宠物窗口位置。
 - 暂未实现开机自启动。
-- 当前主要面向 Linux。
+- 当前主要面向 Linux，Windows 和 macOS 需要后续补充平台原生宠物窗口实现。
 - 当前打包目标主要是 deb。
 
 ## License

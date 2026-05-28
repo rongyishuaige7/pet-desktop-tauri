@@ -28,3 +28,7 @@ Thumbs.db
 # Local agent metadata
 .agents/
 .codex/
+
+# Local generation records and private prompt drafts
+generation-runs/
+private-prompts/
