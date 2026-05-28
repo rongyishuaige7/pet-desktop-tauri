@@ -1,32 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { DEFAULT_PRESET_FRAME_DIR, LOOPING_ACTIONS, PET_ZOOM_STORAGE, PRESET_FRAME_DIR_STORAGE } from "./config";
 import { loadPet, savePet, setCurrentAction } from "./storage";
 import { PET_ACTIONS, PET_CHANNEL, type ActionFrameSet, type PetAction, type PetProfile, type PetSpecies } from "./types";
 import "./styles.css";
 
 const isTauri = typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ !== undefined;
-let currentWindow: any = null;
-if (isTauri) {
-  try {
-    currentWindow = getCurrentWindow();
-  } catch (e) {
-    console.warn("Tauri getCurrentWindow is not available:", e);
-  }
-}
 
-const isPetWindow = new URLSearchParams(window.location.search).get("window") === "pet";
-const PRESET_FRAME_DIR_STORAGE = "desktop-sticker-pet:preset-frame-dir";
-const PET_ZOOM_STORAGE = "desktop-sticker-pet:zoom";
-const DEFAULT_PRESET_FRAME_DIR = "/data/大帅哥小项目/frame-slicer";
-const LOOPING_ACTIONS = new Set<PetAction>(["idle", "walk", "jump"]);
-let lastForcedRepaintAt = 0;
-
-if (isPetWindow) {
-  document.documentElement.classList.add("pet-html");
-  document.body.classList.add("pet-body");
+interface NativePetSettings {
+  frameRoot: string;
+  scale: number;
+  currentAction: PetAction;
 }
 
 function getMockFrames(species: PetSpecies, action: PetAction): string[] {
@@ -136,11 +122,12 @@ interface PresetFramePack {
 }
 
 function App() {
-  return isPetWindow ? <PetWindow /> : <StudioWindow />;
+  return <StudioWindow />;
 }
 
 function StudioWindow() {
   const [pet, setPet] = usePetProfile();
+  const petRef = useRef<PetProfile | null>(null);
   const [name, setName] = useState("奶茶");
   const [species, setSpecies] = useState<PetSpecies>("cat");
   const [manualFrames, setManualFrames] = useState<Partial<ActionFrameSet>>({});
@@ -158,6 +145,54 @@ function StudioWindow() {
   useEffect(() => {
     syncNativePetScale(zoom);
   }, [zoom]);
+
+  useEffect(() => {
+    petRef.current = pet;
+  }, [pet]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+
+    let cancelled = false;
+    invoke<NativePetSettings>("get_native_pet_settings")
+      .then(async (settings) => {
+        if (cancelled) return;
+
+        const frameRoot = settings.frameRoot?.trim() || DEFAULT_PRESET_FRAME_DIR;
+        const zoomPercent = normalizeZoom(settings.scale * 100);
+        setPresetFrameDir(frameRoot);
+        setZoom(zoomPercent);
+        localStorage.setItem(PRESET_FRAME_DIR_STORAGE, frameRoot);
+        localStorage.setItem(PET_ZOOM_STORAGE, String(zoomPercent));
+
+        const storedPet = await loadPet();
+        if (!cancelled && storedPet?.storageMode === "preset-root") {
+          const hydrated = await hydratePresetPet(storedPet, frameRoot, settings.currentAction);
+          if (!cancelled && hydrated) setPet(hydrated);
+        }
+      })
+      .catch(() => undefined);
+
+    const unlistenPromise = listen<PetAction>("native-pet-action-changed", async (event) => {
+      if (!isPetAction(event.payload)) return;
+      const current = petRef.current;
+      if (current && hasRenderableFrames(current)) {
+        const next = withCurrentAction(current, event.payload);
+        await savePet(toPersistedPet(next), next);
+        if (!cancelled) setPet(next);
+        return;
+      }
+
+      await setCurrentAction(event.payload, false);
+      const storedPet = await loadPet();
+      if (!cancelled && storedPet) setPet(storedPet);
+    });
+
+    return () => {
+      cancelled = true;
+      unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
+    };
+  }, [setPet]);
 
   async function handleManualFrames(action: PetAction, files: FileList | null) {
     if (!files?.length) return;
@@ -231,11 +266,13 @@ function StudioWindow() {
         name,
         species,
         sourceImage: pack.sourceImage,
-        manualFrames: pack.actions
+        manualFrames: pack.actions,
+        frameRoot: presetFrameDir.trim() || DEFAULT_PRESET_FRAME_DIR,
+        storageMode: "preset-root"
       });
       setSourceImage(pack.sourceImage);
       setManualFrames(pack.actions);
-      await savePet(nextPet);
+      await savePet(toPersistedPet(nextPet), nextPet);
       await invoke("set_native_pet_frame_root", {
         rootDir: presetFrameDir.trim() || DEFAULT_PRESET_FRAME_DIR
       }).catch(() => undefined);
@@ -249,13 +286,21 @@ function StudioWindow() {
   }
 
   async function switchAction(action: PetAction) {
+    if (pet && hasRenderableFrames(pet)) {
+      const next = withCurrentAction(pet, action);
+      setPet(next);
+      await savePet(toPersistedPet(next), next);
+      await invoke("set_native_pet_action", { action }).catch(() => undefined);
+      return;
+    }
+
     await setCurrentAction(action);
     const next = await loadPet();
     if (next) setPet(next);
   }
 
   function handleZoomChange(value: number) {
-    const nextZoom = Math.min(150, Math.max(50, value));
+    const nextZoom = normalizeZoom(value);
     setZoom(nextZoom);
     localStorage.setItem(PET_ZOOM_STORAGE, String(nextZoom));
   }
@@ -426,240 +471,67 @@ function StudioWindow() {
   );
 }
 
-function PetWindow() {
-  const [pet, setPet] = usePetProfile();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    document.documentElement.classList.add("pet-html");
-    document.body.classList.add("pet-body");
-    return () => {
-      document.documentElement.classList.remove("pet-html");
-      document.body.classList.remove("pet-body");
-    };
-  }, []);
-
-  function closeMenu() {
-    flushSync(() => setMenuOpen(false));
-    forcePetRepaint(true);
-  }
-
-  function switchAction(action: PetAction) {
-    closeMenu();
-    setCurrentAction(action)
-      .then(loadPet)
-      .then((next) => {
-        if (next) setPet(next);
-      })
-      .catch(() => undefined);
-  }
-
-  useEffect(() => {
-    function handleMenuPointerDown(event: PointerEvent) {
-      const target = event.target as HTMLElement | null;
-      if (!target || !menuRef.current?.contains(target)) return;
-
-      event.preventDefault();
-      event.stopImmediatePropagation();
-
-      const button = target.closest<HTMLButtonElement>("button[data-pet-action], button[data-pet-close]");
-      if (!button) return;
-
-      const action = button.dataset.petAction as PetAction | undefined;
-      if (action) {
-        switchAction(action);
-        return;
-      }
-
-      if (button.dataset.petClose === "true") {
-        closeMenu();
-      }
-    }
-
-    document.addEventListener("pointerdown", handleMenuPointerDown, true);
-    return () => document.removeEventListener("pointerdown", handleMenuPointerDown, true);
-  }, []);
-
-  return (
-    <main
-      className="pet-shell"
-      data-menu-open={menuOpen ? "true" : "false"}
-      onPointerDownCapture={(event) => {
-        const target = event.target as HTMLElement | null;
-        const button = target?.closest<HTMLButtonElement>("button[data-pet-action], button[data-pet-close]");
-        if (!button || !menuRef.current?.contains(button)) return;
-
-        event.preventDefault();
-        event.stopPropagation();
-
-        const action = button.dataset.petAction as PetAction | undefined;
-        if (action) {
-          switchAction(action);
-          return;
-        }
-
-        if (button.dataset.petClose === "true") {
-          closeMenu();
-        }
-      }}
-      onMouseDown={(event) => {
-        if (event.button !== 0 || menuOpen) return;
-        event.preventDefault();
-        invoke("start_pet_drag")
-          .catch(() => currentWindow.startDragging())
-          .catch(() => undefined);
-      }}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        setMenuOpen(true);
-      }}
-    >
-      {pet ? <AnimatedPet pet={pet} action={pet.currentAction} size="desktop" /> : <DefaultPet />}
-      <div
-        ref={menuRef}
-        className={menuOpen ? "pet-menu open" : "pet-menu"}
-        onPointerDown={(event) => event.stopPropagation()}
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <strong>{pet?.name ?? "桌面宠物"}</strong>
-        {PET_ACTIONS.map((action) => (
-          <button key={action.id} type="button" data-pet-action={action.id}>
-            {action.label}
-          </button>
-        ))}
-        <button type="button" data-pet-close="true">
-          收起菜单
-        </button>
-      </div>
-    </main>
-  );
-}
-
-function AnimatedPet({ pet, action, size }: { pet: PetProfile; action: PetAction; size: "large" | "desktop" }) {
-  const frames = pet.actions[action] ?? pet.actions.idle;
-  const [frame, setFrame] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
-
-  useEffect(() => {
-    setFrame(0);
-  }, [action]);
-
-  useEffect(() => {
-    if (!isPlaying) return;
-    const shouldLoop = LOOPING_ACTIONS.has(action);
-    const timer = window.setInterval(() => {
-      setFrame((value) => {
-        if (shouldLoop) return (value + 1) % frames.length;
-        return Math.min(value + 1, frames.length - 1);
-      });
-    }, action === "sleep" ? 420 : 150);
-    return () => window.clearInterval(timer);
-  }, [action, frames.length, isPlaying, pet.actionStartedAt]);
-
-  if (size === "desktop") {
-    return (
-      <div className="animated-pet desktop">
-        <CanvasPetFrame src={frames[frame]} label={`${pet.name} ${action}`} />
-      </div>
-    );
-  }
-
-  return (
-    <div className={`animated-pet ${size}`}>
-      <div className="pet-display-wrapper">
-        <img src={frames[frame]} alt={`${pet.name} ${action}`} draggable={false} />
-        {size === "large" && <span className="pet-tag-name">{pet.name}</span>}
-      </div>
-
-      {size === "large" && (
-        <div className="playback-panel">
-          <button
-            type="button"
-            className="play-btn"
-            onClick={() => setFrame((v) => (v - 1 + frames.length) % frames.length)}
-            disabled={isPlaying}
-            title="上一帧"
-          >
-            ⏮️
-          </button>
-          <button
-            type="button"
-            className={`play-btn play-pause ${isPlaying ? "playing" : "paused"}`}
-            onClick={() => setIsPlaying(!isPlaying)}
-            title={isPlaying ? "暂停" : "播放"}
-          >
-            {isPlaying ? "⏸️" : "▶️"}
-          </button>
-          <button
-            type="button"
-            className="play-btn"
-            onClick={() => setFrame((v) => (v + 1) % frames.length)}
-            disabled={isPlaying}
-            title="下一帧"
-          >
-            ⏭️
-          </button>
-          <span className="frame-counter">
-            帧 {frame + 1} / {frames.length}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CanvasPetFrame({ src, label }: { src: string; label: string }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const context = canvas.getContext("2d", { alpha: true });
-    if (!context) return;
-
-    let cancelled = false;
-    const image = new Image();
-    image.onload = () => {
-      if (cancelled) return;
-
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
-      const width = image.width * scale;
-      const height = image.height * scale;
-      const x = (canvas.width - width) / 2;
-      const y = (canvas.height - height) / 2;
-      context.drawImage(image, x, y, width, height);
-      forcePetRepaint(false);
-    };
-    image.src = src;
-
-    context.clearRect(0, 0, canvas.width, canvas.height);
-
-    return () => {
-      cancelled = true;
-      context.clearRect(0, 0, canvas.width, canvas.height);
-    };
-  }, [src]);
-
-  return <canvas ref={canvasRef} className="pet-canvas" width={320} height={320} aria-label={label} />;
-}
-
-function forcePetRepaint(immediate: boolean) {
-  if (!isPetWindow) return;
-
-  const now = performance.now();
-  if (!immediate && now - lastForcedRepaintAt < 120) return;
-
-  lastForcedRepaintAt = now;
-  invoke("force_pet_repaint").catch(() => undefined);
-}
-
 function syncNativePetScale(zoom: number) {
   if (!isTauri) return;
   invoke("set_native_pet_scale", { scale: zoom / 100 }).catch(() => undefined);
+}
+
+function normalizeZoom(value: number) {
+  return Math.min(150, Math.max(50, Number.isFinite(value) ? Math.round(value) : 100));
+}
+
+function isPetAction(value: unknown): value is PetAction {
+  return typeof value === "string" && PET_ACTIONS.some((action) => action.id === value);
+}
+
+function hasRenderableFrames(pet: PetProfile) {
+  return PET_ACTIONS.every((action) => (pet.actions[action.id]?.length ?? 0) > 0);
+}
+
+function emptyActionFrames(): ActionFrameSet {
+  return {
+    idle: [],
+    sit: [],
+    sleep: [],
+    happy: [],
+    walk: [],
+    jump: []
+  };
+}
+
+function toPersistedPet(pet: PetProfile): PetProfile {
+  if (pet.storageMode !== "preset-root") return pet;
+
+  return {
+    ...pet,
+    sourceImage: "",
+    actions: emptyActionFrames()
+  };
+}
+
+function withCurrentAction(pet: PetProfile, action: PetAction): PetProfile {
+  return {
+    ...pet,
+    currentAction: action,
+    actionStartedAt: new Date().toISOString()
+  };
+}
+
+async function hydratePresetPet(pet: PetProfile, frameRoot: string, currentAction: PetAction) {
+  const pack = await invoke<PresetFramePack>("load_preset_frame_pack", {
+    request: {
+      rootDir: frameRoot
+    }
+  });
+
+  return {
+    ...pet,
+    frameRoot,
+    sourceImage: pack.sourceImage,
+    actions: pack.actions,
+    currentAction: isPetAction(currentAction) ? currentAction : pet.currentAction,
+    actionStartedAt: new Date().toISOString()
+  };
 }
 
 function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAction; zoom: number }) {
@@ -682,6 +554,14 @@ function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAc
     }, action === "sleep" ? 420 : 150);
     return () => window.clearInterval(timer);
   }, [action, frames.length, isPlaying, pet.actionStartedAt]);
+
+  if (frames.length === 0) {
+    return (
+      <div className="pet-stage">
+        <div className="empty-pet">正在载入本地帧包</div>
+      </div>
+    );
+  }
 
   return (
     <div className="preview-playground">
@@ -730,26 +610,6 @@ function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAc
           帧 {frame + 1} / {frames.length}
         </span>
       </div>
-    </div>
-  );
-}
-
-function DefaultPet() {
-  return (
-    <div className="default-pet">
-      <div className="default-ear left" />
-      <div className="default-ear right" />
-      <div className="default-face">
-        <div className="default-eyes-container">
-          <i />
-          <i />
-        </div>
-        <div className="default-snout">
-          <b />
-          <div className="default-mouth" />
-        </div>
-      </div>
-      <span>右键等待动作</span>
     </div>
   );
 }
@@ -805,12 +665,16 @@ function createManualPet({
   name,
   species,
   sourceImage,
-  manualFrames
+  manualFrames,
+  frameRoot,
+  storageMode = "embedded"
 }: {
   name: string;
   species: PetSpecies;
   sourceImage: string;
   manualFrames: Partial<ActionFrameSet>;
+  frameRoot?: string;
+  storageMode?: PetProfile["storageMode"];
 }): PetProfile {
   const missingActions = PET_ACTIONS.filter((action) => (manualFrames[action.id]?.length ?? 0) < 5);
   if (missingActions.length > 0) {
@@ -827,6 +691,8 @@ function createManualPet({
     name: name.trim() || (species === "cat" ? "小猫" : "小狗"),
     species,
     style: "q-sticker",
+    storageMode,
+    frameRoot,
     createdAt: new Date().toISOString(),
     sourceImage,
     actions,

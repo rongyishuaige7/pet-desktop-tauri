@@ -16,7 +16,7 @@ export async function loadPet(): Promise<PetProfile | null> {
   });
 }
 
-export async function savePet(pet: PetProfile) {
+export async function savePet(pet: PetProfile, broadcastPet: PetProfile = pet) {
   const db = await openDatabase();
 
   await new Promise<void>((resolve, reject) => {
@@ -26,14 +26,16 @@ export async function savePet(pet: PetProfile) {
   });
 
   localStorage.removeItem(STORAGE_KEY);
-  notifyPetChanged(pet);
+  notifyPetChanged(broadcastPet);
 }
 
-export async function setCurrentAction(action: PetAction) {
+export async function setCurrentAction(action: PetAction, syncNative = true) {
   const pet = await loadPet();
   if (!pet) return;
   await savePet({ ...pet, currentAction: action, actionStartedAt: new Date().toISOString() });
-  await invoke("set_native_pet_action", { action }).catch(() => undefined);
+  if (syncNative) {
+    await invoke("set_native_pet_action", { action }).catch(() => undefined);
+  }
 }
 
 export function notifyPetChanged(pet: PetProfile) {

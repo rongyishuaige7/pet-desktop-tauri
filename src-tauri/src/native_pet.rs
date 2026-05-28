@@ -3,11 +3,13 @@ use gdk::prelude::*;
 use gdk_pixbuf::Pixbuf;
 use glib::{ControlFlow, Propagation};
 use gtk::prelude::*;
+use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
+use tauri::{AppHandle, Emitter};
 
 const DEFAULT_FRAME_ROOT: &str = "/data/大帅哥小项目/frame-slicer";
 const ACTIONS: [(&str, &str); 6] = [
@@ -28,6 +30,7 @@ struct NativePetRuntime {
     root_dir: PathBuf,
     reload_requested: bool,
     scale: f64,
+    settings_path: Option<PathBuf>,
 }
 
 static RUNTIME: OnceLock<Arc<Mutex<NativePetRuntime>>> = OnceLock::new();
@@ -78,7 +81,25 @@ pub fn set_scale(scale: f64) -> Result<(), String> {
     Ok(())
 }
 
-pub fn spawn_window() {
+pub fn configure(root_dir: &str, scale: f64, action: &str, settings_path: Option<PathBuf>) {
+    let root_dir = root_dir.trim();
+    let action = if ACTIONS.iter().any(|(id, _)| *id == action) {
+        action
+    } else {
+        "idle"
+    };
+
+    if let Ok(mut runtime) = runtime().lock() {
+        if !root_dir.is_empty() {
+            runtime.root_dir = PathBuf::from(root_dir);
+        }
+        runtime.scale = scale.clamp(0.5, 1.5);
+        runtime.action = action.to_string();
+        runtime.settings_path = settings_path;
+    }
+}
+
+pub fn spawn_window(app_handle: AppHandle) {
     init_runtime();
 
     if !gtk::is_initialized() && gtk::init().is_err() {
@@ -111,7 +132,7 @@ pub fn spawn_window() {
     let render_state = Rc::new(RefCell::new(RenderState::default()));
 
     setup_draw_handler(&drawing_area, Rc::clone(&frames), Rc::clone(&render_state));
-    setup_mouse_handler(&window, &drawing_area);
+    setup_mouse_handler(&window, &drawing_area, app_handle);
     setup_animation_timer(&window, &drawing_area, frames, render_state);
 
     window.show_all();
@@ -128,6 +149,7 @@ fn runtime() -> Arc<Mutex<NativePetRuntime>> {
                 root_dir: PathBuf::from(DEFAULT_FRAME_ROOT),
                 reload_requested: false,
                 scale: 1.0,
+                settings_path: None,
             }))
         })
         .clone()
@@ -186,9 +208,9 @@ fn setup_draw_handler(
     });
 }
 
-fn setup_mouse_handler(window: &gtk::Window, drawing_area: &gtk::DrawingArea) {
+fn setup_mouse_handler(window: &gtk::Window, drawing_area: &gtk::DrawingArea, app_handle: AppHandle) {
     let window = window.clone();
-    let menu = build_action_menu(drawing_area);
+    let menu = build_action_menu(drawing_area, app_handle);
 
     drawing_area.connect_button_press_event(move |_, event| match event.button() {
         1 => {
@@ -204,15 +226,20 @@ fn setup_mouse_handler(window: &gtk::Window, drawing_area: &gtk::DrawingArea) {
     });
 }
 
-fn build_action_menu(drawing_area: &gtk::DrawingArea) -> gtk::Menu {
+fn build_action_menu(drawing_area: &gtk::DrawingArea, app_handle: AppHandle) -> gtk::Menu {
     let menu = gtk::Menu::new();
 
     for (action, label) in ACTIONS {
         let item = gtk::MenuItem::with_label(label);
         let drawing_area = drawing_area.clone();
+        let app_handle = app_handle.clone();
         item.connect_activate(move |_| {
             if let Err(err) = set_action(action) {
                 eprintln!("failed to set native pet action: {err}");
+            }
+            persist_runtime_settings();
+            if let Err(err) = app_handle.emit("native-pet-action-changed", action) {
+                eprintln!("failed to emit native pet action change: {err}");
             }
             drawing_area.queue_draw();
         });
@@ -379,4 +406,47 @@ fn paint_pixbuf_centered(context: &cairo::Context, pixbuf: &Pixbuf, scale: f64) 
 
 fn scaled_canvas_size(scale: f64) -> i32 {
     ((CANVAS_SIZE as f64 * scale.clamp(0.5, 1.5)).round() as i32).max(180)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedNativePetSettings {
+    frame_root: String,
+    scale: f64,
+    current_action: String,
+}
+
+fn persist_runtime_settings() {
+    let settings = match runtime().lock() {
+        Ok(runtime) => {
+            let Some(path) = runtime.settings_path.clone() else {
+                return;
+            };
+            (
+                path,
+                PersistedNativePetSettings {
+                    frame_root: runtime.root_dir.to_string_lossy().to_string(),
+                    scale: runtime.scale,
+                    current_action: runtime.action.clone(),
+                },
+            )
+        }
+        Err(_) => return,
+    };
+
+    if let Some(parent) = settings.0.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            eprintln!("failed to create native pet settings directory {}: {err}", parent.display());
+            return;
+        }
+    }
+
+    match serde_json::to_vec_pretty(&settings.1) {
+        Ok(data) => {
+            if let Err(err) = std::fs::write(&settings.0, data) {
+                eprintln!("failed to write native pet settings {}: {err}", settings.0.display());
+            }
+        }
+        Err(err) => eprintln!("failed to serialize native pet settings: {err}"),
+    }
 }

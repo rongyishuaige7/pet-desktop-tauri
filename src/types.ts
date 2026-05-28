@@ -9,6 +9,8 @@ export interface PetProfile {
   name: string;
   species: PetSpecies;
   style: "q-sticker";
+  storageMode?: "embedded" | "preset-root";
+  frameRoot?: string;
   createdAt: string;
   sourceImage: string;
   actions: ActionFrameSet;

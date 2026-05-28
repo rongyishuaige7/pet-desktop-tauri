@@ -2,11 +2,10 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use tauri::{
     menu::MenuBuilder,
     tray::TrayIconBuilder,
-    Manager, PhysicalSize, Size, WindowEvent,
+    Manager, WindowEvent,
 };
 
 mod native_pet;
@@ -17,38 +16,40 @@ fn ping() -> &'static str {
 }
 
 #[tauri::command]
-fn start_pet_drag(window: tauri::Window) -> Result<(), String> {
-    window.start_dragging().map_err(|err| err.to_string())
+fn set_native_pet_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    native_pet::set_action(&action)?;
+    let mut settings = load_settings(&app);
+    settings.current_action = action;
+    save_settings(&app, &settings)?;
+    Ok(())
 }
 
 #[tauri::command]
-fn force_pet_repaint(window: tauri::Window) -> Result<(), String> {
-    let size = window.inner_size().map_err(|err| err.to_string())?;
-    let nudged = PhysicalSize::new(size.width.saturating_add(1), size.height.saturating_add(1));
-
-    window
-        .set_size(Size::Physical(nudged))
-        .map_err(|err| err.to_string())?;
-    std::thread::sleep(Duration::from_millis(8));
-    window
-        .set_size(Size::Physical(size))
-        .map_err(|err| err.to_string())
+fn set_native_pet_frame_root(app: tauri::AppHandle, root_dir: String) -> Result<(), String> {
+    native_pet::set_frame_root(&root_dir)?;
+    let mut settings = load_settings(&app);
+    settings.frame_root = normalize_frame_root(Some(root_dir));
+    save_settings(&app, &settings)?;
+    Ok(())
 }
 
 #[tauri::command]
-fn set_native_pet_action(action: String) -> Result<(), String> {
-    native_pet::set_action(&action)
+fn set_native_pet_scale(app: tauri::AppHandle, scale: f64) -> Result<(), String> {
+    native_pet::set_scale(scale)?;
+    let mut settings = load_settings(&app);
+    settings.scale = normalize_scale(scale);
+    save_settings(&app, &settings)?;
+    Ok(())
 }
 
 #[tauri::command]
-fn set_native_pet_frame_root(root_dir: String) -> Result<(), String> {
-    native_pet::set_frame_root(&root_dir)
+fn get_native_pet_settings(app: tauri::AppHandle) -> NativePetSettings {
+    load_settings(&app)
 }
 
-#[tauri::command]
-fn set_native_pet_scale(scale: f64) -> Result<(), String> {
-    native_pet::set_scale(scale)
-}
+const DEFAULT_FRAME_ROOT: &str = "/data/大帅哥小项目/frame-slicer";
+const SETTINGS_FILE_NAME: &str = "native-pet-settings.json";
+const ACTION_NAMES: [&str; 6] = ["idle", "sit", "sleep", "happy", "walk", "jump"];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +91,24 @@ struct LoadPresetFramePackRequest {
 struct PresetFramePack {
     source_image: String,
     actions: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePetSettings {
+    frame_root: String,
+    scale: f64,
+    current_action: String,
+}
+
+impl Default for NativePetSettings {
+    fn default() -> Self {
+        Self {
+            frame_root: DEFAULT_FRAME_ROOT.to_string(),
+            scale: 1.0,
+            current_action: "idle".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -199,6 +218,7 @@ async fn generate_minimax_image(request: MinimaxImageRequest) -> Result<String, 
 
 #[tauri::command]
 async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<String, String> {
+    let upload_url = validate_http_url(&request.upload_url)?;
     let (content_type, base64) = split_data_url(&request.data_url)?;
     let payload = UploadReferenceImagePayload {
         filename: request
@@ -210,7 +230,7 @@ async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<
 
     let client = reqwest::Client::new();
     let response = client
-        .post(request.upload_url.trim())
+        .post(upload_url)
         .json(&payload)
         .send()
         .await
@@ -238,15 +258,11 @@ async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<
 
 #[tauri::command]
 fn load_preset_frame_pack(request: LoadPresetFramePackRequest) -> Result<PresetFramePack, String> {
-    let root_dir = request
-        .root_dir
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "/data/大帅哥小项目/frame-slicer".to_string());
+    let root_dir = normalize_frame_root(request.root_dir);
     let root = PathBuf::from(root_dir);
-    let action_names = ["idle", "sit", "sleep", "happy", "walk", "jump"];
     let mut actions = HashMap::new();
 
-    for action in action_names {
+    for action in ACTION_NAMES {
         let frames = read_action_frames(&root, action)?;
         if frames.len() < 5 {
             return Err(format!(
@@ -356,8 +372,21 @@ async fn download_image_as_data_url(
 }
 
 fn write_debug_response(label: &str, body: &str) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+
     let payload = format!("{label}\n\n{body}");
     let _ = std::fs::write("/tmp/pet-desktop-minimax-last-response.txt", payload);
+}
+
+fn validate_http_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        Ok(trimmed.to_string())
+    } else {
+        Err("上传接口必须是 http:// 或 https:// URL".to_string())
+    }
 }
 
 fn split_data_url(data_url: &str) -> Result<(String, String), String> {
@@ -379,12 +408,85 @@ fn current_timestamp_ms() -> u128 {
         .unwrap_or(0)
 }
 
+fn load_settings(app: &tauri::AppHandle) -> NativePetSettings {
+    let path = match settings_file_path(app) {
+        Ok(path) => path,
+        Err(_) => return NativePetSettings::default(),
+    };
+
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return NativePetSettings::default(),
+    };
+
+    let mut settings = serde_json::from_slice::<NativePetSettings>(&bytes).unwrap_or_default();
+    settings.frame_root = normalize_frame_root(Some(settings.frame_root));
+    settings.scale = normalize_scale(settings.scale);
+    settings.current_action = normalize_action(settings.current_action);
+    settings
+}
+
+fn save_settings(app: &tauri::AppHandle, settings: &NativePetSettings) -> Result<(), String> {
+    let path = settings_file_path(app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("创建配置目录失败 {}：{err}", parent.display()))?;
+    }
+
+    let payload = NativePetSettings {
+        frame_root: normalize_frame_root(Some(settings.frame_root.clone())),
+        scale: normalize_scale(settings.scale),
+        current_action: normalize_action(settings.current_action.clone()),
+    };
+    let data = serde_json::to_vec_pretty(&payload)
+        .map_err(|err| format!("序列化原生宠物配置失败：{err}"))?;
+    std::fs::write(&path, data).map_err(|err| format!("写入配置失败 {}：{err}", path.display()))
+}
+
+fn settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(SETTINGS_FILE_NAME))
+        .map_err(|err| format!("获取应用配置目录失败：{err}"))
+}
+
+fn normalize_frame_root(root_dir: Option<String>) -> String {
+    root_dir
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_FRAME_ROOT.to_string())
+}
+
+fn normalize_scale(scale: f64) -> f64 {
+    if scale.is_finite() {
+        scale.clamp(0.5, 1.5)
+    } else {
+        1.0
+    }
+}
+
+fn normalize_action(action: String) -> String {
+    if ACTION_NAMES.contains(&action.as_str()) {
+        action
+    } else {
+        "idle".to_string()
+    }
+}
+
 pub fn run() {
     native_pet::init_runtime();
 
     tauri::Builder::default()
         .setup(|app| {
-            native_pet::spawn_window();
+            let settings = load_settings(app.handle());
+            let settings_path = settings_file_path(app.handle()).ok();
+            native_pet::configure(
+                &settings.frame_root,
+                settings.scale,
+                &settings.current_action,
+                settings_path,
+            );
+            native_pet::spawn_window(app.handle().clone());
             setup_tray(app)?;
             Ok(())
         })
@@ -398,11 +500,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ping,
-            start_pet_drag,
-            force_pet_repaint,
             set_native_pet_action,
             set_native_pet_frame_root,
             set_native_pet_scale,
+            get_native_pet_settings,
             generate_minimax_image,
             upload_reference_image,
             load_preset_frame_pack
