@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DEFAULT_PRESET_FRAME_DIR, LOOPING_ACTIONS, PET_ZOOM_STORAGE, PRESET_FRAME_DIR_STORAGE } from "./config";
+import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction } from "./pet-logic";
 import { loadPet, savePet, setCurrentAction } from "./storage";
 import { PET_ACTIONS, PET_CHANNEL, type ActionFrameSet, type PetAction, type PetProfile, type PetSpecies } from "./types";
 import "./styles.css";
@@ -476,18 +477,6 @@ function syncNativePetScale(zoom: number) {
   invoke("set_native_pet_scale", { scale: zoom / 100 }).catch(() => undefined);
 }
 
-function normalizeZoom(value: number) {
-  return Math.min(150, Math.max(50, Number.isFinite(value) ? Math.round(value) : 100));
-}
-
-function isPetAction(value: unknown): value is PetAction {
-  return typeof value === "string" && PET_ACTIONS.some((action) => action.id === value);
-}
-
-function hasRenderableFrames(pet: PetProfile) {
-  return PET_ACTIONS.every((action) => (pet.actions[action.id]?.length ?? 0) > 0);
-}
-
 function emptyActionFrames(): ActionFrameSet {
   return {
     idle: [],
@@ -506,14 +495,6 @@ function toPersistedPet(pet: PetProfile): PetProfile {
     ...pet,
     sourceImage: "",
     actions: emptyActionFrames()
-  };
-}
-
-function withCurrentAction(pet: PetProfile, action: PetAction): PetProfile {
-  return {
-    ...pet,
-    currentAction: action,
-    actionStartedAt: new Date().toISOString()
   };
 }
 
