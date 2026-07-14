@@ -37,12 +37,11 @@ docs/adr/0001-native-pet-window-per-platform.md
 
 ## 运行效果
 
-建议后续在这里补充截图或 GIF：
+以下素材由仓库当前代码的浏览器预览模式实拍生成；预览模式使用代码内置的模拟帧包，不代表 GTK 原生透明桌面窗口的真机效果。
 
-```text
-docs/screenshots/studio.png
-docs/screenshots/desktop-pet.gif
-```
+![桌面宠物工作室真实界面](./docs/screenshots/studio.png)
+
+![动作切换与帧动画](./docs/screenshots/desktop-pet.gif)
 
 ## 快速开始
 
