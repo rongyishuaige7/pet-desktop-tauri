@@ -72,7 +72,7 @@ sudo apt install -y \
 应用默认读取：
 
 ```text
-/data/大帅哥小项目/frame-slicer
+./frame-pack
 ```
 
 也可以在界面中手动修改帧包目录。

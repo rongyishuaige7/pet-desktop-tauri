@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 8080);
-const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://47.99.163.144:${port}`;
+const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}`;
 const uploadDir = process.env.UPLOAD_DIR ?? join(process.cwd(), "uploads");
 
 const mimeToExt = new Map([

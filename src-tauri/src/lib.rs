@@ -47,7 +47,7 @@ fn get_native_pet_settings(app: tauri::AppHandle) -> NativePetSettings {
     load_settings(&app)
 }
 
-const DEFAULT_FRAME_ROOT: &str = "/data/大帅哥小项目/frame-slicer";
+const DEFAULT_FRAME_ROOT: &str = "./frame-pack";
 const SETTINGS_FILE_NAME: &str = "native-pet-settings.json";
 const ACTION_NAMES: [&str; 6] = ["idle", "sit", "sleep", "happy", "walk", "jump"];
 

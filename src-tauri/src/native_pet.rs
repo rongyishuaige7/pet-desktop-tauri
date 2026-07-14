@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
-const DEFAULT_FRAME_ROOT: &str = "/data/大帅哥小项目/frame-slicer";
+const DEFAULT_FRAME_ROOT: &str = "./frame-pack";
 const ACTIONS: [(&str, &str); 6] = [
     ("idle", "待机"),
     ("sit", "坐下"),
