@@ -9,6 +9,7 @@ import { PET_ACTIONS, PET_CHANNEL, type ActionFrameSet, type PetAction, type Pet
 import "./styles.css";
 
 const isTauri = typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ !== undefined;
+const isMacOS = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 
 interface NativePetSettings {
   frameRoot: string;
@@ -378,6 +379,16 @@ function StudioWindow() {
     localStorage.setItem(PET_ZOOM_STORAGE, String(nextZoom));
   }
 
+  async function handleResetPosition() {
+    if (!isTauri) return;
+    try {
+      await invoke("reset_native_pet_position");
+      setPresetStatus("桌面宠物位置已重置。");
+    } catch (err) {
+      setError(`重置位置失败：${formatError(err)}`);
+    }
+  }
+
   return (
     <main className="studio-shell">
       <section className="hero-card">
@@ -524,6 +535,11 @@ function StudioWindow() {
               />
               <span className="zoom-value">{zoom}%</span>
             </div>
+            {isTauri && isMacOS && (
+              <button type="button" className="reset-position-btn" onClick={handleResetPosition}>
+                🎯 重置位置
+              </button>
+            )}
           </div>
 
           <div className="action-grid">

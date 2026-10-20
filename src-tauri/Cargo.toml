@@ -50,8 +50,19 @@ objc2-foundation = { version = "0.3.2", features = [
   "NSTimer",
   "NSGeometry",
   "NSProcessInfo",
+  "NSObject",
   "block2",
 ] }
+objc2-core-foundation = { version = "0.3.2", features = [
+  "CFData",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
+  "CFURL",
+] }
+objc2-core-graphics = { version = "0.3.2", features = ["CGImage"] }
+objc2-image-io = { version = "0.3.2", features = ["CGImageSource", "CGImageProperties"] }
+objc2-quartz-core = { version = "0.3.2", features = ["CALayer", "CATransaction"] }
 block2 = "0.6.2"
 
 [dev-dependencies]

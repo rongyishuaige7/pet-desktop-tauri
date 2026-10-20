@@ -593,8 +593,33 @@ h1 {
 /* Zoom Slider & Playground Controls */
 .stage-controls {
   display: flex;
+  align-items: center;
   justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
   padding: 4px 0;
+}
+
+.reset-position-btn {
+  height: 38px;
+  padding: 0 16px;
+  border: 2px solid var(--border-color);
+  border-radius: 99px;
+  background: var(--card-bg-solid);
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: var(--shadow-offset-sm);
+  transition: all 0.15s ease;
+}
+
+.reset-position-btn:hover {
+  background: var(--primary-accent-light);
+  transform: translateY(-1px);
+}
+
+.reset-position-btn:active {
+  transform: translateY(1px);
+  box-shadow: 1px 1px 0 var(--border-color);
 }
 
 .zoom-slider-container {

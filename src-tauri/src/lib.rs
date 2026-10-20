@@ -42,6 +42,15 @@ fn get_native_pet_settings(app: tauri::AppHandle) -> native_pet::NativePetSettin
     native_pet::load_settings(&app)
 }
 
+#[tauri::command]
+fn reset_native_pet_position(app: tauri::AppHandle) -> Result<(), String> {
+    native_pet::reset_position()?;
+    let mut settings = native_pet::load_settings(&app);
+    settings.position = None;
+    native_pet::save_settings(&app, &settings)?;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MinimaxImageRequest {
@@ -411,6 +420,7 @@ pub fn run() {
             set_native_pet_frame_root,
             set_native_pet_scale,
             get_native_pet_settings,
+            reset_native_pet_position,
             generate_minimax_image,
             upload_reference_image,
             load_preset_frame_pack,

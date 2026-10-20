@@ -32,6 +32,7 @@ pub use settings::{
 
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 pub struct Runtime {
@@ -42,6 +43,8 @@ pub struct Runtime {
     pub settings_path: Option<PathBuf>,
     pub app: Option<AppHandle>,
     pub position: Option<PetPosition>,
+    pub reset_position_requested: bool,
+    pub position_dirty_at: Option<Instant>,
 }
 
 impl Default for Runtime {
@@ -54,6 +57,8 @@ impl Default for Runtime {
             settings_path: None,
             app: None,
             position: None,
+            reset_position_requested: false,
+            position_dirty_at: None,
         }
     }
 }
@@ -77,6 +82,8 @@ pub fn configure(settings: &NativePetSettings, settings_path: Option<PathBuf>) {
         runtime.settings_path = settings_path;
         runtime.position = settings.position.clone();
         runtime.reload_requested = true;
+        runtime.reset_position_requested = false;
+        runtime.position_dirty_at = None;
     }
 }
 
@@ -128,7 +135,49 @@ pub fn set_scale(scale: f64) -> Result<(), String> {
 pub fn update_position(position: PetPosition) {
     if let Ok(mut runtime) = runtime().lock() {
         runtime.position = Some(position);
+        runtime.reset_position_requested = false;
+        runtime.position_dirty_at = None;
     }
+}
+
+pub fn reset_position() -> Result<(), String> {
+    let mut runtime = runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+    runtime.position = None;
+    runtime.reset_position_requested = true;
+    runtime.position_dirty_at = None;
+    Ok(())
+}
+
+pub(crate) fn mark_position_dirty() {
+    if let Ok(mut runtime) = runtime().lock() {
+        runtime.position_dirty_at = Some(Instant::now());
+    }
+}
+
+pub(crate) fn take_position_dirty_request() -> bool {
+    let mut runtime = match runtime().lock() {
+        Ok(runtime) => runtime,
+        Err(_) => return false,
+    };
+    match runtime.position_dirty_at {
+        Some(changed_at) if changed_at.elapsed() >= Duration::from_millis(150) => {
+            runtime.position_dirty_at = None;
+            true
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn take_position_reset_request() -> bool {
+    let mut runtime = match runtime().lock() {
+        Ok(runtime) => runtime,
+        Err(_) => return false,
+    };
+    let requested = runtime.reset_position_requested;
+    runtime.reset_position_requested = false;
+    requested
 }
 
 pub fn current_settings() -> NativePetSettings {
@@ -203,5 +252,17 @@ pub(crate) fn take_reload_request() -> Option<PathBuf> {
         Some(runtime.root_dir.clone())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_position_request_is_one_shot() {
+        reset_position().expect("reset position");
+        assert!(take_position_reset_request());
+        assert!(!take_position_reset_request());
     }
 }

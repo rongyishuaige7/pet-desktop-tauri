@@ -21,11 +21,14 @@ macOS 桌面宠物窗口使用 **AppKit NSPanel**，在 Tauri 的同一主线程
 - `NSPanel` + `NSWindowStyleMask::Borderless | NonactivatingPanel`。
 - `setLevel(3)`（floating）、`CanJoinAllSpaces | FullScreenAuxiliary | Stationary | IgnoresCycle`。
 - `orderFrontRegardless()` 显示窗口但不激活 App。
-- `NSImageView` 显示帧图，`ScaleProportionallyUpOrDown` 居中。
+- 自定义 `NSView` + `CALayer` 显示 `CGImage` 帧图，`resizeAspect` 居中。
 - `NSEvent` 本地监听器处理左键拖拽（`performWindowDragWithEvent:`）和右键菜单。
 - `NSTimer`（100ms，common run loop modes）驱动动作状态机。
-- 帧图通过 `NSImage` 加载，按动作懒加载并缓存。
-- 位置持久化到 `native-pet-settings.json`，拖拽结束后写入。
+- 帧图通过 ImageIO 生成缩略图并解码为 `CGImage`，按动作懒加载并缓存。
+- 使用 `CALayer.contents` 合成帧图，换帧时关闭 Core Animation 隐式动画。
+- 宠物可见期间持有 `NSProcessInfo` activity，避免 App Nap 节流动画。
+- 位置持久化到 `native-pet-settings.json`，拖拽结束后延迟写入，退出时兜底保存。
+- 支持通过命令重置到主屏右下角。
 
 平台代码按 `#[cfg(target_os = ...)]` 隔离：
 
@@ -48,6 +51,7 @@ Tauri 命令与事件契约保持不变，前端主流程无需修改：
 - `set_native_pet_action`
 - `set_native_pet_scale`
 - `save_manual_frame_pack`
+- `reset_native_pet_position`
 - `native-pet-action-changed`
 - 新增可选事件 `native-pet-error`
 
@@ -89,7 +93,7 @@ Tauri 命令与事件契约保持不变，前端主流程无需修改：
 
 ## 后续
 
-- 像素级透明区域点击穿透（可选）。
+- 像素级透明区域点击穿透（可选，需要 alpha 掩码与全局鼠标监听）。
 - 全屏应用之上的窗口级别开关。
 - 帧图后台解码与更精细的内存上限。
 - Windows 原生宠物窗口。

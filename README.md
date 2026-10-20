@@ -9,6 +9,7 @@
 - 本地导入 6 组动作帧：待机、坐下、睡觉、开心、走路、跳跃。
 - 支持 PNG、JPG、WebP 帧图，透明 PNG 效果最佳。
 - 手动上传的帧包会写入应用数据目录，并同步到原生桌面宠物。
+- macOS 使用 ImageIO 缩略图 + CALayer 合成，抑制 App Nap，并支持一键重置宠物位置。
 - 管理界面可预览动画、切换动作、调整宠物缩放比例。
 - 原生桌面宠物窗口透明、置顶、可拖拽（Linux GTK / macOS AppKit）。
 - 宠物窗口右键菜单可直接切换动作。
@@ -24,7 +25,7 @@
 - TypeScript
 - Rust
 - GTK 3 / GDK Pixbuf（Linux）
-- AppKit / objc2（macOS）
+- AppKit / objc2 / ImageIO / CALayer（macOS）
 - Tauri tray icon
 
 ## 平台支持
@@ -194,6 +195,7 @@ sudo apt install "./src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0
 - 在管理界面右侧预览动画并切换动作。
 - 拖拽桌面宠物窗口可以移动位置。
 - 右键桌面宠物窗口可以切换动作。
+- 管理界面“动作控制”下方可点击“重置位置”，把宠物移回主屏右下角。
 - 关闭管理界面不会退出应用，宠物会继续留在桌面。
 - 从系统托盘选择“打开主界面”可以恢复管理界面。
 - 从系统托盘选择“退出应用”才会完全退出。
@@ -327,6 +329,7 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 - 目前主流程依赖现成动作帧包，暂未内置完整 AI 生成流程。
 - 默认帧包目录是相对工作目录的 `./frame-pack`；打包后请填写绝对路径，其他用户需要在界面中改成自己的帧包目录。
 - 手动上传的帧包会复制到应用数据目录，不会修改原始图片。
+- 透明区域的逐像素点击穿透暂未实现，当前整个宠物窗口区域都会接收鼠标事件。
 - macOS 已持久化桌面宠物窗口位置；Linux 暂未持久化窗口位置。
 - 暂未实现开机自启动。
 - Windows 需要后续补充原生宠物窗口实现。

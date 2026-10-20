@@ -1,29 +1,44 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool};
-use objc2::{define_class, msg_send, sel, AnyThread, ClassType, MainThreadMarker};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject};
+use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventType, NSImage, NSImageView, NSMenu,
-    NSMenuItem, NSPanel, NSScreen, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventType, NSMenu, NSMenuItem, NSPanel,
+    NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer};
+use objc2_core_foundation::{
+    kCFBooleanTrue, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFBoolean,
+    CFDictionary, CFNumber, CFNumberType, CFRetained, CFString, CFURLPathStyle, CFURL,
+};
+use objc2_core_graphics::CGImage;
+use objc2_foundation::{
+    NSActivityOptions, NSObjectProtocol, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSTimer,
+};
+use objc2_image_io::{
+    kCGImageSourceCreateThumbnailFromImageAlways, kCGImageSourceCreateThumbnailWithTransform,
+    kCGImageSourceShouldCacheImmediately, kCGImageSourceThumbnailMaxPixelSize, CGImageSource,
+};
+use objc2_quartz_core::{CALayer, CATransaction};
 use tauri::{AppHandle, Emitter};
 
 use super::{
-    current_settings, emit_error, frame_interval_ms, is_looping, normalize_scale,
-    persist_runtime_settings, runtime_action_scale, runtime_root, scaled_canvas_size,
-    scan_action_frames, set_action, take_reload_request, update_position, PetPosition, ACTIONS,
+    current_settings, emit_error, frame_interval_ms, is_looping, mark_position_dirty,
+    normalize_scale, persist_runtime_settings, runtime_action_scale, runtime_root,
+    scaled_canvas_size, scan_action_frames, set_action, take_position_dirty_request,
+    take_position_reset_request, take_reload_request, update_position, PetPosition, ACTIONS,
     CANVAS_SIZE, MIN_FRAMES_PER_ACTION, PET_SIZE,
 };
 
 const COMMON_RUN_LOOP_MODE: &str = "kCFRunLoopCommonModes";
 const FLOATING_WINDOW_LEVEL: isize = 3;
+const MAX_THUMBNAIL_PIXEL: i32 = 640;
 
 thread_local! {
     static UI: RefCell<Option<UiState>> = const { RefCell::new(None) };
@@ -32,16 +47,19 @@ thread_local! {
 #[allow(dead_code)]
 struct UiState {
     panel: Retained<NSPanel>,
-    image_view: Retained<PetImageView>,
+    pet_view: Retained<PetView>,
+    layer: Retained<CALayer>,
     menu: Retained<NSMenu>,
     menu_target: Retained<PetMenuTarget>,
     timer: Retained<NSTimer>,
     monitor: Option<Retained<AnyObject>>,
-    frames: HashMap<String, Vec<Retained<NSImage>>>,
+    activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+    frames: HashMap<String, Vec<CFRetained<CGImage>>>,
     current_action: String,
     frame_index: usize,
     last_advance: Instant,
     applied_scale: f64,
+    applied_backing_scale: f64,
     root: PathBuf,
 }
 
@@ -62,12 +80,12 @@ define_class!(
 );
 
 define_class!(
-    #[unsafe(super(NSImageView))]
-    #[name = "PetImageView"]
+    #[unsafe(super(NSView))]
+    #[name = "PetView"]
     #[ivars = ()]
-    struct PetImageView;
+    struct PetView;
 
-    impl PetImageView {
+    impl PetView {
         // Without this, the first click on an inactive app's panel is consumed
         // by activation and never reaches our drag/menu handling.
         #[unsafe(method(acceptsFirstMouse:))]
@@ -89,34 +107,40 @@ pub fn spawn_window(_app_handle: AppHandle) {
     let position = resolve_position(settings.position.as_ref(), size, mtm);
 
     let panel = create_panel(mtm, size, position);
-    let image_view = create_image_view(mtm, scale);
+    let (pet_view, layer) = create_pet_view(mtm, scale);
     let menu_target = create_menu_target();
     let menu = create_menu(mtm, &menu_target);
     update_menu_states(&menu, &settings.current_action);
 
     unsafe {
-        let _: () = msg_send![&*panel, setContentView: &*image_view];
-        let _: () = msg_send![&*image_view, setMenu: &*menu];
+        let _: () = msg_send![&*panel, setContentView: &*pet_view];
+        let _: () = msg_send![&*pet_view, setMenu: &*menu];
         let _: () = msg_send![&*panel, orderFrontRegardless];
     }
 
-    let monitor = install_mouse_monitor(&panel, &image_view, &menu);
-
+    let monitor = install_mouse_monitor(&panel, &pet_view, &menu);
     let timer = install_timer();
+    let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        &NSString::from_str("Desktop pet animation"),
+    );
 
     UI.with(|slot| {
         *slot.borrow_mut() = Some(UiState {
             panel,
-            image_view,
+            pet_view,
+            layer,
             menu,
             menu_target,
             timer,
             monitor,
+            activity,
             frames: HashMap::new(),
             current_action: String::new(),
             frame_index: 0,
             last_advance: Instant::now(),
             applied_scale: scale,
+            applied_backing_scale: 1.0,
             root: runtime_root(),
         });
     });
@@ -135,6 +159,14 @@ pub fn shutdown() {
             if let Some(monitor) = ui.monitor.take() {
                 let _: () = msg_send![NSEvent::class(), removeMonitor: &*monitor];
             }
+            let frame: NSRect = msg_send![&*ui.panel, frame];
+            update_position(PetPosition {
+                x: frame.origin.x,
+                y: frame.origin.y,
+                screen: None,
+            });
+            let _ = persist_runtime_settings();
+            NSProcessInfo::processInfo().endActivity(&ui.activity);
             let _: () = msg_send![&*ui.panel, close];
         }
 
@@ -176,7 +208,7 @@ fn create_panel(mtm: MainThreadMarker, size: f64, position: NSPoint) -> Retained
     panel
 }
 
-fn create_image_view(mtm: MainThreadMarker, scale: f64) -> Retained<PetImageView> {
+fn create_pet_view(mtm: MainThreadMarker, scale: f64) -> (Retained<PetView>, Retained<CALayer>) {
     let inset = (CANVAS_SIZE - PET_SIZE) / 2.0 * scale;
     let frame = NSRect::new(
         NSPoint::new(inset, inset),
@@ -184,21 +216,30 @@ fn create_image_view(mtm: MainThreadMarker, scale: f64) -> Retained<PetImageView
     );
 
     let _ = mtm;
-    let view: Retained<PetImageView> = unsafe {
-        let pointer: *mut PetImageView = msg_send![PetImageView::class(), alloc];
-        let pointer: *mut PetImageView = msg_send![pointer, initWithFrame: frame];
-        Retained::from_raw(pointer).expect("failed to create PetImageView")
+    let view: Retained<PetView> = unsafe {
+        let pointer: *mut PetView = msg_send![PetView::class(), alloc];
+        let pointer: *mut PetView = msg_send![pointer, initWithFrame: frame];
+        Retained::from_raw(pointer).expect("failed to create PetView")
     };
 
+    view.setWantsLayer(true);
+    let layer = view.layer().expect("failed to create pet layer");
+    layer.setContentsScale(1.0);
+
     unsafe {
-        // NSImageScaleProportionallyUpOrDown = 3, NSImageAlignCenter = 0.
-        let _: () = msg_send![&*view, setImageScaling: 3usize];
-        let _: () = msg_send![&*view, setImageAlignment: 0usize];
-        let _: () = msg_send![&*view, setEditable: Bool::NO];
-        let _: () = msg_send![&*view, setAnimates: Bool::NO];
+        let _: () = msg_send![&*layer, setContentsGravity: &*NSString::from_str("resizeAspect")];
+        let _: () = msg_send![
+            &*layer,
+            setMagnificationFilter: &*NSString::from_str("linear")
+        ];
+        let _: () = msg_send![
+            &*layer,
+            setMinificationFilter: &*NSString::from_str("linear")
+        ];
+        let _: () = msg_send![&*layer, setOpaque: Bool::NO];
     }
 
-    view
+    (view, layer)
 }
 
 fn create_menu_target() -> Retained<PetMenuTarget> {
@@ -267,11 +308,11 @@ fn update_menu_states(menu: &NSMenu, action: &str) {
 
 fn install_mouse_monitor(
     panel: &Retained<NSPanel>,
-    image_view: &Retained<PetImageView>,
+    pet_view: &Retained<PetView>,
     menu: &Retained<NSMenu>,
 ) -> Option<Retained<AnyObject>> {
     let panel = panel.clone();
-    let image_view = image_view.clone();
+    let pet_view = pet_view.clone();
     let menu = menu.clone();
 
     let block = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
@@ -284,7 +325,7 @@ fn install_mouse_monitor(
         match event.r#type() {
             NSEventType::LeftMouseDown => {
                 let _: () = unsafe { msg_send![&*panel, performWindowDragWithEvent: event] };
-                save_position(&panel);
+                mark_position_dirty();
                 std::ptr::null_mut()
             }
             NSEventType::RightMouseDown => {
@@ -293,7 +334,7 @@ fn install_mouse_monitor(
                         NSMenu::class(),
                         popUpContextMenu: &*menu,
                         withEvent: event,
-                        forView: &*image_view
+                        forView: &*pet_view
                     ]
                 };
                 std::ptr::null_mut()
@@ -341,6 +382,7 @@ fn install_timer() -> Retained<NSTimer> {
 fn tick() {
     let (action, scale) = runtime_action_scale();
     let reload_root = take_reload_request();
+    let reset_position = take_position_reset_request();
 
     UI.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
@@ -356,8 +398,27 @@ fn tick() {
             ui.current_action.clear();
         }
 
+        if reset_position {
+            if let Some(mtm) = MainThreadMarker::new() {
+                let position = default_position(scaled_canvas_size(ui.applied_scale), mtm);
+                unsafe {
+                    let _: () = msg_send![&*ui.panel, setFrameOrigin: position];
+                }
+            }
+        }
+
+        if take_position_dirty_request() {
+            save_position(&ui.panel);
+        }
+
         if (scale - ui.applied_scale).abs() > f64::EPSILON {
             apply_scale(ui, scale);
+        }
+
+        let backing_scale: f64 = unsafe { msg_send![&*ui.panel, backingScaleFactor] };
+        if (backing_scale - ui.applied_backing_scale).abs() > f64::EPSILON {
+            ui.layer.setContentsScale(backing_scale);
+            ui.applied_backing_scale = backing_scale;
         }
 
         if ui.current_action != action {
@@ -407,7 +468,7 @@ fn ensure_frames(ui: &mut UiState, action: &str) {
     }
 }
 
-fn load_frames(root: &Path, action: &str) -> Result<Vec<Retained<NSImage>>, String> {
+fn load_frames(root: &Path, action: &str) -> Result<Vec<CFRetained<CGImage>>, String> {
     let paths = scan_action_frames(root, action)?;
     if paths.len() < MIN_FRAMES_PER_ACTION {
         return Err(format!(
@@ -419,39 +480,90 @@ fn load_frames(root: &Path, action: &str) -> Result<Vec<Retained<NSImage>>, Stri
         ));
     }
 
-    let _mtm = MainThreadMarker::new().ok_or_else(|| "帧图加载必须发生在主线程".to_string())?;
     let mut images = Vec::with_capacity(paths.len());
-
     for path in paths {
-        let ns_path = NSString::from_str(&path.to_string_lossy());
-        let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path);
-
-        match image {
-            Some(image) => images.push(image),
-            None => return Err(format!("无法读取帧图：{}", path.display())),
-        }
+        images.push(decode_image(&path)?);
     }
 
     Ok(images)
 }
 
-fn update_image(ui: &UiState) {
-    let image = ui
-        .frames
-        .get(&ui.current_action)
-        .and_then(|frames| {
-            if frames.is_empty() {
-                None
-            } else {
-                frames.get(ui.frame_index.min(frames.len() - 1))
-            }
-        })
-        .map(|image| Retained::as_ptr(image) as *mut NSImage)
-        .unwrap_or(std::ptr::null_mut());
+fn decode_image(path: &Path) -> Result<CFRetained<CGImage>, String> {
+    let ns_path = NSString::from_str(&path.to_string_lossy());
+    let cf_path: &CFString = unsafe { &*(&*ns_path as *const NSString as *const CFString) };
+    let url = CFURL::with_file_system_path(
+        None,
+        Some(cf_path),
+        CFURLPathStyle::CFURLPOSIXPathStyle,
+        false,
+    )
+    .ok_or_else(|| format!("无法创建文件 URL：{}", path.display()))?;
 
+    let source = unsafe { CGImageSource::with_url(&url, None) }
+        .ok_or_else(|| format!("无法读取图片：{}", path.display()))?;
+
+    let options = thumbnail_options();
+    let image = unsafe { source.thumbnail_at_index(0, options.as_deref()) }
+        .or_else(|| unsafe { source.image_at_index(0, None) })
+        .ok_or_else(|| format!("无法解码图片：{}", path.display()))?;
+
+    Ok(image)
+}
+
+fn thumbnail_options() -> Option<CFRetained<CFDictionary>> {
     unsafe {
-        let _: () = msg_send![&*ui.image_view, setImage: image];
+        let max_pixel = CFNumber::new(
+            None,
+            CFNumberType::IntType,
+            &MAX_THUMBNAIL_PIXEL as *const i32 as *const c_void,
+        )?;
+        let true_value = kCFBooleanTrue?;
+
+        let keys = [
+            kCGImageSourceCreateThumbnailFromImageAlways as *const CFString as *const c_void,
+            kCGImageSourceThumbnailMaxPixelSize as *const CFString as *const c_void,
+            kCGImageSourceCreateThumbnailWithTransform as *const CFString as *const c_void,
+            kCGImageSourceShouldCacheImmediately as *const CFString as *const c_void,
+        ];
+        let values = [
+            true_value as *const CFBoolean as *const c_void,
+            CFRetained::as_ptr(&max_pixel).as_ptr() as *const c_void,
+            true_value as *const CFBoolean as *const c_void,
+            true_value as *const CFBoolean as *const c_void,
+        ];
+
+        CFDictionary::new(
+            None,
+            keys.as_ptr() as *mut *const c_void,
+            values.as_ptr() as *mut *const c_void,
+            4,
+            &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks,
+        )
     }
+}
+
+fn update_image(ui: &UiState) {
+    let image = ui.frames.get(&ui.current_action).and_then(|frames| {
+        if frames.is_empty() {
+            None
+        } else {
+            frames.get(ui.frame_index.min(frames.len() - 1))
+        }
+    });
+
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    unsafe {
+        match image {
+            Some(image) => {
+                let pointer = CFRetained::as_ptr(image).as_ptr() as *const AnyObject;
+                ui.layer.setContents(Some(&*pointer));
+            }
+            None => ui.layer.setContents(None),
+        }
+    }
+    CATransaction::commit();
 }
 
 fn apply_scale(ui: &mut UiState, scale: f64) {
@@ -465,14 +577,14 @@ fn apply_scale(ui: &mut UiState, scale: f64) {
         ),
         NSSize::new(size, size),
     );
-    let image_frame = NSRect::new(
+    let pet_frame = NSRect::new(
         NSPoint::new(inset, inset),
         NSSize::new(PET_SIZE * scale, PET_SIZE * scale),
     );
 
     unsafe {
         let _: () = msg_send![&*ui.panel, setFrame: frame, display: Bool::YES];
-        let _: () = msg_send![&*ui.image_view, setFrame: image_frame];
+        let _: () = msg_send![&*ui.pet_view, setFrame: pet_frame];
     }
     ui.applied_scale = scale;
 }
