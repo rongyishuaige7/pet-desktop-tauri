@@ -21,9 +21,11 @@ src-tauri/Cargo.toml
 src-tauri/Cargo.lock
 src-tauri/build.rs
 src-tauri/tauri.conf.json
+src-tauri/tauri.macos.conf.json
 src-tauri/capabilities/
 src-tauri/icons/
 src-tauri/src/
+src-tauri/icons/icon.icns
 src-tauri/gen/
 tools/
 ```
@@ -59,13 +61,21 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+平台依赖：
+
+- Linux：GTK 3 / GDK Pixbuf 开发包（见 README 的 apt 列表）。
+- macOS：Xcode Command Line Tools + Rust；不再需要 GTK。
+
 不要把单独执行的 `cargo build --release` 当作最终应用构建方式。Tauri 应用需要通过 `npm run tauri:build` 完成前端资源构建和嵌入。
 
 ## 提交前检查
 
 ```bash
 git status --short
+npm test
 npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 如果改动涉及 Rust/Tauri 逻辑，建议额外执行：

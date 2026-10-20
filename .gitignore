@@ -29,6 +29,21 @@ Thumbs.db
 .agents/
 .codex/
 
+# Local toolchain and package caches
+.toolchain/
+.npm-cache/
+
+# Local action frame assets
+frame-pack/
+
+# Generated icon sets for platforms not targeted yet
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*.png
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/icon.ico
+src-tauri/icons/64x64.png
+
 # Local generation records and private prompt drafts
 generation-runs/
 private-prompts/

@@ -18,8 +18,41 @@ tauri = { version = "2.11.2", features = ["tray-icon"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
 gdk = "0.18.2"
 gdk-pixbuf = "0.18.5"
 glib = "0.18.5"
 cairo-rs = "0.18.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", features = [
+  "NSPanel",
+  "NSWindow",
+  "NSView",
+  "NSImageView",
+  "NSImage",
+  "NSMenu",
+  "NSMenuItem",
+  "NSScreen",
+  "NSEvent",
+  "NSColor",
+  "NSResponder",
+  "NSApplication",
+  "block2",
+] }
+objc2-foundation = { version = "0.3.2", features = [
+  "NSString",
+  "NSURL",
+  "NSRunLoop",
+  "NSTimer",
+  "NSGeometry",
+  "NSProcessInfo",
+  "block2",
+] }
+block2 = "0.6.2"
+
+[dev-dependencies]
+tempfile = "3"

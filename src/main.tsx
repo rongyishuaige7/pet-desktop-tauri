@@ -195,6 +195,26 @@ function StudioWindow() {
     };
   }, [setPet]);
 
+  useEffect(() => {
+    if (!isTauri) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    listen<string>("native-pet-error", (event) => {
+      if (!disposed) setError(`桌面宠物：${event.payload}`);
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   async function handleManualFrames(action: PetAction, files: FileList | null) {
     if (!files?.length) return;
 

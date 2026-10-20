@@ -6,7 +6,10 @@ export default defineConfig({
   clearScreen: false,
   server: {
     port: 1420,
-    strictPort: true
+    strictPort: true,
+    watch: {
+      ignored: ["**/src-tauri/**", "**/.toolchain/**", "**/.npm-cache/**", "**/frame-pack/**"]
+    }
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {

@@ -1,6 +1,6 @@
 # 桌面贴贴宠物
 
-一个 Linux 桌面宠物应用原型。它用 Tauri + React 提供管理界面，用 Rust + GTK 创建一个透明置顶的原生桌面宠物窗口，让本地动作帧包里的猫猫狗狗在桌面上活动。
+一个 Linux / macOS 桌面宠物应用原型。它用 Tauri + React 提供管理界面，用 Rust 创建透明置顶的原生桌面宠物窗口：Linux 使用 GTK，macOS 使用 AppKit，让本地动作帧包里的猫猫狗狗在桌面上活动。
 
 当前版本的核心路线是“导入本地动作帧包并播放”，因此不依赖在线 AI 服务也能运行。仓库里保留了 Minimax 图像生成和参考图上传链路，方便后续继续扩展为“上传宠物照片 -> 生成动作帧 -> 桌面宠物”的完整工作流。
 
@@ -9,7 +9,7 @@
 - 本地导入 6 组动作帧：待机、坐下、睡觉、开心、走路、跳跃。
 - 支持 PNG、JPG、WebP 帧图，透明 PNG 效果最佳。
 - 管理界面可预览动画、切换动作、调整宠物缩放比例。
-- 原生 GTK 桌面宠物窗口透明、置顶、可拖拽。
+- 原生桌面宠物窗口透明、置顶、可拖拽（Linux GTK / macOS AppKit）。
 - 宠物窗口右键菜单可直接切换动作。
 - 关闭管理界面后，宠物窗口继续运行。
 - 系统托盘支持重新打开管理界面和退出应用。
@@ -22,17 +22,23 @@
 - Vite
 - TypeScript
 - Rust
-- GTK 3 / GDK Pixbuf
+- GTK 3 / GDK Pixbuf（Linux）
+- AppKit / objc2（macOS）
 - Tauri tray icon
 
 ## 平台支持
 
-当前版本主要面向 Linux。管理界面基于 Tauri + React，具备跨平台基础；桌面宠物窗口当前使用 GTK 原生实现，因此暂不支持 Windows 和 macOS。
+当前支持 Linux 和 macOS：
 
-桌面宠物窗口的技术取舍记录见：
+- Linux：GTK 原生宠物窗口。
+- macOS：AppKit `NSPanel` 原生宠物窗口（透明、置顶、非激活、可拖拽）。
+- Windows：暂未实现原生宠物窗口。
+
+管理界面基于 Tauri + React，跨平台；桌面宠物窗口按平台原生实现。技术取舍记录见：
 
 ```text
 docs/adr/0001-native-pet-window-per-platform.md
+docs/adr/0002-macos-native-pet-window.md
 ```
 
 ## 运行效果
@@ -66,6 +72,15 @@ sudo apt install -y \
   libayatana-appindicator3-dev \
   librsvg2-dev
 ```
+
+macOS 需要 Xcode Command Line Tools 和 Rust：
+
+```bash
+xcode-select --install
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+macOS 不再依赖 GTK；Rust 依赖会按目标平台自动选择。
 
 ### 2. 准备动作帧包
 
@@ -127,12 +142,21 @@ Could not connect to localhost: Connection refused
 npm run tauri:build
 ```
 
-构建产物：
+构建产物（Linux）：
 
 ```text
 src-tauri/target/release/pet_desktop_tauri
 src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0_amd64.deb
 ```
+
+构建产物（macOS）：
+
+```text
+src-tauri/target/release/bundle/macos/桌面贴贴宠物.app
+src-tauri/target/release/bundle/dmg/桌面贴贴宠物_0.1.0_aarch64.dmg
+```
+
+DMG 需要 `hdiutil` 和 Finder 自动化权限；如果只想本地运行，直接使用 `.app` 即可。
 
 运行二进制：
 
@@ -187,9 +211,12 @@ React 管理界面
 | `src/styles.css` | 管理界面和宠物窗口样式。 |
 | `src/types.ts` | 宠物类型、动作枚举、帧集合类型和存储 key。 |
 | `src/storage.ts` | IndexedDB 持久化、BroadcastChannel 同步、动作切换同步。 |
-| `src/generator.ts` | 预留生成器逻辑，包含 Minimax 和本地 Canvas 生成链路，目前不是主流程。 |
-| `src-tauri/src/lib.rs` | Tauri 主逻辑，注册命令、启动 GTK 宠物窗口、托盘菜单、窗口关闭拦截、Minimax/上传命令。 |
-| `src-tauri/src/native_pet.rs` | 原生 GTK 宠物窗口，负责帧读取、绘制、动画计时、拖拽和右键菜单。 |
+| `src-tauri/src/lib.rs` | Tauri 主逻辑，注册命令、启动原生宠物窗口、托盘菜单、窗口关闭拦截、Minimax/上传命令。 |
+| `src-tauri/src/native_pet/mod.rs` | 共享运行时状态、设置与帧包 API、平台分发。 |
+| `src-tauri/src/native_pet/linux.rs` | Linux GTK 宠物窗口。 |
+| `src-tauri/src/native_pet/macos.rs` | macOS AppKit `NSPanel` 宠物窗口。 |
+| `src-tauri/src/native_pet/settings.rs` | 统一设置结构与原子写入。 |
+| `src-tauri/src/native_pet/frame_pack.rs` | 帧包扫描、校验与 data URL 编码。 |
 | `src-tauri/tauri.conf.json` | Tauri 应用窗口、构建和打包配置。 |
 | `src-tauri/capabilities/default.json` | Tauri 权限配置。 |
 | `prompts/` | AI 角色原型图和动作帧生成的 prompt 模板。 |
@@ -206,7 +233,7 @@ React 管理界面
 -> Rust 读取 idle/sit/sleep/happy/walk/jump
 -> 前端保存 PetProfile 到 IndexedDB
 -> 通知 BroadcastChannel
--> 原生 GTK 宠物窗口读取同一帧包目录并播放
+-> 原生宠物窗口读取同一帧包目录并播放
 ```
 
 动作切换：
@@ -216,7 +243,7 @@ React 管理界面
 -> setCurrentAction
 -> 更新 IndexedDB
 -> 调用 set_native_pet_action
--> GTK 窗口切换动作
+-> 原生宠物窗口切换动作
 ```
 
 窗口关闭：
@@ -234,7 +261,6 @@ React 管理界面
 
 仓库中保留了 AI 生成相关实现：
 
-- `src/generator.ts`
 - `prompts/`
 - `generate_minimax_image`
 - `upload_reference_image`
@@ -273,11 +299,12 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 ## 当前限制
 
 - 目前主流程依赖现成动作帧包，暂未内置完整 AI 生成流程。
-- 默认帧包目录是本机路径，其他用户需要在界面中改成自己的帧包目录。
-- 暂未持久化桌面宠物窗口位置。
+- 默认帧包目录是相对工作目录的 `./frame-pack`；打包后请填写绝对路径，其他用户需要在界面中改成自己的帧包目录。
+- macOS 已持久化桌面宠物窗口位置；Linux 暂未持久化窗口位置。
 - 暂未实现开机自启动。
-- 当前主要面向 Linux，Windows 和 macOS 需要后续补充平台原生宠物窗口实现。
-- 当前打包目标主要是 deb。
+- Windows 需要后续补充原生宠物窗口实现。
+- 打包目标：Linux 为 deb，macOS 为 app / dmg。
+- macOS 分发需要 Developer ID 签名与 notarization；本地开发可先使用未签名构建。
 
 ## License
 
