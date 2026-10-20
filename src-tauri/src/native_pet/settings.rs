@@ -19,8 +19,14 @@ pub struct NativePetSettings {
     pub frame_root: String,
     pub scale: f64,
     pub current_action: String,
+    #[serde(default = "default_autonomous")]
+    pub autonomous: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<PetPosition>,
+}
+
+fn default_autonomous() -> bool {
+    true
 }
 
 impl Default for NativePetSettings {
@@ -29,6 +35,7 @@ impl Default for NativePetSettings {
             frame_root: "./frame-pack".to_string(),
             scale: 1.0,
             current_action: "idle".to_string(),
+            autonomous: true,
             position: None,
         }
     }
@@ -111,6 +118,7 @@ mod tests {
             frame_root: "  ".to_string(),
             scale: 9.0,
             current_action: "dance".to_string(),
+            autonomous: false,
             position: Some(PetPosition {
                 x: f64::NAN,
                 y: 10.0,

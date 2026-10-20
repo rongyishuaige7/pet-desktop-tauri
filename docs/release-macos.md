@@ -135,7 +135,17 @@ spctl -a -vv "src-tauri/target/release/bundle/macos/桌面贴贴宠物.app"
 npm run tauri:build -- --bundles app,dmg
 ```
 
-## 6. 常见问题
+## 6. 开机自启
+
+托盘菜单的“开机自启”会写入：
+
+```text
+~/Library/LaunchAgents/local.pet.desktop.sticker.plist
+```
+
+该 LaunchAgent 在下次登录时生效，不会立即拉起应用；关闭后已加载的任务会在注销后失效。开发模式下启用会指向 `target/debug/pet_desktop_tauri`，建议只在打包后的 `.app` 上使用。
+
+## 7. 常见问题
 
 - **`hdiutil: create failed - 操作不被允许`**：构建环境禁止创建磁盘镜像；在普通终端或 CI 上重试，或先只构建 `.app`。
 - **`spctl` 拒绝**：未签名/未公证，或证书不是 Developer ID Application。

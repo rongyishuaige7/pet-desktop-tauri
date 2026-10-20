@@ -328,6 +328,10 @@ fn install_mouse_monitor(
                 mark_position_dirty();
                 std::ptr::null_mut()
             }
+            NSEventType::LeftMouseUp => {
+                mark_position_dirty();
+                event as *const NSEvent as *mut NSEvent
+            }
             NSEventType::RightMouseDown => {
                 let _: () = unsafe {
                     msg_send![
@@ -347,6 +351,7 @@ fn install_mouse_monitor(
         msg_send![
             NSEvent::class(),
             addLocalMonitorForEventsMatchingMask: NSEventMask::LeftMouseDown
+                | NSEventMask::LeftMouseUp
                 | NSEventMask::RightMouseDown,
             handler: &*block
         ]
@@ -380,6 +385,11 @@ fn install_timer() -> Retained<NSTimer> {
 }
 
 fn tick() {
+    if let Some(action) = super::maybe_auto_advance(Instant::now()) {
+        if let Some(app) = super::app_handle() {
+            let _ = app.emit("native-pet-action-changed", action);
+        }
+    }
     let (action, scale) = runtime_action_scale();
     let reload_root = take_reload_request();
     let reset_position = take_position_reset_request();
@@ -436,7 +446,8 @@ fn tick() {
             .map(|frames| frames.len())
             .unwrap_or(0);
 
-        if frame_count > 0
+        if !super::animation_paused()
+            && frame_count > 0
             && ui.last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&action))
         {
             if is_looping(&action) {

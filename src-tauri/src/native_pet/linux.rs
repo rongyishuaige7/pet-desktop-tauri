@@ -176,6 +176,11 @@ fn setup_animation_timer(
     let mut last_advance = Instant::now();
 
     glib::timeout_add_local(Duration::from_millis(100), move || {
+        if let Some(action) = super::maybe_auto_advance(Instant::now()) {
+            if let Some(app) = super::app_handle() {
+                let _ = app.emit("native-pet-action-changed", action);
+            }
+        }
         maybe_reload_frames(&frames);
 
         let (next_action, next_scale) = runtime_action_scale();
@@ -201,7 +206,8 @@ fn setup_animation_timer(
             state.action = next_action.clone();
             state.frame_index = 0;
             last_advance = Instant::now();
-        } else if frame_count > 0
+        } else if !super::animation_paused()
+            && frame_count > 0
             && last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&next_action))
         {
             if is_looping(&state.action) {

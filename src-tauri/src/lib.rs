@@ -1,8 +1,13 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::{menu::MenuBuilder, tray::TrayIconBuilder, Manager, WindowEvent};
+use tauri::{
+    menu::{CheckMenuItem, MenuBuilder, MenuItem},
+    tray::TrayIconBuilder,
+    Emitter, Manager, WindowEvent,
+};
 
+mod autostart;
 mod native_pet;
 
 #[tauri::command]
@@ -442,17 +447,96 @@ pub fn run() {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, "show_studio", "打开主界面", true, None::<&str>)?;
+    let idle_item = MenuItem::with_id(app, "action_idle", "待机", true, None::<&str>)?;
+    let sit_item = MenuItem::with_id(app, "action_sit", "坐下", true, None::<&str>)?;
+    let sleep_item = MenuItem::with_id(app, "action_sleep", "睡觉", true, None::<&str>)?;
+    let happy_item = MenuItem::with_id(app, "action_happy", "开心", true, None::<&str>)?;
+    let walk_item = MenuItem::with_id(app, "action_walk", "走路", true, None::<&str>)?;
+    let jump_item = MenuItem::with_id(app, "action_jump", "跳跃", true, None::<&str>)?;
+    let autonomous_item = CheckMenuItem::with_id(
+        app,
+        "toggle_autonomous",
+        "自主行为",
+        true,
+        native_pet::autonomous_enabled(),
+        None::<&str>,
+    )?;
+    let animation_item = CheckMenuItem::with_id(
+        app,
+        "toggle_animation",
+        "播放动画",
+        true,
+        !native_pet::animation_paused(),
+        None::<&str>,
+    )?;
+    let reset_item = MenuItem::with_id(app, "reset_position", "重置位置", true, None::<&str>)?;
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        "toggle_autostart",
+        "开机自启",
+        true,
+        autostart::is_enabled(),
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(app, "quit_app", "退出应用", true, None::<&str>)?;
+
     let menu = MenuBuilder::new(app)
-        .text("show_studio", "打开主界面")
+        .item(&show_item)
         .separator()
-        .text("quit_app", "退出应用")
+        .item(&idle_item)
+        .item(&sit_item)
+        .item(&sleep_item)
+        .item(&happy_item)
+        .item(&walk_item)
+        .item(&jump_item)
+        .separator()
+        .item(&autonomous_item)
+        .item(&animation_item)
+        .item(&reset_item)
+        .item(&autostart_item)
+        .separator()
+        .item(&quit_item)
         .build()?;
+
+    let autonomous_for_event = autonomous_item.clone();
+    let animation_for_event = animation_item.clone();
+    let autostart_for_event = autostart_item.clone();
 
     let mut tray = TrayIconBuilder::new()
         .menu(&menu)
         .tooltip("桌面贴贴宠物")
-        .on_menu_event(|app, event| match event.id().as_ref() {
+        .on_menu_event(move |app, event| match event.id().as_ref() {
             "show_studio" => show_studio_window(app),
+            "action_idle" => switch_native_action(app, "idle"),
+            "action_sit" => switch_native_action(app, "sit"),
+            "action_sleep" => switch_native_action(app, "sleep"),
+            "action_happy" => switch_native_action(app, "happy"),
+            "action_walk" => switch_native_action(app, "walk"),
+            "action_jump" => switch_native_action(app, "jump"),
+            "toggle_autonomous" => {
+                let enabled = !native_pet::autonomous_enabled();
+                if native_pet::set_autonomous(enabled).is_ok() {
+                    let _ = native_pet::persist_runtime_settings();
+                    let _ = autonomous_for_event.set_checked(enabled);
+                }
+            }
+            "toggle_animation" => {
+                let paused = !native_pet::animation_paused();
+                if native_pet::set_animation_paused(paused).is_ok() {
+                    let _ = animation_for_event.set_checked(!paused);
+                }
+            }
+            "reset_position" => reset_native_position(app),
+            "toggle_autostart" => {
+                let enabled = !autostart::is_enabled();
+                match autostart::set_enabled(enabled) {
+                    Ok(()) => {
+                        let _ = autostart_for_event.set_checked(enabled);
+                    }
+                    Err(err) => eprintln!("failed to toggle autostart: {err}"),
+                }
+            }
             "quit_app" => app.exit(0),
             _ => {}
         });
@@ -463,6 +547,29 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
     tray.build(app)?;
     Ok(())
+}
+
+fn switch_native_action(app: &tauri::AppHandle, action: &str) {
+    if let Err(err) = native_pet::set_action(action) {
+        eprintln!("failed to set native pet action: {err}");
+        return;
+    }
+    if let Err(err) = native_pet::persist_runtime_settings() {
+        eprintln!("failed to persist native pet settings: {err}");
+    }
+    let _ = app.emit("native-pet-action-changed", action);
+}
+
+fn reset_native_position(app: &tauri::AppHandle) {
+    if let Err(err) = native_pet::reset_position() {
+        eprintln!("failed to reset native pet position: {err}");
+        return;
+    }
+    let mut settings = native_pet::load_settings(app);
+    settings.position = None;
+    if let Err(err) = native_pet::save_settings(app, &settings) {
+        eprintln!("failed to persist reset position: {err}");
+    }
 }
 
 fn show_studio_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {

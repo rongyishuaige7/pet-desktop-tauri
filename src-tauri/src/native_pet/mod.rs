@@ -45,6 +45,10 @@ pub struct Runtime {
     pub position: Option<PetPosition>,
     pub reset_position_requested: bool,
     pub position_dirty_at: Option<Instant>,
+    pub autonomous: bool,
+    pub animation_paused: bool,
+    pub next_behavior_at: Option<Instant>,
+    pub behavior_rng: u64,
 }
 
 impl Default for Runtime {
@@ -59,6 +63,10 @@ impl Default for Runtime {
             position: None,
             reset_position_requested: false,
             position_dirty_at: None,
+            autonomous: true,
+            animation_paused: false,
+            next_behavior_at: None,
+            behavior_rng: behavior_seed(),
         }
     }
 }
@@ -84,6 +92,10 @@ pub fn configure(settings: &NativePetSettings, settings_path: Option<PathBuf>) {
         runtime.reload_requested = true;
         runtime.reset_position_requested = false;
         runtime.position_dirty_at = None;
+        runtime.autonomous = settings.autonomous;
+        runtime.animation_paused = false;
+        runtime.behavior_rng = behavior_seed();
+        runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(5));
     }
 }
 
@@ -107,6 +119,7 @@ pub fn set_action(action: &str) -> Result<(), String> {
         .lock()
         .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
     runtime.action = action.to_string();
+    runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(20));
     Ok(())
 }
 
@@ -138,6 +151,116 @@ pub fn update_position(position: PetPosition) {
         runtime.reset_position_requested = false;
         runtime.position_dirty_at = None;
     }
+}
+
+pub fn autonomous_enabled() -> bool {
+    runtime()
+        .lock()
+        .map(|runtime| runtime.autonomous)
+        .unwrap_or(true)
+}
+
+pub fn set_autonomous(enabled: bool) -> Result<(), String> {
+    let mut runtime = runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+    runtime.autonomous = enabled;
+    runtime.next_behavior_at = if enabled {
+        Some(Instant::now() + Duration::from_secs(5))
+    } else {
+        None
+    };
+    Ok(())
+}
+
+pub fn animation_paused() -> bool {
+    runtime()
+        .lock()
+        .map(|runtime| runtime.animation_paused)
+        .unwrap_or(false)
+}
+
+pub fn set_animation_paused(paused: bool) -> Result<(), String> {
+    let mut runtime = runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+    runtime.animation_paused = paused;
+    if !paused && runtime.autonomous {
+        runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(2));
+    }
+    Ok(())
+}
+
+pub fn maybe_auto_advance(now: Instant) -> Option<String> {
+    let mut runtime = runtime().lock().ok()?;
+    if !runtime.autonomous || runtime.animation_paused {
+        return None;
+    }
+
+    let next_at = match runtime.next_behavior_at {
+        Some(next_at) => next_at,
+        None => {
+            runtime.next_behavior_at = Some(now + Duration::from_secs(5));
+            return None;
+        }
+    };
+    if now < next_at {
+        return None;
+    }
+
+    let current = runtime.action.clone();
+    let next = choose_next_action(&current, &mut runtime.behavior_rng);
+    let duration = action_duration(next, &mut runtime.behavior_rng);
+    runtime.action = next.to_string();
+    runtime.next_behavior_at = Some(now + duration);
+    Some(next.to_string())
+}
+
+fn behavior_seed() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+    (nanos ^ ((std::process::id() as u64) << 32)) | 1
+}
+
+fn next_random(state: &mut u64) -> u64 {
+    let mut value = *state;
+    value ^= value << 13;
+    value ^= value >> 7;
+    value ^= value << 17;
+    *state = value;
+    value
+}
+
+fn random_range(state: &mut u64, min: u64, max: u64) -> u64 {
+    if max <= min {
+        return min;
+    }
+    min + next_random(state) % (max - min)
+}
+
+fn choose_next_action(current: &str, state: &mut u64) -> &'static str {
+    let choices: &[&str] = match current {
+        "idle" => &["walk", "walk", "sit", "sit", "happy", "sleep"],
+        "walk" => &["idle", "sit"],
+        "sit" => &["idle", "sleep", "happy"],
+        "sleep" => &["idle"],
+        "happy" => &["idle"],
+        _ => &["idle"],
+    };
+    choices[(next_random(state) as usize) % choices.len()]
+}
+
+fn action_duration(action: &str, state: &mut u64) -> Duration {
+    let seconds = match action {
+        "walk" => random_range(state, 4, 9),
+        "sit" => random_range(state, 5, 11),
+        "sleep" => random_range(state, 15, 31),
+        "happy" => random_range(state, 2, 4),
+        _ => random_range(state, 6, 13),
+    };
+    Duration::from_secs(seconds)
 }
 
 pub fn reset_position() -> Result<(), String> {
@@ -187,6 +310,7 @@ pub fn current_settings() -> NativePetSettings {
             frame_root: runtime.root_dir.to_string_lossy().to_string(),
             scale: runtime.scale,
             current_action: runtime.action.clone(),
+            autonomous: runtime.autonomous,
             position: runtime.position.clone(),
         },
         Err(_) => NativePetSettings::default(),
@@ -206,6 +330,7 @@ pub fn persist_runtime_settings() -> Result<(), String> {
                 frame_root: runtime.root_dir.to_string_lossy().to_string(),
                 scale: runtime.scale,
                 current_action: runtime.action.clone(),
+                autonomous: runtime.autonomous,
                 position: runtime.position.clone(),
             },
             path,
