@@ -122,6 +122,11 @@ interface PresetFramePack {
   actions: ActionFrameSet;
 }
 
+interface SavedManualFramePack {
+  frameRoot: string;
+  sourceImage: string;
+}
+
 function App() {
   return <StudioWindow />;
 }
@@ -144,7 +149,9 @@ function StudioWindow() {
   });
 
   useEffect(() => {
-    syncNativePetScale(zoom);
+    if (!isTauri) return;
+    const timer = window.setTimeout(() => syncNativePetScale(zoom), 250);
+    return () => window.clearTimeout(timer);
   }, [zoom]);
 
   useEffect(() => {
@@ -172,7 +179,11 @@ function StudioWindow() {
           if (!cancelled && hydrated) setPet(hydrated);
         }
       })
-      .catch(() => undefined);
+      .catch((err) => {
+        if (!cancelled) {
+          setError(`读取桌面宠物设置或帧包失败：${formatError(err)}`);
+        }
+      });
 
     const unlistenPromise = listen<PetAction>("native-pet-action-changed", async (event) => {
       if (!isPetAction(event.payload)) return;
@@ -234,11 +245,52 @@ function StudioWindow() {
   async function handleGenerate() {
     setIsGenerating(true);
     setError(null);
+    setPresetStatus(null);
     try {
-      const fallbackSourceImage = sourceImage ?? manualFrames.idle?.[0] ?? Object.values(manualFrames).find((frames) => frames?.[0])?.[0];
-      const nextPet = createManualPet({ name, species, sourceImage: fallbackSourceImage ?? "", manualFrames });
+      const fallbackSourceImage =
+        sourceImage ??
+        manualFrames.idle?.[0] ??
+        Object.values(manualFrames).find((frames) => frames?.[0])?.[0];
+      const actions = Object.fromEntries(
+        PET_ACTIONS.map((action) => [action.id, manualFrames[action.id] ?? []])
+      ) as ActionFrameSet;
+
+      if (isTauri) {
+        const saved = await invoke<SavedManualFramePack>("save_manual_frame_pack", {
+          request: { actions }
+        });
+        const nextPet = createManualPet({
+          name,
+          species,
+          sourceImage: saved.sourceImage || fallbackSourceImage || "",
+          manualFrames: actions,
+          frameRoot: saved.frameRoot,
+          storageMode: "preset-root"
+        });
+        setSourceImage(saved.sourceImage || fallbackSourceImage || null);
+        setManualFrames(actions);
+        await savePet(toPersistedPet(nextPet), nextPet);
+        let synced = true;
+        await invoke("set_native_pet_frame_root", { rootDir: saved.frameRoot }).catch((err) => {
+          synced = false;
+          setError(`帧包已保存，但同步桌面宠物失败：${formatError(err)}`);
+        });
+        setPet(nextPet);
+        setPresetStatus(
+          synced ? "已保存到本地帧包目录，并同步到桌面宠物。" : "帧包已保存，但桌面宠物同步失败。"
+        );
+        return;
+      }
+
+      const nextPet = createManualPet({
+        name,
+        species,
+        sourceImage: fallbackSourceImage ?? "",
+        manualFrames: actions
+      });
       await savePet(nextPet);
       setPet(nextPet);
+      setPresetStatus("已保存当前帧包（浏览器预览模式）。");
     } catch (err) {
       setError(`保存帧包失败：${formatError(err)}`);
     } finally {
@@ -393,12 +445,11 @@ function StudioWindow() {
                 <button className="secondary-action" type="button" onClick={handleLoadPresetFrames} disabled={isGenerating}>
                   一键导入并保存预置帧包
                 </button>
-                {presetStatus && <p className="success-text">{presetStatus}</p>}
               </div>
             ) : (
               <div className="manual-upload-section">
                 <p className="section-tip">
-                  分别上传 6 个动作状态下的图片文件，每个动作需要至少 5 帧图片以生成平滑动画。
+                  分别上传 6 个动作状态下的图片文件，每个动作需要至少 5 帧图片。桌面版会把帧包写入本地目录，并同步到桌面宠物。
                 </p>
                 <div className="manual-frame-grid">
                   {PET_ACTIONS.map((action) => {
@@ -438,9 +489,10 @@ function StudioWindow() {
           </div>
 
           <button className="primary-action" onClick={handleGenerate} disabled={isGenerating}>
-            {isGenerating ? "正在保存..." : "保存当前帧包"}
+            {isGenerating ? "正在保存..." : isTauri ? "保存并同步到桌面" : "保存当前帧包"}
           </button>
 
+          {presetStatus && <p className="success-text">{presetStatus}</p>}
           {error && <p className="error-text">{error}</p>}
         </div>
 
@@ -542,10 +594,10 @@ function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAc
 
   useEffect(() => {
     setFrame(0);
-  }, [action, pet.actionStartedAt]);
+  }, [action, frames.length, pet.actionStartedAt]);
 
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || frames.length === 0) return;
     const shouldLoop = LOOPING_ACTIONS.has(action);
     const timer = window.setInterval(() => {
       setFrame((value) => {
@@ -555,6 +607,8 @@ function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAc
     }, action === "sleep" ? 420 : 150);
     return () => window.clearInterval(timer);
   }, [action, frames.length, isPlaying, pet.actionStartedAt]);
+
+  const frameIndex = frames.length === 0 ? 0 : Math.min(frame, frames.length - 1);
 
   if (frames.length === 0) {
     return (
@@ -574,7 +628,7 @@ function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAc
           }}
         >
           <div className="pet-display-wrapper">
-            <img src={frames[frame]} alt={`${pet.name} ${action}`} className="pet-preview-image" draggable={false} />
+            <img src={frames[frameIndex]} alt={`${pet.name} ${action}`} className="pet-preview-image" draggable={false} />
             <span className="pet-tag-name">{pet.name}</span>
           </div>
         </div>
@@ -608,7 +662,7 @@ function PetPreviewStage({ pet, action, zoom }: { pet: PetProfile; action: PetAc
           ⏭️
         </button>
         <span className="frame-counter">
-          帧 {frame + 1} / {frames.length}
+          帧 {frameIndex + 1} / {frames.length}
         </span>
       </div>
     </div>

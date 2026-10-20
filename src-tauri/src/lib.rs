@@ -84,6 +84,19 @@ struct PresetFramePack {
     actions: HashMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveManualFramePackRequest {
+    actions: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedManualFramePack {
+    frame_root: String,
+    source_image: String,
+}
+
 #[derive(Debug, Serialize)]
 struct MinimaxSubjectReference {
     #[serde(rename = "type")]
@@ -147,7 +160,7 @@ async fn generate_minimax_image(request: MinimaxImageRequest) -> Result<String, 
         subject_reference,
     };
 
-    let client = reqwest::Client::new();
+    let client = http_client()?;
     let response = client
         .post("https://api.minimaxi.com/v1/image_generation")
         .bearer_auth(api_key.trim())
@@ -201,7 +214,7 @@ async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<
         base64,
     };
 
-    let client = reqwest::Client::new();
+    let client = http_client()?;
     let response = client
         .post(upload_url)
         .json(&payload)
@@ -227,6 +240,37 @@ async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<
     }
 
     Ok(parsed.url)
+}
+
+#[tauri::command]
+fn save_manual_frame_pack(
+    app: tauri::AppHandle,
+    request: SaveManualFramePackRequest,
+) -> Result<SavedManualFramePack, String> {
+    let base_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("获取应用数据目录失败：{err}"))?
+        .join("manual-frame-packs");
+    let frame_root = base_dir.join(format!(
+        "pack-{}-{}",
+        current_timestamp_ms(),
+        std::process::id()
+    ));
+
+    native_pet::write_manual_frame_pack(&frame_root, &request.actions)?;
+
+    let source_image = request
+        .actions
+        .get("idle")
+        .and_then(|frames| frames.first())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(SavedManualFramePack {
+        frame_root: frame_root.to_string_lossy().to_string(),
+        source_image,
+    })
 }
 
 #[tauri::command]
@@ -326,6 +370,13 @@ fn split_data_url(data_url: &str) -> Result<(String, String), String> {
     Ok((content_type, base64.to_string()))
 }
 
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|err| format!("创建 HTTP 客户端失败：{err}"))
+}
+
 fn current_timestamp_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -362,7 +413,8 @@ pub fn run() {
             get_native_pet_settings,
             generate_minimax_image,
             upload_reference_image,
-            load_preset_frame_pack
+            load_preset_frame_pack,
+            save_manual_frame_pack
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

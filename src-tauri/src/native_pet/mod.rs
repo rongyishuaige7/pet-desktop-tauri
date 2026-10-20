@@ -17,7 +17,8 @@ use macos as platform;
 use stub as platform;
 
 pub use frame_pack::{
-    encode_image_as_data_url, scan_action_frames, scan_pack, MIN_FRAMES_PER_ACTION,
+    encode_image_as_data_url, scan_action_frames, scan_pack, write_manual_frame_pack,
+    MIN_FRAMES_PER_ACTION,
 };
 #[allow(unused_imports)]
 pub use model::{

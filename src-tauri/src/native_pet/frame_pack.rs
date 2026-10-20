@@ -50,6 +50,79 @@ pub fn scan_pack(root: &Path) -> Result<HashMap<String, Vec<PathBuf>>, String> {
     Ok(actions)
 }
 
+pub fn write_manual_frame_pack(
+    root: &Path,
+    actions: &HashMap<String, Vec<String>>,
+) -> Result<(), String> {
+    let mut decoded = HashMap::new();
+
+    for (action, _) in ACTIONS {
+        let frames = actions
+            .get(action)
+            .ok_or_else(|| format!("缺少动作目录：{action}"))?;
+        if frames.len() < MIN_FRAMES_PER_ACTION {
+            return Err(format!(
+                "{action} 至少需要 {} 帧，当前只有 {} 帧",
+                MIN_FRAMES_PER_ACTION,
+                frames.len()
+            ));
+        }
+
+        let mut files = Vec::with_capacity(frames.len());
+        for data_url in frames {
+            files.push(decode_image_data_url(data_url)?);
+        }
+        decoded.insert(action.to_string(), files);
+    }
+
+    std::fs::create_dir_all(root)
+        .map_err(|err| format!("创建手动帧包目录失败 {}：{err}", root.display()))?;
+
+    for (action, files) in decoded {
+        let action_dir = root.join(&action);
+        if action_dir.exists() {
+            std::fs::remove_dir_all(&action_dir)
+                .map_err(|err| format!("清理动作目录失败 {}：{err}", action_dir.display()))?;
+        }
+        std::fs::create_dir_all(&action_dir)
+            .map_err(|err| format!("创建动作目录失败 {}：{err}", action_dir.display()))?;
+
+        for (index, (bytes, extension)) in files.into_iter().enumerate() {
+            let path = action_dir.join(format!("{index:03}.{extension}"));
+            std::fs::write(&path, bytes)
+                .map_err(|err| format!("写入帧图失败 {}：{err}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_image_data_url(data_url: &str) -> Result<(Vec<u8>, &'static str), String> {
+    let (header, payload) = data_url
+        .split_once(',')
+        .ok_or_else(|| "帧图不是有效的 data URL".to_string())?;
+    let mime = header
+        .strip_prefix("data:")
+        .and_then(|value| value.split_once(';').map(|(mime, _)| mime))
+        .ok_or_else(|| "帧图缺少 MIME 类型".to_string())?;
+
+    let extension = match mime {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        _ => return Err(format!("不支持的帧图类型：{mime}")),
+    };
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .map_err(|err| format!("帧图 base64 解码失败：{err}"))?;
+    if bytes.is_empty() {
+        return Err("帧图内容为空".to_string());
+    }
+
+    Ok((bytes, extension))
+}
+
 pub fn encode_image_as_data_url(path: &Path) -> Result<String, String> {
     let bytes =
         std::fs::read(path).map_err(|err| format!("读取图片失败 {}：{err}", path.display()))?;
@@ -93,6 +166,30 @@ mod tests {
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect::<Vec<_>>();
         assert_eq!(names, ["000.PNG", "001.jpg", "002.png", "003.webp"]);
+    }
+
+    const TINY_PNG_DATA_URL: &str = "data:image/png;base64,aGVsbG8=";
+
+    #[test]
+    fn writes_manual_pack_and_rejects_missing_actions() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut actions = HashMap::new();
+        for (action, _) in ACTIONS {
+            actions.insert(
+                action.to_string(),
+                vec![TINY_PNG_DATA_URL.to_string(); MIN_FRAMES_PER_ACTION],
+            );
+        }
+
+        write_manual_frame_pack(dir.path(), &actions).expect("write pack");
+        let pack = scan_pack(dir.path()).expect("scan pack");
+        assert_eq!(pack["idle"].len(), MIN_FRAMES_PER_ACTION);
+        assert!(pack["idle"][0].ends_with("000.png"));
+
+        let mut missing = actions.clone();
+        missing.remove("sleep");
+        let err = write_manual_frame_pack(dir.path(), &missing).expect_err("missing action");
+        assert!(err.contains("sleep"), "unexpected error: {err}");
     }
 
     #[test]

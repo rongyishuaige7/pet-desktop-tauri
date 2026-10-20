@@ -47,6 +47,7 @@ Tauri 命令与事件契约保持不变，前端主流程无需修改：
 - `set_native_pet_frame_root`
 - `set_native_pet_action`
 - `set_native_pet_scale`
+- `save_manual_frame_pack`
 - `native-pet-action-changed`
 - 新增可选事件 `native-pet-error`
 

@@ -8,6 +8,7 @@
 
 - 本地导入 6 组动作帧：待机、坐下、睡觉、开心、走路、跳跃。
 - 支持 PNG、JPG、WebP 帧图，透明 PNG 效果最佳。
+- 手动上传的帧包会写入应用数据目录，并同步到原生桌面宠物。
 - 管理界面可预览动画、切换动作、调整宠物缩放比例。
 - 原生桌面宠物窗口透明、置顶、可拖拽（Linux GTK / macOS AppKit）。
 - 宠物窗口右键菜单可直接切换动作。
@@ -176,6 +177,7 @@ sudo apt install "./src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0
 
 - 点击“预置帧包”页签，填写本地帧包目录。
 - 点击“一键导入并保存预置帧包”。
+- 或在“手动上传”页签上传 6 组帧，点击“保存并同步到桌面”；桌面版会把帧包写入应用数据目录。
 - 在管理界面右侧预览动画并切换动作。
 - 拖拽桌面宠物窗口可以移动位置。
 - 右键桌面宠物窗口可以切换动作。
@@ -234,6 +236,17 @@ React 管理界面
 -> 前端保存 PetProfile 到 IndexedDB
 -> 通知 BroadcastChannel
 -> 原生宠物窗口读取同一帧包目录并播放
+```
+
+手动上传：
+
+```text
+本地图片
+-> FileReader 转 data URL
+-> save_manual_frame_pack
+-> 写入应用数据目录 manual-frame-packs/<pack>
+-> set_native_pet_frame_root
+-> 原生宠物窗口读取并播放
 ```
 
 动作切换：
@@ -300,6 +313,7 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 
 - 目前主流程依赖现成动作帧包，暂未内置完整 AI 生成流程。
 - 默认帧包目录是相对工作目录的 `./frame-pack`；打包后请填写绝对路径，其他用户需要在界面中改成自己的帧包目录。
+- 手动上传的帧包会复制到应用数据目录，不会修改原始图片。
 - macOS 已持久化桌面宠物窗口位置；Linux 暂未持久化窗口位置。
 - 暂未实现开机自启动。
 - Windows 需要后续补充原生宠物窗口实现。
