@@ -54,7 +54,7 @@ pub fn normalize_scale(scale: f64) -> f64 {
 pub fn resolve_frame_root(root: &str) -> PathBuf {
     let path = PathBuf::from(root);
     if path.is_absolute() {
-        return path;
+        return path.canonicalize().unwrap_or(path);
     }
 
     let mut candidates = Vec::new();
@@ -76,7 +76,9 @@ pub fn resolve_frame_root(root: &str) -> PathBuf {
 
     for candidate in &candidates {
         if candidate.is_dir() {
-            return candidate.clone();
+            return candidate
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.clone());
         }
     }
 

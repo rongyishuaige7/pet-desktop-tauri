@@ -44,11 +44,15 @@ docs/adr/0002-macos-native-pet-window.md
 
 ## 运行效果
 
-以下素材由仓库当前代码的浏览器预览模式实拍生成；预览模式使用代码内置的模拟帧包，不代表 GTK 原生透明桌面窗口的真机效果。
+以下素材由仓库当前代码实拍生成；前两张为浏览器预览模式（使用代码内置的模拟帧包），macOS 截图为 AppKit 原生透明宠物窗口的真机效果。
 
 ![桌面宠物工作室真实界面](./docs/screenshots/studio.png)
 
 ![动作切换与帧动画](./docs/screenshots/desktop-pet.gif)
+
+macOS 原生宠物窗口（AppKit `NSPanel`，透明置顶，浮在管理界面之上）：
+
+![macOS 原生宠物窗口](./docs/screenshots/macos-studio.png)
 
 ## 快速开始
 
@@ -158,6 +162,15 @@ src-tauri/target/release/bundle/dmg/桌面贴贴宠物_0.1.0_aarch64.dmg
 ```
 
 DMG 需要 `hdiutil` 和 Finder 自动化权限；如果只想本地运行，直接使用 `.app` 即可。
+
+Universal（Apple Silicon + Intel）：
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri:build:universal
+```
+
+签名、公证和 CI 发布流程见 [docs/release-macos.md](./docs/release-macos.md)。
 
 运行二进制：
 
@@ -318,7 +331,7 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 - 暂未实现开机自启动。
 - Windows 需要后续补充原生宠物窗口实现。
 - 打包目标：Linux 为 deb，macOS 为 app / dmg。
-- macOS 分发需要 Developer ID 签名与 notarization；本地开发可先使用未签名构建。
+- macOS 分发需要 Developer ID 签名与 notarization；本地开发可先使用未签名构建，流程见 [docs/release-macos.md](./docs/release-macos.md)。
 
 ## License
 
