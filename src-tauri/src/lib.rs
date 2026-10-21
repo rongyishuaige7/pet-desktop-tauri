@@ -63,6 +63,7 @@ struct MinimaxImageRequest {
     model: Option<String>,
     prompt: String,
     reference_image_url: Option<String>,
+    aspect_ratio: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,7 +169,7 @@ async fn generate_minimax_image(request: MinimaxImageRequest) -> Result<String, 
         model: request.model.unwrap_or_else(|| "image-01".to_string()),
         prompt: request.prompt,
         response_format: "url".to_string(),
-        aspect_ratio: "1:1".to_string(),
+        aspect_ratio: normalize_aspect_ratio(request.aspect_ratio),
         n: 1,
         prompt_optimizer: true,
         subject_reference,
@@ -382,6 +383,13 @@ fn split_data_url(data_url: &str) -> Result<(String, String), String> {
         .unwrap_or_else(|| "image/png".to_string());
 
     Ok((content_type, base64.to_string()))
+}
+
+fn normalize_aspect_ratio(value: Option<String>) -> String {
+    match value.as_deref() {
+        Some("1:1" | "16:9" | "4:3" | "3:2" | "2:3" | "3:4" | "9:16") => value.unwrap(),
+        _ => "1:1".to_string(),
+    }
 }
 
 fn http_client() -> Result<reqwest::Client, String> {

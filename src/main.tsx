@@ -150,7 +150,9 @@ function StudioWindow() {
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
   const [appearanceNotes, setAppearanceNotes] = useState("");
   const [removeAiBackground, setRemoveAiBackground] = useState(true);
+  const [aiMode, setAiMode] = useState<"sheet" | "frames">("sheet");
   const [aiRunning, setAiRunning] = useState(false);
+  const [testingApi, setTestingApi] = useState(false);
   const [aiLog, setAiLog] = useState<string[]>([]);
   const aiCancelRef = useRef<{ cancelled: boolean } | null>(null);
   const [zoom, setZoom] = useState(() => {
@@ -281,6 +283,7 @@ function StudioWindow() {
         species,
         appearanceNotes,
         removeBackground: removeAiBackground,
+        mode: aiMode,
         onProgress: (message) => setAiLog((log) => [...log, message]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -317,6 +320,38 @@ function StudioWindow() {
     } finally {
       setAiRunning(false);
       aiCancelRef.current = null;
+    }
+  }
+
+  async function handleTestApi() {
+    if (!isTauri) {
+      setError("API 测试需要在桌面版运行。");
+      return;
+    }
+    if (!apiKey.trim()) {
+      setError("请先填写 Minimax API Key。");
+      return;
+    }
+
+    setTestingApi(true);
+    setError(null);
+    setPresetStatus("正在测试 Minimax API Key...");
+    try {
+      const image = await invoke<string>("generate_minimax_image", {
+        request: {
+          apiKey,
+          model: "image-01",
+          prompt: "一个简单的红色圆形，白色背景，居中，1:1",
+          aspectRatio: "1:1"
+        }
+      });
+      if (!image) throw new Error("接口没有返回图片");
+      setPresetStatus("Minimax API Key 连接成功。");
+    } catch (err) {
+      setError(`API 测试失败：${formatError(err)}`);
+      setPresetStatus(null);
+    } finally {
+      setTestingApi(false);
     }
   }
 
@@ -631,6 +666,16 @@ function StudioWindow() {
                   />
                 </label>
                 <label className="ai-field">
+                  生成模式
+                  <select
+                    value={aiMode}
+                    onChange={(event) => setAiMode(event.target.value as "sheet" | "frames")}
+                  >
+                    <option value="sheet">动作序列图（推荐，约 7 次请求）</option>
+                    <option value="frames">逐帧生成（约 31 次请求）</option>
+                  </select>
+                </label>
+                <label className="ai-field">
                   宠物照片
                   <input
                     type="file"
@@ -659,15 +704,25 @@ function StudioWindow() {
                   自动去背景（绿幕/纯色背景，实验）
                 </label>
                 <p className="ai-warning">
-                  完整生成约 31 次图像请求（1 张角色设定 + 30 帧），耗时可能数分钟；API Key 只保存在当前会话。
-                  自动去背景是本地颜色抠图，边缘复杂或背景不纯时可能残留，可关闭后自行抠图。
+                  {aiMode === "sheet"
+                    ? "序列图模式约 7 次图像请求（1 张角色设定 + 6 张 3×2 动作序列图），单次动作连贯性更好。"
+                    : "逐帧模式约 31 次图像请求（1 张角色设定 + 30 帧），耗时和费用更高。"}
+                  API Key 只保存在当前会话。自动去背景是本地颜色抠图，边缘复杂或背景不纯时可能残留，可关闭后自行抠图。
                 </p>
                 <div className="ai-actions">
+                  <button
+                    className="ai-test-btn"
+                    type="button"
+                    onClick={handleTestApi}
+                    disabled={aiRunning || testingApi || !isTauri}
+                  >
+                    {testingApi ? "测试中..." : "测试 API Key（1 次）"}
+                  </button>
                   <button
                     className="secondary-action"
                     type="button"
                     onClick={handleGenerateAI}
-                    disabled={aiRunning || !isTauri}
+                    disabled={aiRunning || testingApi || !isTauri}
                   >
                     {aiRunning ? "AI 生成中..." : "开始生成"}
                   </button>

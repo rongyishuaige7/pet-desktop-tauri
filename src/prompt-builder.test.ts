@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildActionPrompt,
   buildCharacterPrompt,
+  buildSpriteSheetPrompt,
   FRAMES_PER_ACTION,
   MAX_PROMPT_LENGTH
 } from "./prompt-builder";
@@ -20,6 +21,14 @@ describe("prompt builder", () => {
     expect(prompt).toContain("奶茶");
     expect(prompt).toContain("黑白短毛猫");
     expect(prompt).not.toContain("{{");
+    expect(prompt.length).toBeLessThan(MAX_PROMPT_LENGTH);
+  });
+
+  it("describes the 3x2 sprite sheet layout", () => {
+    const prompt = buildSpriteSheetPrompt(context, "walk");
+    expect(prompt).toContain("3 列 × 2 行");
+    expect(prompt).toContain("第 1-5 帧");
+    expect(prompt).toContain("走路");
     expect(prompt.length).toBeLessThan(MAX_PROMPT_LENGTH);
   });
 

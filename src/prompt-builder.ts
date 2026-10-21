@@ -92,6 +92,28 @@ export function buildActionPrompt(
   ].join("\n");
 }
 
+export function buildSpriteSheetPrompt(
+  context: PromptContext,
+  action: PetAction
+) {
+  const { species, appearance, style, negative } = basePrompt(context);
+  const label = ACTION_LABELS[action];
+
+  return [
+    `以角色设定图中的同一只${species}为唯一角色来源，生成一张 3 列 × 2 行的动作序列图。`,
+    `整张图为 3:2 横版，共 6 个等大正方形格子。前 5 格按从左到右、从上到下依次是「${label}」动作的第 1-5 帧；第 6 格留空，只保留纯背景。`,
+    `动作描述：${ACTION_DESCRIPTIONS[action]}`,
+    `角色一致性：保持脸型、眼距、耳朵、毛色、花纹、胸口、爪子、尾巴和身体比例完全一致；只改变姿态、表情和动作节奏，不要重新设计角色。`,
+    `外观备注：${appearance}`,
+    `每格角色完整全身、居中、比例一致；格子之间不要边框、分隔线、数字、文字、水印或场景。`,
+    context.background === "green"
+      ? `背景：所有格子统一使用纯色 #00FF00 绿幕，均匀无渐变、无阴影、无地面，角色边缘干净。`
+      : `背景：所有格子统一使用干净浅色，均匀无渐变、无阴影、无地面。`,
+    `风格：${style}`,
+    `禁止：${negative}不要裁切身体、耳朵、尾巴或爪子，不要奔跑、攻击、摔倒或飞出格子。`
+  ].join("\n");
+}
+
 export function actionLabel(action: PetAction) {
   return ACTION_LABELS[action];
 }

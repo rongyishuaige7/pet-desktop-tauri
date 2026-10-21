@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { buildActionPrompt, buildCharacterPrompt, FRAMES_PER_ACTION, actionLabel } from "./prompt-builder";
+import {
+  buildActionPrompt,
+  buildCharacterPrompt,
+  buildSpriteSheetPrompt,
+  FRAMES_PER_ACTION,
+  actionLabel
+} from "./prompt-builder";
 import { removeBackgroundFromDataUrl } from "./background-removal";
+import { sliceSpriteSheet } from "./sprite-sheet";
 import { PET_ACTIONS, type ActionFrameSet, type PetAction, type PetSpecies } from "./types";
 
 interface SavedManualFramePack {
@@ -19,6 +26,7 @@ export interface GenerateFramePackOptions {
   isCancelled?: () => boolean;
   frameDelayMs?: number;
   removeBackground?: boolean;
+  mode?: "sheet" | "frames";
 }
 
 export interface GeneratedFramePack {
@@ -55,13 +63,19 @@ async function uploadImage(uploadUrl: string, dataUrl: string, filename: string)
   });
 }
 
-async function generateImage(apiKey: string, prompt: string, referenceImageUrl: string) {
+async function generateImage(
+  apiKey: string,
+  prompt: string,
+  referenceImageUrl: string,
+  aspectRatio: "1:1" | "3:2" = "1:1"
+) {
   const image = await invoke<string>("generate_minimax_image", {
     request: {
       apiKey,
       model: "image-01",
       prompt,
-      referenceImageUrl
+      referenceImageUrl,
+      aspectRatio
     }
   });
 
@@ -77,6 +91,7 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
   if (!options.referencePhoto) throw new Error("请先选择宠物照片");
 
   const progress = (message: string) => options.onProgress?.(message);
+  const mode = options.mode ?? "sheet";
   const removeBackground = options.removeBackground ?? true;
   const background = removeBackground ? "green" : "neutral";
   const cleanImage = async (image: string) => {
@@ -108,7 +123,8 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
       appearanceNotes: options.appearanceNotes,
       background
     }),
-    referenceUrl
+    referenceUrl,
+    "1:1"
   );
   progress("去除角色设定图背景...");
   const characterImage = await cleanImage(characterImageRaw);
@@ -129,22 +145,22 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
     walk: [],
     jump: []
   };
-  const totalFrames = PET_ACTIONS.length * FRAMES_PER_ACTION;
-  let completedFrames = 0;
+  const delay = options.frameDelayMs ?? 200;
+  const wait = async () => {
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  };
 
-  for (const action of PET_ACTIONS) {
-    const frames: string[] = [];
-    for (let frameIndex = 0; frameIndex < FRAMES_PER_ACTION; frameIndex++) {
+  if (mode === "sheet") {
+    for (let actionIndex = 0; actionIndex < PET_ACTIONS.length; actionIndex++) {
+      const action = PET_ACTIONS[actionIndex];
       ensureNotCancelled(options.isCancelled);
-      progress(
-        `生成「${actionLabel(action.id)}」帧 ${frameIndex + 1}/${FRAMES_PER_ACTION}（总计 ${
-          completedFrames + 1
-        }/${totalFrames}）...`
-      );
+      progress(`生成「${actionLabel(action.id)}」动作序列图（${actionIndex + 1}/${PET_ACTIONS.length}）...`);
 
-      const image = await generateImage(
+      const sheet = await generateImage(
         apiKey,
-        buildActionPrompt(
+        buildSpriteSheetPrompt(
           {
             species: options.species,
             petName: options.petName,
@@ -153,21 +169,62 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
             appearanceNotes: options.appearanceNotes,
             background
           },
-          action.id,
-          frameIndex
+          action.id
         ),
-        characterUrl
+        characterUrl,
+        "3:2"
       );
-      frames.push(await cleanImage(image));
-      completedFrames += 1;
 
-      // Keep the API calls sequential and leave a little room for rate limits.
-      const delay = options.frameDelayMs ?? 200;
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
+      const cells = await sliceSpriteSheet(sheet);
+      if (cells.length < FRAMES_PER_ACTION) {
+        throw new Error(`动作序列图拆分失败：只得到 ${cells.length} 格`);
       }
+
+      const frames: string[] = [];
+      for (const cell of cells.slice(0, FRAMES_PER_ACTION)) {
+        ensureNotCancelled(options.isCancelled);
+        frames.push(await cleanImage(cell));
+      }
+      actions[action.id] = frames;
+      progress(`已拆分「${actionLabel(action.id)}」${FRAMES_PER_ACTION} 帧。`);
+      await wait();
     }
-    actions[action.id] = frames;
+  } else {
+    const totalFrames = PET_ACTIONS.length * FRAMES_PER_ACTION;
+    let completedFrames = 0;
+
+    for (const action of PET_ACTIONS) {
+      const frames: string[] = [];
+      for (let frameIndex = 0; frameIndex < FRAMES_PER_ACTION; frameIndex++) {
+        ensureNotCancelled(options.isCancelled);
+        progress(
+          `生成「${actionLabel(action.id)}」帧 ${frameIndex + 1}/${FRAMES_PER_ACTION}（总计 ${
+            completedFrames + 1
+          }/${totalFrames}）...`
+        );
+
+        const image = await generateImage(
+          apiKey,
+          buildActionPrompt(
+            {
+              species: options.species,
+              petName: options.petName,
+              referenceImageUrl: characterUrl,
+              characterReferenceUrl: characterUrl,
+              appearanceNotes: options.appearanceNotes,
+              background
+            },
+            action.id,
+            frameIndex
+          ),
+          characterUrl
+        );
+        frames.push(await cleanImage(image));
+        completedFrames += 1;
+        await wait();
+      }
+      actions[action.id] = frames;
+    }
   }
 
   ensureNotCancelled(options.isCancelled);

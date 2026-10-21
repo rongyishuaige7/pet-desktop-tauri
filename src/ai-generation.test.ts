@@ -2,10 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { generatePetFramePack, GenerationCancelled } from "./ai-generation";
 import { FRAMES_PER_ACTION } from "./prompt-builder";
+import { sliceSpriteSheet } from "./sprite-sheet";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn()
 }));
+
+vi.mock("./sprite-sheet", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sprite-sheet")>();
+  return {
+    ...actual,
+    sliceSpriteSheet: vi.fn(async () =>
+      Array.from({ length: FRAMES_PER_ACTION }, (_, index) => `data:image/png;base64,CELL${index}`)
+    )
+  };
+});
 
 const invokeMock = vi.mocked(invoke);
 
@@ -28,7 +39,8 @@ const options = {
   petName: "奶茶",
   species: "cat" as const,
   frameDelayMs: 0,
-  removeBackground: false
+  removeBackground: false,
+  mode: "frames" as const
 };
 
 describe("AI frame pack generation", () => {
@@ -49,6 +61,13 @@ describe("AI frame pack generation", () => {
       "save_manual_frame_pack",
       expect.objectContaining({ request: expect.objectContaining({ actions: expect.any(Object) }) })
     );
+  });
+
+  it("uses one sprite sheet request per action in sheet mode", async () => {
+    const result = await generatePetFramePack({ ...options, mode: "sheet" });
+    expect(result.actions.idle).toHaveLength(FRAMES_PER_ACTION);
+    expect(vi.mocked(sliceSpriteSheet)).toHaveBeenCalledTimes(6);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "generate_minimax_image")).toHaveLength(7);
   });
 
   it("stops when cancelled", async () => {

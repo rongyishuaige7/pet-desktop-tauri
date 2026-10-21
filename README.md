@@ -14,7 +14,7 @@
 - macOS：单击宠物触发开心反馈，拖拽移动窗口。
 - macOS：透明区域默认点击穿透，可通过托盘菜单关闭。
 - 托盘菜单支持切换动作、暂停自主行为/动画、透明区域穿透、重置位置和开机自启。
-- AI 生成页签：照片 + Minimax API Key + 上传服务，生成角色设定图和 6×5 动作帧，支持本地自动去背景并自动导入。
+- AI 生成页签：照片 + Minimax API Key + 上传服务，生成角色设定图和 6 组动作帧；默认用 3×2 动作序列图提升连贯性，支持本地自动去背景并自动导入。
 - 管理界面可预览动画、切换动作、调整宠物缩放比例。
 - 原生桌面宠物窗口透明、置顶、可拖拽（Linux GTK / macOS AppKit）。
 - 宠物窗口右键菜单可直接切换动作。
@@ -237,6 +237,7 @@ React 管理界面
 | `src/storage.ts` | IndexedDB 持久化、BroadcastChannel 同步、动作切换同步。 |
 | `src/ai-generation.ts` | 照片上传、角色设定图与 30 帧动作生成、帧包落盘。 |
 | `src/prompt-builder.ts` | 适配 Minimax 1500 字符限制的压缩 prompt 构建。 |
+| `src/sprite-sheet.ts` | 3×2 动作序列图的切分与帧提取。 |
 | `src/background-removal.ts` | 绿幕/纯色背景的本地 alpha 抠图与边缘处理。 |
 | `src-tauri/src/lib.rs` | Tauri 主逻辑，注册命令、启动原生宠物窗口、托盘菜单、窗口关闭拦截、Minimax/上传命令。 |
 | `src-tauri/src/native_pet/mod.rs` | 共享运行时状态、设置与帧包 API、平台分发。 |
@@ -305,7 +306,8 @@ React 管理界面
 -> upload_reference_image 上传为公网 URL
 -> generate_minimax_image 生成角色设定图
 -> 上传角色设定图作为动作帧参考
--> 逐动作生成 5 帧（6 × 5 = 30 帧）
+-> 默认每个动作生成 1 张 3×2 序列图（共 6 次请求），切分为 5 帧
+-> 或切换到逐帧模式，逐动作生成 30 帧
 -> 本地按绿幕/边缘纯色去除背景，生成透明 PNG
 -> save_manual_frame_pack 写入应用数据目录
 -> set_native_pet_frame_root 同步桌面宠物
@@ -321,7 +323,8 @@ PUBLIC_BASE_URL="https://your-domain.example" node tools/upload-server.mjs
 ```
 
 - `image-01` 的 prompt 上限是 1500 字符，运行时使用 [src/prompt-builder.ts](src/prompt-builder.ts) 的压缩 prompt；`prompts/` 中的完整模板仍用于 ChatGPT 合成和人工调优。
-- 完整生成约 31 次图像请求，耗时可能数分钟，可随时取消。
+- 默认序列图模式约 7 次图像请求（1 张角色设定 + 6 张序列图），逐帧模式约 31 次；耗时可能数分钟，可随时取消。
+- AI 页签提供“测试 API Key（1 次）”按钮，可先验证 Minimax 连接。
 - 自动去背景默认开启，可在页签中关闭；它是本地颜色抠图，复杂边缘或背景不纯时可能残留。
 
 AI 角色原型图和动作帧 prompt 模板保存在 `prompts/`。这些模板只保存通用结构和可复用描述，真实生成记录建议放在本地 `generation-runs/`，不要提交 API Key、私有图片 URL、用户原图或未脱敏生成参数。
@@ -358,6 +361,7 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 
 - AI 生成依赖 Minimax API Key 和公网上传服务，未接入本地模型。
 - 自动去背景是本地颜色抠图，不是分割模型；发丝、半透明边缘或非纯色背景可能残留，必要时请手动抠图。
+- 序列图模式依赖模型按 3×2 网格输出；如果格子错位或数量不足，可切换到逐帧模式。
 - 每个动作的 5 帧是独立请求，动作连贯性受模型影响，可能需要人工筛选或替换。
 - 默认帧包目录是相对工作目录的 `./frame-pack`；打包后请填写绝对路径，其他用户需要在界面中改成自己的帧包目录。
 - 手动上传的帧包会复制到应用数据目录，不会修改原始图片。

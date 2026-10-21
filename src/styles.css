@@ -352,6 +352,7 @@ h1 {
 }
 
 .ai-field input,
+.ai-field select,
 .ai-field textarea {
   border: 3px solid var(--border-color);
   border-radius: var(--border-radius-md);
@@ -363,6 +364,7 @@ h1 {
 }
 
 .ai-field input:focus,
+.ai-field select:focus,
 .ai-field textarea:focus {
   transform: translate(-2px, -2px);
   box-shadow: 5px 5px 0 var(--border-color);
@@ -407,6 +409,16 @@ h1 {
 
 .ai-actions .secondary-action {
   flex: 1;
+}
+
+.ai-test-btn {
+  padding: 0 14px;
+  border: 3px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: var(--secondary-accent-light);
+  color: var(--text-main);
+  font-weight: 900;
+  box-shadow: var(--shadow-offset-sm);
 }
 
 .ai-cancel-btn {
