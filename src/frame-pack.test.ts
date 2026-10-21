@@ -154,6 +154,16 @@ describe("frame pack", () => {
     }
   });
 
+  it("plants the support foot for the grounded actions", () => {
+    for (const action of ["idle", "walk"] as const) {
+      for (let index = 0; index < FRAMES_PER_ACTION; index += 1) {
+        const file = join(PACK, action, `${String(index).padStart(3, "0")}.png`);
+        const { bottom } = opaqueBounds(decodePng(file));
+        expect(bottom, `${action}/${index} support foot`).toBe(474);
+      }
+    }
+  });
+
   it("keeps the public copy byte-identical to the source pack", () => {
     const hash = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
     for (const action of ACTIONS) {

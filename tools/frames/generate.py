@@ -243,10 +243,36 @@ def check_pack(root: Path) -> list[str]:
     return problems
 
 
+# ------------------------------------------------------------------- anchoring
+
+
+def build_grounded(action: str) -> dict[str, np.ndarray]:
+    """Plant the support foot on GROUND_Y for every frame of `action`.
+
+    idle and walk were shipped with the lowest opaque pixel drifting between
+    468 and 478, so the sprite floated up and down instead of the body bobbing
+    over a planted foot.  A whole-pixel translation fixes that without touching
+    a single texel; running it twice is a no-op.
+    """
+    frames: dict[str, np.ndarray] = {}
+    for path in sorted((FRAME_ROOT / action).glob("*.png")):
+        frame = load_rgba(path)
+        _, bottom, _, _ = subject_bounds(frame)
+        shift = int(round(GROUND_Y)) - bottom
+        xs, ys = grid()
+        frames[path.stem] = warp(frame, xs, ys - shift)
+    return frames
+
+
 # ------------------------------------------------------------------------ main
 
 
-BUILDERS = {"happy": build_happy, "sit": build_sit}
+BUILDERS = {
+    "happy": build_happy,
+    "sit": build_sit,
+    "idle": lambda: build_grounded("idle"),
+    "walk": lambda: build_grounded("walk"),
+}
 
 
 def main(argv: list[str]) -> int:
