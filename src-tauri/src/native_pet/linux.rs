@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use super::{
-    frame_interval_ms, is_looping, persist_runtime_settings, runtime, runtime_action_scale,
-    runtime_root, scaled_canvas_size, scan_action_frames, set_action, take_reload_request, ACTIONS,
-    CANVAS_SIZE, PET_SIZE,
+    frame_interval_ms, is_looping, one_shot_next, persist_runtime_settings, runtime,
+    runtime_action_scale, runtime_root, scaled_canvas_size, scan_action_frames, set_action,
+    take_reload_request, ACTIONS, CANVAS_SIZE, PET_SIZE,
 };
 
 thread_local! {
@@ -204,6 +204,7 @@ fn setup_animation_timer(
         };
 
         let mut state = render_state.borrow_mut();
+        let mut finished = false;
         if state.action != next_action {
             state.action = next_action.clone();
             state.frame_index = 0;
@@ -219,7 +220,22 @@ fn setup_animation_timer(
             }
             last_advance = Instant::now();
         }
+
+        // A finished one-shot (jump, happy) hands control back to idle instead of
+        // freezing on its last frame.
+        if frame_count > 0
+            && state.frame_index + 1 >= frame_count
+            && !is_looping(&state.action)
+            && one_shot_next(&state.action).is_some()
+            && last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&next_action))
+        {
+            finished = true;
+        }
         drop(state);
+
+        if finished {
+            let _ = super::return_to_idle();
+        }
 
         drawing_area.queue_draw();
         ControlFlow::Continue

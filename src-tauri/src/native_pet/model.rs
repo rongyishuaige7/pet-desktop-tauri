@@ -17,7 +17,7 @@ pub const ACTIONS: [(&str, &str); 6] = [
     ("jump", "跳跃"),
 ];
 
-pub const LOOPING_ACTIONS: [&str; 3] = ["idle", "walk", "jump"];
+pub const LOOPING_ACTIONS: [&str; 2] = ["idle", "walk"];
 
 pub fn is_action(action: &str) -> bool {
     ACTIONS.iter().any(|(id, _)| *id == action)
@@ -35,11 +35,24 @@ pub fn is_looping(action: &str) -> bool {
     LOOPING_ACTIONS.contains(&action)
 }
 
+/// Actions that play once and then hand control back to idle.
+///
+/// `sit` and `sleep` are deliberately absent: they are resting states and hold
+/// their last frame until something else changes the action.
+pub fn one_shot_next(action: &str) -> Option<&'static str> {
+    match action {
+        "jump" | "happy" => Some("idle"),
+        _ => None,
+    }
+}
+
 pub fn frame_interval_ms(action: &str) -> u64 {
-    if action == "sleep" {
-        420
-    } else {
-        150
+    match action {
+        "sleep" => 420,
+        "sit" => 160,
+        "happy" => 130,
+        "jump" => 110,
+        _ => 150,
     }
 }
 

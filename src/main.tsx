@@ -26,7 +26,6 @@ import {
   type PetSpecies,
   type StudioTab
 } from "./types";
-import { getMockFrames } from "./mock-frames";
 import { ToastProvider, useToast } from "./components/ui/Toast";
 import { AppSidebar } from "./components/shell/AppSidebar";
 import { LiveStage } from "./components/stage/LiveStage";

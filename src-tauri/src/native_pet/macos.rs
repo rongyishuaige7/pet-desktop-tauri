@@ -30,7 +30,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::{
     current_settings, emit_error, frame_interval_ms, is_looping, mark_position_dirty,
-    normalize_scale, persist_runtime_settings, runtime_action_scale, runtime_root,
+    normalize_scale, one_shot_next, persist_runtime_settings, runtime_action_scale, runtime_root,
     scaled_canvas_size, scan_action_frames, set_action, take_position_dirty_request,
     take_position_reset_request, take_reload_request, update_position, PetPosition, ACTIONS,
     CANVAS_SIZE, MIN_FRAMES_PER_ACTION, PET_SIZE,
@@ -619,6 +619,7 @@ fn tick() {
     let (action, scale) = runtime_action_scale();
     let reload_root = take_reload_request();
     let reset_position = take_position_reset_request();
+    let mut finished: Option<&'static str> = None;
 
     UI.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
@@ -684,8 +685,26 @@ fn tick() {
             ui.last_advance = Instant::now();
         }
 
+        // A finished one-shot (jump, happy) hands control back to idle instead of
+        // freezing on its last frame.
+        if frame_count > 0
+            && ui.frame_index + 1 >= frame_count
+            && !is_looping(&action)
+            && ui.last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&action))
+        {
+            finished = one_shot_next(&action);
+        }
+
         update_image(ui);
     });
+
+    if let Some(next) = finished {
+        if super::return_to_idle().is_ok() {
+            if let Some(app) = super::app_handle() {
+                let _ = app.emit("native-pet-action-changed", next.to_string());
+            }
+        }
+    }
 }
 
 fn ensure_frames(ui: &mut UiState, action: &str) {

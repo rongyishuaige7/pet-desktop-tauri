@@ -23,7 +23,7 @@ pub use frame_pack::{
 #[allow(unused_imports)]
 pub use model::{
     frame_interval_ms, is_action, is_looping, normalize_action, normalize_frame_root,
-    normalize_scale, resolve_frame_root, scaled_canvas_size, ACTIONS, CANVAS_SIZE,
+    normalize_scale, one_shot_next, resolve_frame_root, scaled_canvas_size, ACTIONS, CANVAS_SIZE,
     DEFAULT_FRAME_ROOT, LOOPING_ACTIONS, MAX_SCALE, MIN_SCALE, PET_SIZE, SETTINGS_FILE_NAME,
 };
 pub use settings::{
@@ -123,6 +123,18 @@ pub fn set_action(action: &str) -> Result<(), String> {
         .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
     runtime.action = action.to_string();
     runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(20));
+    Ok(())
+}
+
+/// Hand control back to idle after a one-shot action finished.
+///
+/// Unlike `set_action` this leaves the autonomous schedule untouched: the pet
+/// should keep the idle time it was already granted, not restart a 20s wait.
+pub fn return_to_idle() -> Result<(), String> {
+    let mut runtime = runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+    runtime.action = "idle".to_string();
     Ok(())
 }
 

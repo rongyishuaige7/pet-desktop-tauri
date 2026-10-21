@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { LOOPING_ACTIONS } from "../../config";
+import React, { useEffect, useRef, useState } from "react";
+import { ACTION_TIMING } from "../../config";
 import { PET_ACTIONS, type PetAction, type PetProfile } from "../../types";
 
 const ACTION_EMOJIS: Record<PetAction, string> = {
@@ -34,29 +34,57 @@ export const LiveStage: React.FC<LiveStageProps> = ({
 }) => {
   const currentAction = pet?.currentAction ?? "idle";
   const frames = pet?.actions[currentAction] ?? pet?.actions.idle ?? [];
+  const timing = ACTION_TIMING[currentAction];
   const [frameIndex, setFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+
+  // The parent recreates its handler on every render; keep the timer stable.
+  const switchRef = useRef(onSwitchAction);
+  useEffect(() => {
+    switchRef.current = onSwitchAction;
+  }, [onSwitchAction]);
 
   useEffect(() => {
     setFrameIndex(0);
   }, [currentAction, frames.length, pet?.actionStartedAt]);
 
+  // Warm the cache for every action so switching never flashes a blank frame.
+  useEffect(() => {
+    if (!pet) return;
+    for (const action of PET_ACTIONS) {
+      for (const src of pet.actions[action.id] ?? []) {
+        const image = new Image();
+        image.src = src;
+      }
+    }
+  }, [pet]);
+
   useEffect(() => {
     if (!isPlaying || frames.length === 0) return;
-    const shouldLoop = LOOPING_ACTIONS.has(currentAction);
-    const interval = currentAction === "sleep" ? 420 : 150;
+    const { frameMs, loop } = timing;
 
     const timer = window.setInterval(() => {
       setFrameIndex((prev) => {
-        if (shouldLoop) return (prev + 1) % frames.length;
+        if (loop) return (prev + 1) % frames.length;
         return Math.min(prev + 1, frames.length - 1);
       });
-    }, interval);
+    }, frameMs);
 
     return () => window.clearInterval(timer);
-  }, [currentAction, frames.length, isPlaying, pet?.actionStartedAt]);
+  }, [currentAction, frames.length, isPlaying, pet?.actionStartedAt, timing]);
 
   const activeIndex = frames.length === 0 ? 0 : Math.min(frameIndex, frames.length - 1);
+
+  // One-shots (jump, happy) return to idle instead of freezing on their last
+  // frame; resting states (sit, sleep) intentionally stay where they are.
+  useEffect(() => {
+    const returnTo = timing.returnTo;
+    if (!isPlaying || !returnTo || frames.length === 0) return;
+    if (activeIndex < frames.length - 1) return;
+
+    const timer = window.setTimeout(() => switchRef.current(returnTo), timing.frameMs);
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, frames.length, isPlaying, timing]);
 
   return (
     <div className="stage-view-grid">
