@@ -154,8 +154,8 @@ describe("frame pack", () => {
     }
   });
 
-  it("plants the support foot for the grounded actions", () => {
-    for (const action of ["idle", "walk"] as const) {
+  it("plants the grounded actions on the floor line", () => {
+    for (const action of ["idle", "walk", "sleep"] as const) {
       for (let index = 0; index < FRAMES_PER_ACTION; index += 1) {
         const file = join(PACK, action, `${String(index).padStart(3, "0")}.png`);
         const { bottom } = opaqueBounds(decodePng(file));

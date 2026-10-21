@@ -272,6 +272,7 @@ BUILDERS = {
     "sit": build_sit,
     "idle": lambda: build_grounded("idle"),
     "walk": lambda: build_grounded("walk"),
+    "sleep": lambda: build_grounded("sleep"),
 }
 
 
