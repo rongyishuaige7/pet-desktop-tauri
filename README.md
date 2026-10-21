@@ -249,6 +249,7 @@ React 管理界面
 | `src-tauri/tauri.conf.json` | Tauri 应用窗口、构建和打包配置。 |
 | `src-tauri/capabilities/default.json` | Tauri 权限配置。 |
 | `prompts/` | AI 角色原型图和动作帧生成的 prompt 模板。 |
+| `tools/frames/generate.py` | 动作帧的确定性变形/接地脚本，保证头部刚性、出血边距和脚底锚点。 |
 | `tools/upload-server.mjs` | 参考图上传服务示例，用于 Minimax 图生图公网 URL。 |
 | `tools/nginx-upload-static.conf` | 上传服务的 nginx 配置示例。 |
 
@@ -363,7 +364,7 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 - 自动去背景是本地颜色抠图，不是分割模型；发丝、半透明边缘或非纯色背景可能残留，必要时请手动抠图。
 - 序列图模式依赖模型按 3×2 网格输出；如果格子错位或数量不足，可切换到逐帧模式。
 - 每个动作的 5 帧是独立请求，动作连贯性受模型影响，可能需要人工筛选或替换。
-- 默认帧包目录是相对工作目录的 `./frame-pack`；打包后请填写绝对路径，其他用户需要在界面中改成自己的帧包目录。
+- 默认帧包目录是相对工作目录的 `./frame-pack`，只用于开发；打包时帧包会作为资源写进 app bundle（macOS 在 `Contents/Resources/frame-pack`），运行时找不到相对目录会自动回退到它。想换自己的帧包，在界面里填绝对路径即可。
 - 手动上传的帧包会复制到应用数据目录，不会修改原始图片。
 - macOS 已持久化桌面宠物窗口位置；Linux 暂未持久化窗口位置。
 - 点击穿透与单击反馈目前仅 macOS 实现；Linux 仍为整窗拖拽、右键菜单。

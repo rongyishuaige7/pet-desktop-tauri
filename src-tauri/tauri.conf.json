@@ -28,7 +28,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
-    "icon": ["icons/icon.png"]
+    "targets": "all",
+    "icon": ["icons/icon.png"],
+    "resources": {
+      "../frame-pack": "frame-pack"
+    }
   }
 }

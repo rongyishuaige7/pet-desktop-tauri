@@ -33,7 +33,29 @@ pub use settings::{
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Where the frame pack that ships inside the app bundle lives, if any.
+static BUNDLED_FRAME_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// Record the bundled frame pack location once, during app setup.
+///
+/// A packaged app is launched with `/` as its working directory, so the relative
+/// `./frame-pack` default can never resolve; the bundled copy is the fallback
+/// that keeps the pet visible on a fresh install.
+pub fn set_bundled_frame_root(app: &AppHandle) {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("frame-pack"))
+        .filter(|dir| dir.is_dir());
+    let _ = BUNDLED_FRAME_ROOT.set(bundled);
+}
+
+pub(crate) fn bundled_frame_root() -> Option<PathBuf> {
+    BUNDLED_FRAME_ROOT.get().cloned().flatten()
+}
 
 pub struct Runtime {
     pub action: String,

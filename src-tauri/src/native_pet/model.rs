@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_FRAME_ROOT: &str = "./frame-pack";
 pub const SETTINGS_FILE_NAME: &str = "native-pet-settings.json";
@@ -87,7 +87,15 @@ pub fn resolve_frame_root(root: &str) -> PathBuf {
         candidates.push(PathBuf::from(home).join(&path));
     }
 
-    for candidate in &candidates {
+    let bundled = super::bundled_frame_root();
+    pick_frame_root(&candidates, bundled.as_deref())
+}
+
+/// First existing candidate wins; otherwise fall back to the frame pack that
+/// ships inside the app bundle, then to the first candidate so the caller gets a
+/// meaningful path in the error message.
+pub fn pick_frame_root(candidates: &[PathBuf], bundled: Option<&Path>) -> PathBuf {
+    for candidate in candidates {
         if candidate.is_dir() {
             return candidate
                 .canonicalize()
@@ -95,7 +103,11 @@ pub fn resolve_frame_root(root: &str) -> PathBuf {
         }
     }
 
-    candidates.into_iter().next().unwrap_or(path)
+    if let Some(dir) = bundled.filter(|dir| dir.is_dir()) {
+        return dir.to_path_buf();
+    }
+
+    candidates.first().cloned().unwrap_or_default()
 }
 
 pub fn normalize_frame_root(root_dir: Option<String>) -> String {
@@ -107,4 +119,64 @@ pub fn normalize_frame_root(root_dir: Option<String>) -> String {
 
 pub fn scaled_canvas_size(scale: f64) -> f64 {
     (CANVAS_SIZE * normalize_scale(scale)).round().max(180.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pet-frames-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn picks_the_first_existing_candidate() {
+        let missing = std::env::temp_dir().join("pet-frames-does-not-exist");
+        let existing = temp_dir("existing");
+
+        let picked = pick_frame_root(&[missing, existing.clone()], None);
+
+        assert_eq!(picked, existing.canonicalize().unwrap());
+        std::fs::remove_dir_all(existing).ok();
+    }
+
+    #[test]
+    fn falls_back_to_the_bundled_pack() {
+        let bundled = temp_dir("bundled");
+        let missing = std::env::temp_dir().join("pet-frames-does-not-exist");
+
+        let picked = pick_frame_root(&[missing], Some(&bundled));
+
+        assert_eq!(picked, bundled);
+        std::fs::remove_dir_all(bundled).ok();
+    }
+
+    #[test]
+    fn falls_back_to_the_first_candidate_when_nothing_exists() {
+        let first = std::env::temp_dir().join("pet-frames-does-not-exist");
+
+        let picked = pick_frame_root(std::slice::from_ref(&first), None);
+
+        assert_eq!(picked, first);
+    }
+
+    #[test]
+    fn one_shots_hand_back_to_idle() {
+        assert_eq!(one_shot_next("jump"), Some("idle"));
+        assert_eq!(one_shot_next("happy"), Some("idle"));
+        assert_eq!(one_shot_next("sit"), None);
+        assert_eq!(one_shot_next("sleep"), None);
+        assert_eq!(one_shot_next("idle"), None);
+    }
+
+    #[test]
+    fn only_idle_and_walk_loop() {
+        assert!(is_looping("idle"));
+        assert!(is_looping("walk"));
+        for action in ["jump", "happy", "sit", "sleep"] {
+            assert!(!is_looping(action), "{action} must not loop");
+        }
+    }
 }

@@ -411,6 +411,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .setup(|app| {
+            native_pet::set_bundled_frame_root(app.handle());
             let settings = native_pet::load_settings(app.handle());
             let settings_path = native_pet::settings_file_path(app.handle()).ok();
             native_pet::configure(&settings, settings_path);
