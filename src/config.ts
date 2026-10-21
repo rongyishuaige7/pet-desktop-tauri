@@ -4,6 +4,7 @@ export const DEFAULT_PRESET_FRAME_DIR = "./frame-pack";
 export const PRESET_FRAME_DIR_STORAGE = "desktop-sticker-pet:preset-frame-dir";
 export const PET_ZOOM_STORAGE = "desktop-sticker-pet:zoom";
 export const UPLOAD_URL_STORAGE = "desktop-sticker-pet:upload-url";
+export const AUTONOMOUS_STORAGE = "desktop-sticker-pet:autonomous";
 
 export interface ActionTiming {
   /** Milliseconds each frame stays on screen. */

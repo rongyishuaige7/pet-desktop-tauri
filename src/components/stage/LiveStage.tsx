@@ -19,6 +19,8 @@ interface LiveStageProps {
   onResetPosition?: () => void;
   isTauri: boolean;
   isMacOS: boolean;
+  autonomous: boolean;
+  onToggleAutonomous: (value: boolean) => void;
   onGoToWorkshop: () => void;
 }
 
@@ -30,6 +32,8 @@ export const LiveStage: React.FC<LiveStageProps> = ({
   onResetPosition,
   isTauri,
   isMacOS,
+  autonomous,
+  onToggleAutonomous,
   onGoToWorkshop
 }) => {
   const currentAction = pet?.currentAction ?? "idle";
@@ -203,6 +207,21 @@ export const LiveStage: React.FC<LiveStageProps> = ({
                 <span className="slider-val">{zoom}%</span>
               </div>
             </div>
+
+            {!isTauri && (
+              <div className="control-row" style={{ paddingTop: "6px" }}>
+                <span>自主活动</span>
+                <button
+                  type="button"
+                  className={`action-sub-btn ${autonomous ? "is-on" : ""}`}
+                  onClick={() => onToggleAutonomous(!autonomous)}
+                  aria-pressed={autonomous}
+                  title="开启后它会自己溜达、坐下、打盹，和桌面端一致"
+                >
+                  {autonomous ? "🧭 自己溜达" : "🧍 原地待命"}
+                </button>
+              </div>
+            )}
 
             {isTauri && isMacOS && onResetPosition && (
               <div className="control-row" style={{ paddingTop: "6px" }}>

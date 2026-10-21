@@ -579,6 +579,17 @@ button {
   transform: translateY(-1px);
 }
 
+.action-sub-btn.is-on {
+  background: var(--accent-amber-light);
+  border-color: var(--accent-amber);
+  color: #a35400;
+}
+
+.action-sub-btn.is-on:hover {
+  background: #ffedd2;
+  border-color: var(--accent-amber-hover);
+}
+
 /* Workshop View */
 .workshop-shell {
   display: flex;

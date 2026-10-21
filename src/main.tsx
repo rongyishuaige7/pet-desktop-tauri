@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AUTONOMOUS_STORAGE,
   DEFAULT_PRESET_FRAME_DIR,
   PET_ZOOM_STORAGE,
   PRESET_FRAME_DIR_STORAGE,
@@ -10,6 +11,7 @@ import {
 } from "./config";
 import { generatePetFramePack, GenerationCancelled } from "./ai-generation";
 import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction } from "./pet-logic";
+import { actionDurationMs, chooseNextAction } from "./pet-behavior";
 import {
   loadPet,
   loadAllPets,
@@ -82,6 +84,11 @@ function StudioApp() {
     const stored = Number(localStorage.getItem(PET_ZOOM_STORAGE));
     return Number.isFinite(stored) && stored >= 50 && stored <= 150 ? stored : 100;
   });
+
+  // Autonomous wandering (browser preview only; the desktop app drives its own).
+  const [autonomous, setAutonomous] = useState(
+    () => localStorage.getItem(AUTONOMOUS_STORAGE) !== "off"
+  );
 
   useEffect(() => {
     activePetRef.current = activePet;
@@ -204,10 +211,36 @@ function StudioApp() {
     await setCurrentAction(action);
   }
 
+  // Keep the latest handler reachable from the wandering timer without
+  // rescheduling on every render.
+  const switchActionRef = useRef(handleSwitchAction);
+  useEffect(() => {
+    switchActionRef.current = handleSwitchAction;
+  });
+
+  // Browser preview wanders on its own, mirroring the native runtime. In the
+  // desktop app the Rust side owns this and pushes actions through events.
+  useEffect(() => {
+    if (isTauri || !autonomous) return;
+    const pet = activePetRef.current;
+    if (!pet || !hasRenderableFrames(pet)) return;
+
+    const timer = window.setTimeout(() => {
+      void switchActionRef.current(chooseNextAction(pet.currentAction));
+    }, actionDurationMs(pet.currentAction));
+
+    return () => window.clearTimeout(timer);
+  }, [isTauri, autonomous, activePet?.id, activePet?.currentAction, activePet?.actionStartedAt]);
+
   function handleZoomChange(val: number) {
     const nextZoom = normalizeZoom(val);
     setZoom(nextZoom);
     localStorage.setItem(PET_ZOOM_STORAGE, String(nextZoom));
+  }
+
+  function handleToggleAutonomous(value: boolean) {
+    setAutonomous(value);
+    localStorage.setItem(AUTONOMOUS_STORAGE, value ? "on" : "off");
   }
 
   async function handleResetPosition() {
@@ -462,6 +495,8 @@ function StudioApp() {
             onResetPosition={handleResetPosition}
             isTauri={isTauri}
             isMacOS={isMacOS}
+            autonomous={autonomous}
+            onToggleAutonomous={handleToggleAutonomous}
             onGoToWorkshop={() => setCurrentTab("workshop")}
           />
         )}
