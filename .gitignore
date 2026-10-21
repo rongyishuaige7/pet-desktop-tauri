@@ -33,8 +33,9 @@ Thumbs.db
 .toolchain/
 .npm-cache/
 
-# Local action frame assets
-frame-pack/
+# The shipped frame pack is tracked: without it a fresh clone has no pet art.
+# `frame-pack/` is the source of truth, `public/frame-pack/` is the copy Vite
+# serves; src/frame-pack.test.ts fails if the two drift apart.
 
 # Generated icon sets for platforms not targeted yet
 src-tauri/icons/android/
@@ -47,3 +48,7 @@ src-tauri/icons/64x64.png
 # Local generation records and private prompt drafts
 generation-runs/
 private-prompts/
+
+# Python bytecode
+__pycache__/
+*.pyc

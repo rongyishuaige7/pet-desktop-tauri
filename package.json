@@ -8,6 +8,8 @@
     "test": "vitest run",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "frames:check": "python3 tools/frames/generate.py --check",
+    "frames:sync": "python3 tools/frames/generate.py --sync-public",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.2",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "6.0.2",
