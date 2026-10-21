@@ -87,8 +87,18 @@ pub fn resolve_frame_root(root: &str) -> PathBuf {
         candidates.push(PathBuf::from(home).join(&path));
     }
 
-    let bundled = super::bundled_frame_root();
+    // Only the shipped default falls back to the bundled pack. A path the user
+    // typed by hand must fail loudly instead of silently showing the default pet.
+    let bundled = if is_default_frame_root(root) {
+        super::bundled_frame_root()
+    } else {
+        None
+    };
     pick_frame_root(&candidates, bundled.as_deref())
+}
+
+pub fn is_default_frame_root(root: &str) -> bool {
+    root.trim().trim_end_matches(['/', '\\']) == DEFAULT_FRAME_ROOT
 }
 
 /// First existing candidate wins; otherwise fall back to the frame pack that
@@ -160,6 +170,14 @@ mod tests {
         let picked = pick_frame_root(std::slice::from_ref(&first), None);
 
         assert_eq!(picked, first);
+    }
+
+    #[test]
+    fn only_the_default_root_may_use_the_bundled_pack() {
+        assert!(is_default_frame_root("./frame-pack"));
+        assert!(is_default_frame_root(" ./frame-pack/ "));
+        assert!(!is_default_frame_root("/Users/me/my-pack"));
+        assert!(!is_default_frame_root("./my-pack"));
     }
 
     #[test]
