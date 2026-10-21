@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction } from "./pet-logic";
+import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction, withRenamedPet } from "./pet-logic";
 import type { ActionFrameSet, PetProfile } from "./types";
 
 const completeFrames: ActionFrameSet = {
@@ -53,5 +53,18 @@ describe("pet actions", () => {
     expect(changed.currentAction).toBe("walk");
     expect(changed.actionStartedAt).toBe("2026-07-14T01:02:03.000Z");
     expect(original.currentAction).toBe("idle");
+  });
+
+  it("renames pet with trimmed name without mutating original", () => {
+    const original = pet();
+    const renamed = withRenamedPet(original, "  咕唧怪兽  ");
+
+    expect(renamed.name).toBe("咕唧怪兽");
+    expect(original.name).toBe("奶茶");
+  });
+
+  it("throws error when renaming to an empty or whitespace-only name", () => {
+    const original = pet();
+    expect(() => withRenamedPet(original, "   ")).toThrow("宠物名字不能为空");
   });
 });

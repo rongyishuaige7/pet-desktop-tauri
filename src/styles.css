@@ -990,3 +990,144 @@ button {
     transform: translateY(0) scale(1);
   }
 }
+
+/* Rename Controls in Shelf & Stage */
+.pet-name-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.btn-rename-trigger {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s, transform 0.15s;
+  border-radius: 4px;
+}
+
+.btn-rename-trigger:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+  transform: scale(1.1);
+}
+
+.pet-card-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.pet-rename-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--accent-amber);
+  background: #ffffff;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.btn-icon-save,
+.btn-icon-cancel {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition: all 0.15s;
+}
+
+.btn-icon-save {
+  background: var(--accent-amber);
+  color: #ffffff;
+}
+
+.btn-icon-save:hover {
+  background: #e69512;
+}
+
+.btn-icon-cancel {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-secondary);
+}
+
+.btn-icon-cancel:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* Stage Pet Header & Badge */
+.stage-pet-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+}
+
+.stage-badge-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stage-badge-icon {
+  font-size: 15px;
+}
+
+.stage-badge-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stage-rename-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.stage-rename-btn:hover {
+  opacity: 1;
+}
+
+.stage-rename-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stage-rename-input {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--accent-amber);
+  background: #ffffff;
+  outline: none;
+  width: 140px;
+}

@@ -13,6 +13,7 @@ export interface PetProfile {
   frameRoot?: string;
   createdAt: string;
   sourceImage: string;
+  thumbnailImage?: string;
   actions: ActionFrameSet;
   currentAction: PetAction;
   actionStartedAt?: string;

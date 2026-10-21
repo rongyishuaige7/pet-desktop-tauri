@@ -21,6 +21,7 @@ interface LiveStageProps {
   isMacOS: boolean;
   autonomous: boolean;
   onToggleAutonomous: (value: boolean) => void;
+  onRenamePet?: (id: string, newName: string) => void;
   onGoToWorkshop: () => void;
 }
 
@@ -34,13 +35,26 @@ export const LiveStage: React.FC<LiveStageProps> = ({
   isMacOS,
   autonomous,
   onToggleAutonomous,
+  onRenamePet,
   onGoToWorkshop
 }) => {
   const currentAction = pet?.currentAction ?? "idle";
-  const frames = pet?.actions[currentAction] ?? pet?.actions.idle ?? [];
+  const rawFrames = pet?.actions?.[currentAction] ?? pet?.actions?.idle ?? [];
+  const frames = rawFrames;
   const timing = ACTION_TIMING[currentAction];
   const [frameIndex, setFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [stageName, setStageName] = useState("");
+
+  const handleConfirmRename = () => {
+    if (!pet) return;
+    const trimmed = stageName.trim();
+    if (trimmed && onRenamePet) {
+      onRenamePet(pet.id, trimmed);
+    }
+    setIsRenaming(false);
+  };
 
   // The parent recreates its handler on every render; keep the timer stable.
   const switchRef = useRef(onSwitchAction);
@@ -50,7 +64,7 @@ export const LiveStage: React.FC<LiveStageProps> = ({
 
   useEffect(() => {
     setFrameIndex(0);
-  }, [currentAction, frames.length, pet?.actionStartedAt]);
+  }, [pet?.id, currentAction, frames.length, pet?.actionStartedAt]);
 
   // Warm the cache for every action so switching never flashes a blank frame.
   useEffect(() => {
@@ -61,7 +75,7 @@ export const LiveStage: React.FC<LiveStageProps> = ({
         image.src = src;
       }
     }
-  }, [pet]);
+  }, [pet?.id, pet?.actions]);
 
   useEffect(() => {
     if (!isPlaying || frames.length === 0) return;
@@ -83,17 +97,59 @@ export const LiveStage: React.FC<LiveStageProps> = ({
   // frame; resting states (sit, sleep) intentionally stay where they are.
   useEffect(() => {
     const returnTo = timing.returnTo;
-    if (!isPlaying || !returnTo || frames.length === 0) return;
+    if (isTauri || !isPlaying || !returnTo || frames.length === 0) return;
     if (activeIndex < frames.length - 1) return;
 
     const timer = window.setTimeout(() => switchRef.current(returnTo), timing.frameMs);
     return () => window.clearTimeout(timer);
-  }, [activeIndex, frames.length, isPlaying, timing]);
+  }, [isTauri, activeIndex, frames.length, isPlaying, timing]);
 
   return (
     <div className="stage-view-grid">
       <div className="stage-main-card">
         <div className="stage-canvas">
+          {pet && (
+            <div className="stage-pet-badge">
+              {isRenaming ? (
+                <div className="stage-rename-bar">
+                  <input
+                    type="text"
+                    className="stage-rename-input"
+                    value={stageName}
+                    onChange={(e) => setStageName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) handleConfirmRename();
+                      if (e.key === "Escape") setIsRenaming(false);
+                    }}
+                    autoFocus
+                    maxLength={20}
+                    placeholder="输入宠物名..."
+                  />
+                  <button type="button" className="btn-icon-save" onClick={handleConfirmRename} title="确定">✓</button>
+                  <button type="button" className="btn-icon-cancel" onClick={() => setIsRenaming(false)} title="取消">✕</button>
+                </div>
+              ) : (
+                <div className="stage-badge-content">
+                  <span className="stage-badge-icon">{pet.species === "cat" ? "🐱" : "🐾"}</span>
+                  <span className="stage-badge-name">{pet.name}</span>
+                  {onRenamePet && (
+                    <button
+                      type="button"
+                      className="stage-rename-btn"
+                      onClick={() => {
+                        setIsRenaming(true);
+                        setStageName(pet.name);
+                      }}
+                      title="重命名当前宠物"
+                    >
+                      ✏️
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {pet && frames.length > 0 ? (
             <div
               className="canvas-pet-scaler"

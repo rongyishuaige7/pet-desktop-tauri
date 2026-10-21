@@ -23,3 +23,14 @@ export function withCurrentAction(
     actionStartedAt: startedAt
   };
 }
+
+export function withRenamedPet(pet: PetProfile, newName: string): PetProfile {
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    throw new Error("宠物名字不能为空");
+  }
+  return {
+    ...pet,
+    name: trimmed
+  };
+}

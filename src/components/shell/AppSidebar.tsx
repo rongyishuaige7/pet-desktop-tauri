@@ -57,11 +57,18 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         {activePet ? (
           <div className="active-pet-widget">
             <div className="widget-avatar">
-              {activePet.sourceImage ? (
-                <img src={activePet.sourceImage} alt={activePet.name} />
-              ) : (
-                <span>{activePet.species === "cat" ? "🐱" : "🐶"}</span>
-              )}
+              <img
+                key={activePet.id}
+                src={
+                  activePet.sourceImage ||
+                  activePet.thumbnailImage || activePet.actions?.idle?.[0]
+                }
+                alt={activePet.name}
+                onLoad={(e) => { e.currentTarget.style.display = ""; }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
             </div>
             <div className="widget-details">
               <span className="widget-name">{activePet.name}</span>
