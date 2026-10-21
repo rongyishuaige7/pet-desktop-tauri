@@ -62,7 +62,7 @@ export function buildCharacterPrompt(context: PromptContext) {
   const { species, appearance, style, negative } = basePrompt(context);
   return [
     `请根据参考图中的同一只${species}，生成一张 Q 版桌面贴纸宠物角色设定图。`,
-    `宠物名字：${context.petName || "未命名"}。`,
+    `宠物名字：${compact(context.petName, "未命名", 20)}。`,
     `必须严格保持参考图中的角色身份：脸型、眼距、耳朵形状和位置、鼻口、毛色、花纹、胸口、爪子、尾巴和身体比例。不要重新设计角色。`,
     `外观备注：${appearance}`,
     `画面：单个完整全身角色，正面或轻微 3/4 朝向，居中，1:1，厚白色贴纸描边，轮廓清晰，适合小尺寸桌面显示。${backgroundInstruction(context)}`,

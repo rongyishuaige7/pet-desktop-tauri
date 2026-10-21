@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { generatePetFramePack, GenerationCancelled } from "./ai-generation";
+import { createGenerationCheckpoint, generatePetFramePack, GenerationCancelled } from "./ai-generation";
 import { FRAMES_PER_ACTION } from "./prompt-builder";
 import { sliceSpriteSheet } from "./sprite-sheet";
+import { removeBackgroundFromDataUrl } from "./background-removal";
+import { normalizeActionFrames, FrameQualityError } from "./frame-quality";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn()
+}));
+
+vi.mock("./background-removal", () => ({ removeBackgroundFromDataUrl: vi.fn(async (image: string) => image) }));
+vi.mock("./frame-quality", async (original) => ({
+  ...await original<typeof import("./frame-quality")>(),
+  normalizeActionFrames: vi.fn(async (frames: string[]) => frames)
 }));
 
 vi.mock("./sprite-sheet", async (importOriginal) => {
@@ -21,6 +29,9 @@ vi.mock("./sprite-sheet", async (importOriginal) => {
 const invokeMock = vi.mocked(invoke);
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(removeBackgroundFromDataUrl).mockReset().mockImplementation(async image => image);
+  vi.mocked(normalizeActionFrames).mockReset().mockImplementation(async frames => frames);
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (command: string) => {
     if (command === "upload_reference_image") return "https://example.com/uploaded.png";
@@ -78,5 +89,82 @@ describe("AI frame pack generation", () => {
         isCancelled: () => ++calls > 2
       })
     ).rejects.toBeInstanceOf(GenerationCancelled);
+  });
+
+  it("honors cancellation during saving and reuses the saved pack on resume", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    const original = invokeMock.getMockImplementation()!;
+    let cancelled = false;
+    invokeMock.mockImplementation(async (command, args, opts) => {
+      const value = await original(command, args, opts);
+      if (command === "save_manual_frame_pack") cancelled = true;
+      return value;
+    });
+    await expect(generatePetFramePack({ ...options, checkpoint, isCancelled: () => cancelled })).rejects.toBeInstanceOf(GenerationCancelled);
+    expect(checkpoint.frameRoot).toBe("/tmp/pet-pack");
+    const calls = invokeMock.mock.calls.length;
+    const resumed = await generatePetFramePack({ ...options, checkpoint });
+    expect(resumed.frameRoot).toBe("/tmp/pet-pack");
+    expect(invokeMock.mock.calls).toHaveLength(calls);
+  });
+
+  it("continues from the failed frame without regenerating completed requests", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    const original = invokeMock.getMockImplementation()!;
+    let generated = 0;
+    invokeMock.mockImplementation(async (command, args, opts) => {
+      if (command === "generate_minimax_image" && ++generated === 8) throw new Error("temporary network failure");
+      return original(command, args, opts);
+    });
+    await expect(generatePetFramePack({ ...options, checkpoint })).rejects.toThrow("temporary network");
+    expect(checkpoint.actions.idle).toHaveLength(5);
+    expect(checkpoint.cleanedFrames.sit).toHaveLength(1);
+    await generatePetFramePack({ ...options, checkpoint });
+    expect(generated).toBe(32); // 31 successful requests + the single failed request.
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "upload_reference_image")).toHaveLength(2);
+    expect(JSON.stringify(checkpoint)).not.toContain(options.apiKey);
+  });
+
+  it("keeps a paid response received after cancellation for the next attempt", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    const original = invokeMock.getMockImplementation()!;
+    let cancelled = false;
+    invokeMock.mockImplementation(async (command, args, opts) => {
+      const result = await original(command, args, opts);
+      if (command === "generate_minimax_image") cancelled = true;
+      return result;
+    });
+    await expect(generatePetFramePack({ ...options, checkpoint, isCancelled: () => cancelled })).rejects.toBeInstanceOf(GenerationCancelled);
+    expect(checkpoint.characterRaw).toBeTruthy();
+    await generatePetFramePack({ ...options, checkpoint });
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(31);
+  });
+
+  it("surfaces background removal failures and retries cleanup without requesting a new image", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    vi.mocked(removeBackgroundFromDataUrl).mockRejectedValueOnce(new Error("canvas failed"));
+    await expect(generatePetFramePack({ ...options, removeBackground: true, checkpoint })).rejects.toThrow("canvas failed");
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "save_manual_frame_pack")).toBe(false);
+    await generatePetFramePack({ ...options, removeBackground: true, checkpoint });
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(31);
+  });
+
+  it("regenerates a rejected action while preserving completed actions", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    vi.mocked(normalizeActionFrames).mockImplementationOnce(async f => f).mockImplementationOnce(async f => f)
+      .mockRejectedValueOnce(new FrameQualityError("clipped subject"));
+    await expect(generatePetFramePack({ ...options, checkpoint })).rejects.toThrow("clipped subject");
+    expect(checkpoint.actions.idle).toHaveLength(5);
+    expect(checkpoint.actions.sit).toHaveLength(0);
+    await generatePetFramePack({ ...options, checkpoint });
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(36);
+  });
+
+  it("invalidates cached images when the generation inputs change", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    await generatePetFramePack({ ...options, checkpoint });
+    await generatePetFramePack({ ...options, checkpoint, petName: "另一只" });
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(62);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "save_manual_frame_pack")).toHaveLength(2);
   });
 });

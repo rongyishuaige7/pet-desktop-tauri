@@ -9,7 +9,7 @@ import {
   PRESET_FRAME_DIR_STORAGE,
   UPLOAD_URL_STORAGE
 } from "./config";
-import { generatePetFramePack, GenerationCancelled } from "./ai-generation";
+import { createGenerationCheckpoint, generatePetFramePack, GenerationCancelled } from "./ai-generation";
 import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction } from "./pet-logic";
 import { actionDurationMs, chooseNextAction } from "./pet-behavior";
 import { buildDefaultActionFrames, hydratePet, toPersistedPet as persistPet } from "./pet-resources";
@@ -83,8 +83,18 @@ function StudioApp() {
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
   const [appearanceNotes, setAppearanceNotes] = useState("");
   const [aiRunning, setAiRunning] = useState(false);
+  const [aiCommitting, setAiCommitting] = useState(false);
+  const [canResumeAI, setCanResumeAI] = useState(false);
   const [aiLog, setAiLog] = useState<string[]>([]);
-  const aiCancelRef = useRef<{ cancelled: boolean } | null>(null);
+  const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
+  const aiCheckpointRef = useRef(createGenerationCheckpoint());
+
+  useEffect(() => {
+    if (!aiCancelRef.current) {
+      aiCheckpointRef.current = createGenerationCheckpoint();
+      setCanResumeAI(false);
+    }
+  }, [name, species, uploadUrl, referencePhoto, appearanceNotes]);
 
   // Zoom
   const [zoom, setZoom] = useState(() => {
@@ -407,10 +417,10 @@ function StudioApp() {
       showToast("AI 生成需在桌面版环境中运行", "error");
       return;
     }
-    if (aiRunning) return;
+    if (aiCancelRef.current || isLoading) return;
 
     setAiLog([]);
-    const cancelToken = { cancelled: false };
+    const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
 
@@ -422,9 +432,14 @@ function StudioApp() {
         petName: name,
         species,
         appearanceNotes,
+        checkpoint: aiCheckpointRef.current,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
+
+      if (cancelToken.cancelled) throw new GenerationCancelled();
+      cancelToken.committing = true;
+      setAiCommitting(true);
 
       const newPet = createManualPet({
         name: name.trim() || "AI 宠物",
@@ -436,23 +451,28 @@ function StudioApp() {
       });
 
       await activatePet(newPet, true);
+      aiCheckpointRef.current = createGenerationCheckpoint();
+      setCanResumeAI(false);
       showToast(`AI 宠物「${newPet.name}」制作完成并已入住桌面！`, "success");
       setCurrentTab("stage");
     } catch (err) {
+      setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
       if (err instanceof GenerationCancelled) {
-        showToast("AI 生成已取消", "info");
+        showToast("AI 生成已取消，已完成的图片可在本次会话内继续使用", "info");
       } else {
         showToast(`AI 生成失败：${formatError(err)}`, "error");
       }
     } finally {
       setAiRunning(false);
+      setAiCommitting(false);
       aiCancelRef.current = null;
     }
   }
 
   function handleCancelAI() {
-    if (aiCancelRef.current) {
+    if (aiCancelRef.current && !aiCancelRef.current.committing) {
       aiCancelRef.current.cancelled = true;
+      setAiLog((prev) => [...prev, "已请求取消，等待当前步骤返回后停止。"]);
     }
   }
 
@@ -576,17 +596,22 @@ function StudioApp() {
             referencePhoto={referencePhoto}
             onSelectReferencePhoto={async (files) => {
               const file = files?.[0];
-              if (!file) return;
+              if (!file || aiCancelRef.current || isLoading) return;
+              setIsLoading(true);
               try {
+                if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 16 * 1024 * 1024) {
+                  throw new Error("请选择不超过 16 MiB 的 PNG、JPEG 或 WebP 图片");
+                }
                 const dataUrl = await readFileAsDataUrl(file);
                 setReferencePhoto(dataUrl);
-              } catch {
-                showToast("读取图片失败", "error");
-              }
+              } catch (err) { showToast(formatError(err), "error"); }
+              finally { setIsLoading(false); }
             }}
             appearanceNotes={appearanceNotes}
             onChangeAppearanceNotes={setAppearanceNotes}
             aiRunning={aiRunning}
+            aiCommitting={aiCommitting}
+            canResumeAI={canResumeAI}
             aiLog={aiLog}
             onGenerateAI={handleGenerateAI}
             onCancelAI={handleCancelAI}

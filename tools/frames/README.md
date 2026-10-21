@@ -9,7 +9,8 @@
 python3 -m pip install --user pillow numpy
 ```
 
-`npm run frames:check` 和 `src/frame-pack.test.ts` 不需要这两个包。
+`npm run frames:check` 运行 TypeScript 帧包守卫，只需已安装项目依赖的 Node 环境，不需要这两个 Python 包。
+它验证帧数、尺寸、透明边距、接地位置和源/公开副本一致性；Python 生成、同步和 `--check` 仍需要上述 Python 包。
 
 ## 用法
 
@@ -17,6 +18,7 @@ python3 -m pip install --user pillow numpy
 python3 tools/frames/generate.py --action happy --action sit   # 重新生成并写回 frame-pack/
 python3 tools/frames/generate.py --sync-public                # frame-pack/ -> public/frame-pack/
 python3 tools/frames/generate.py --check                      # 检查出血边距
+npm run frames:check                                         # 无 Python 依赖的完整帧包检查
 npm test                                                      # 含帧包守卫测试
 ```
 

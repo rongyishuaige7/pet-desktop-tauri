@@ -16,6 +16,13 @@ const context = {
 };
 
 describe("prompt builder", () => {
+  it("keeps all prompts under the API limit with oversized user input", () => {
+    const long = "超长内容".repeat(2000);
+    const input = { ...context, petName: long, appearanceNotes: long, styleNotes: long, negativePrompt: long };
+    for (const prompt of [buildCharacterPrompt(input), buildSpriteSheetPrompt(input, "walk"), buildActionPrompt(input, "walk", 0)]) {
+      expect(prompt.length).toBeLessThanOrEqual(MAX_PROMPT_LENGTH);
+    }
+  });
   it("builds a compact character sheet prompt", () => {
     const prompt = buildCharacterPrompt(context);
     expect(prompt).toContain("奶茶");

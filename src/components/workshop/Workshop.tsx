@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
 import { PET_ACTIONS, type ActionFrameSet, type PetAction, type PetSpecies } from "../../types";
+import { useToast } from "../ui/Toast";
 
 interface WorkshopProps {
   name: string;
@@ -25,6 +26,8 @@ interface WorkshopProps {
   appearanceNotes: string;
   onChangeAppearanceNotes: (val: string) => void;
   aiRunning: boolean;
+  aiCommitting: boolean;
+  canResumeAI: boolean;
   aiLog: string[];
   onGenerateAI: () => Promise<void>;
   onCancelAI: () => void;
@@ -52,30 +55,45 @@ export const Workshop: React.FC<WorkshopProps> = ({
   appearanceNotes,
   onChangeAppearanceNotes,
   aiRunning,
+  aiCommitting,
+  canResumeAI,
   aiLog,
   onGenerateAI,
   onCancelAI
 }) => {
   const [activeTab, setActiveTab] = useState<"preset" | "frames" | "ai">("preset");
   const [activeInspectAction, setActiveInspectAction] = useState<PetAction>("idle");
+  const [readingFrames, setReadingFrames] = useState(false);
+  const readingRef = useRef(false);
+  const { showToast } = useToast();
+  const busy = aiRunning || isLoading || readingFrames;
 
   // Read frames for current action
   const currentActionFrames = manualFrames[activeInspectAction] ?? [];
 
   async function handleAddFrames(action: PetAction, files: FileList | null) {
-    if (!files?.length) return;
-    const readUrls = await Promise.all(
-      Array.from(files)
-        .filter((f) => f.type.startsWith("image/"))
+    if (!files?.length || busy || readingRef.current) return;
+    readingRef.current = true;
+    setReadingFrames(true);
+    try {
+      const selected = Array.from(files);
+      const existing = manualFrames[action] ?? [];
+      if (selected.length + existing.length > 60) throw new Error("每个动作最多 60 帧");
+      if (selected.some(f => !["image/png", "image/jpeg", "image/webp"].includes(f.type) || f.size > 16 * 1024 * 1024)) {
+        throw new Error("请选择不超过 16 MiB 的 PNG、JPEG 或 WebP 图片");
+      }
+      const loadedBytes = Object.values(manualFrames).flat().reduce((total, src) => total + (src.split(",")[1]?.length ?? 0) * 3 / 4, 0);
+      if (loadedBytes + selected.reduce((total, file) => total + file.size, 0) > 128 * 1024 * 1024) {
+        throw new Error("整套动作帧总量不能超过 128 MiB");
+      }
+      const readUrls = await Promise.all(selected
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
         .map((f) => readFileAsDataUrl(f))
-    );
-
-    const existing = manualFrames[action] ?? [];
-    onChangeManualFrames({
-      ...manualFrames,
-      [action]: [...existing, ...readUrls]
-    });
+      );
+      onChangeManualFrames({ ...manualFrames, [action]: [...existing, ...readUrls] });
+    } catch (err) {
+      showToast(`读取动作帧失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally { readingRef.current = false; setReadingFrames(false); }
   }
 
   function handleDeleteFrame(action: PetAction, indexToDelete: number) {
@@ -92,6 +110,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
         <button
           type="button"
           className={`seg-tab-btn ${activeTab === "preset" ? "active" : ""}`}
+          disabled={busy}
           onClick={() => setActiveTab("preset")}
         >
           📁 本地帧包导入
@@ -99,6 +118,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
         <button
           type="button"
           className={`seg-tab-btn ${activeTab === "frames" ? "active" : ""}`}
+          disabled={busy}
           onClick={() => setActiveTab("frames")}
         >
           🎞️ 动作帧装配台
@@ -106,6 +126,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
         <button
           type="button"
           className={`seg-tab-btn ${activeTab === "ai" ? "active" : ""}`}
+          disabled={busy}
           onClick={() => setActiveTab("ai")}
         >
           ✨ AI 照片转宠物
@@ -120,6 +141,8 @@ export const Workshop: React.FC<WorkshopProps> = ({
             <input
               type="text"
               className="input-control"
+              maxLength={20}
+              disabled={busy}
               value={name}
               onChange={(e) => onChangeName(e.target.value)}
               placeholder="例如：糖宝、奶茶"
@@ -128,6 +151,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
           <div className="input-group">
             <label>宠物种类</label>
             <select
+              disabled={busy}
               className="input-control"
               value={species}
               onChange={(e) => onChangeSpecies(e.target.value as PetSpecies)}
@@ -162,7 +186,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 type="button"
                 className="btn-primary"
                 onClick={onImportPreset}
-                disabled={isLoading}
+                disabled={busy}
               >
                 {isLoading ? "正在导入..." : "一键导入并保存到宠物架"}
               </button>
@@ -207,6 +231,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                     type="button"
                     className="frame-delete-btn"
                     onClick={() => handleDeleteFrame(activeInspectAction, idx)}
+                    disabled={busy}
                     title="删除此帧"
                   >
                     ✕
@@ -220,6 +245,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 <input
                   type="file"
                   multiple
+                  disabled={busy}
                   accept="image/png,image/jpeg,image/webp"
                   onChange={(e) => handleAddFrames(activeInspectAction, e.target.files)}
                 />
@@ -231,7 +257,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 type="button"
                 className="btn-primary"
                 onClick={onSaveManualFrames}
-                disabled={isLoading}
+                disabled={busy}
               >
                 {isLoading ? "正在保存..." : "保存全套动作并应用到桌面"}
               </button>
@@ -251,6 +277,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 <label>Minimax API Key</label>
                 <input
                   type="password"
+                  disabled={busy}
                   className="input-control"
                   value={apiKey}
                   onChange={(e) => onChangeApiKey(e.target.value)}
@@ -263,6 +290,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                   type="text"
                   className="input-control"
                   value={uploadUrl}
+                  disabled={busy}
                   onChange={(e) => onChangeUploadUrl(e.target.value)}
                   placeholder="https://your-domain.example/upload"
                 />
@@ -273,7 +301,8 @@ export const Workshop: React.FC<WorkshopProps> = ({
               <label>宠物照片</label>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={busy}
                 onChange={(e) => onSelectReferencePhoto(e.target.files)}
               />
               {referencePhoto && (
@@ -297,6 +326,8 @@ export const Workshop: React.FC<WorkshopProps> = ({
               <textarea
                 className="input-control"
                 style={{ height: "64px", paddingTop: "8px" }}
+                maxLength={420}
+                disabled={busy}
                 value={appearanceNotes}
                 onChange={(e) => onChangeAppearanceNotes(e.target.value)}
                 placeholder="例如：白色加白短毛猫，右耳有一小块黑斑..."
@@ -308,16 +339,22 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 type="button"
                 className="btn-primary"
                 onClick={onGenerateAI}
-                disabled={aiRunning || !isTauri}
+                disabled={busy || !isTauri}
               >
-                {aiRunning ? "AI 生成中（请耐心等待）..." : "开始 AI 自动生成全套帧包"}
+                {aiCommitting ? "完成入住中..." : aiRunning ? "AI 生成中（请耐心等待）..." : canResumeAI ? "继续上次生成" : "开始 AI 自动生成全套帧包"}
               </button>
-              {aiRunning && (
+              {aiRunning && !aiCommitting && (
                 <button type="button" className="btn-secondary" onClick={onCancelAI}>
                   取消
                 </button>
               )}
             </div>
+
+            {(aiRunning || canResumeAI) && (
+              <p style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                已完成的图片仅在本次打开期间保留。取消会在当前步骤返回后停止，继续时会复用已完成内容。
+              </p>
+            )}
 
             {aiLog.length > 0 && (
               <div

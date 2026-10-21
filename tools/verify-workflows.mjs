@@ -11,12 +11,18 @@ const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0}={}) {
  const context=await browser.newContext({viewport:{width:1120,height:760}});
- await context.route('**/*',route=>new URL(route.request().url()).hostname==='localhost'?route.continue():route.abort());
+ await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
  await context.addInitScript(({desktop,settingsAction,missing,packDelay})=>{
   localStorage.setItem('desktop-sticker-pet:autonomous','off');
   if(!desktop)return;
   const callbacks=new Map(); const listeners=new Map(); let seq=1;
-  const state=window.__review={calls:[],root:'/review/A',action:settingsAction,visible:true,delayB:0,emitOnSet:false};
+  const state=window.__review={calls:[],root:'/review/A',action:settingsAction,visible:true,delayB:0,emitOnSet:false,generations:0,saves:0};
+  state.makeImage=(sheet=false)=>{
+   const canvas=document.createElement('canvas');canvas.width=sheet?900:300;canvas.height=sheet?600:300;
+   const ctx=canvas.getContext('2d');ctx.fillStyle='#00ff00';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#71402a';
+   for(let i=0;i<(sheet?5:1);i++)ctx.fillRect((i%3)*300+80,Math.floor(i/3)*300+35,140,240);
+   return canvas.toDataURL('image/png');
+  };
   state.emit=async(payload)=>{
    await Promise.all([...listeners.entries()].filter(([,v])=>v.event==='native-pet-action-changed').map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload})));
   };
@@ -30,12 +36,14 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction};
     if(cmd==='load_preset_frame_pack'){
      const root=args.request.rootDir;
+     if(root==='/review/generated'&&state.savedActions)return {sourceImage:state.savedActions.idle[0],actions:state.savedActions};
      await new Promise(r=>setTimeout(r,root==='/review/B'?state.delayB:packDelay));
      if(missing)throw new Error('audit: custom frame directory does not exist');
      const actions=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,[0,1,2,3,4].map(i=>`/frame-pack/${a}/${String(i).padStart(3,'0')}.png?review=${root}`)]));
      return {sourceImage:actions.idle[0],actions};
     }
     if(cmd==='set_native_pet_frame_root'){
+     if(args.rootDir==='/review/generated'&&state.delayGeneratedCommit){state.committing=true;await new Promise(r=>setTimeout(r,state.delayGeneratedCommit));}
      if (state.failB && args.rootDir==='/review/B') throw new Error('audit: invalid pack');
      state.root=args.rootDir;state.visible=true;
      if(state.emitOnSet)setTimeout(()=>{state.action='walk';void state.emit('walk');},30);
@@ -44,6 +52,17 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='set_native_pet_action'){state.action=args.action;return;}
     if(cmd==='set_native_pet_visible'){state.visible=args.visible;return;}
     if(cmd==='set_native_pet_scale'||cmd==='reset_native_pet_position')return;
+    if(cmd==='upload_reference_image')return 'https://example.test/mock-reference.png';
+    if(cmd==='generate_minimax_image'){
+     state.generations++;
+     if(state.generations===state.failGenerationAt)throw new Error('mock temporary generation failure');
+     return state.makeImage(args.request.aspectRatio==='3:2');
+    }
+    if(cmd==='save_manual_frame_pack'){
+     state.saves++;state.savedActions=args.request.actions;state.saving=true;
+     if(state.blockSave)await new Promise(resolve=>state.releaseSave=resolve);
+     return {frameRoot:'/review/generated',sourceImage:state.savedActions.idle[0]};
+    }
     throw new Error('unexpected mock IPC: '+cmd);
    }
   };
@@ -73,7 +92,92 @@ async function record(name,fn){
  try{const detail=await fn();const result={name,...detail};results.push(result);console.log(JSON.stringify(result));}
  catch(e){const result={name,harnessError:e.message};results.push(result);console.log(JSON.stringify(result));}
 }
+async function openAI(page){
+ await page.getByRole('button',{name:/宠物工坊/}).click();
+ await page.getByRole('button',{name:/AI 照片转宠物/}).click();
+ await page.locator('input[type=password]').fill('mock-key');
+ await page.getByPlaceholder('https://your-domain.example/upload').fill('https://example.test/upload');
+ const data=await page.evaluate(()=>window.__review.makeImage().split(',')[1]);
+ await page.locator('input[type=file]').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:Buffer.from(data,'base64')});
+ await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).waitFor();
+}
 try{
+ await record('manual_upload_errors_and_recovery',async()=>{
+  const {context,page,errors}=await newCase();
+  try{
+   await page.getByRole('button',{name:/宠物工坊/}).click();
+   await page.getByRole('button',{name:/动作帧装配台/}).click();
+   const input=page.locator('input[type=file]');
+   await input.setInputFiles({name:'wrong.pdf',mimeType:'application/pdf',buffer:Buffer.from('not a picture')});
+   await page.locator('.toast-message.error').filter({hasText:'读取动作帧失败'}).waitFor();
+   const rejected=await page.locator('.frame-thumb-img').count()===0;
+   const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const ctx=c.getContext('2d');ctx.fillStyle='#71402a';ctx.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+   const file={name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')};
+   await input.setInputFiles(Array.from({length:61},(_,i)=>({...file,name:`${i}.png`})));
+   await page.locator('.toast-message.error').filter({hasText:'最多 60 帧'}).waitFor();
+   await input.setInputFiles(file);
+   await page.locator('.frame-thumb-img').waitFor();
+   return {passed:rejected&&await page.locator('.frame-thumb-img').count()===1&&errors.length===0,rejected,errors};
+  }finally{await context.close();}
+ });
+ await record('ai_cancel_during_save_and_resume',async()=>{
+  const {context,page,errors}=await newCase({desktop:true});
+  try{
+   await openAI(page);
+   const previous=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadPet())?.id);
+   await page.evaluate(()=>{window.__review.blockSave=true;});
+   await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
+   await page.waitForFunction(()=>window.__review.saving===true);
+   const frozen=await page.getByPlaceholder('例如：糖宝、奶茶').isDisabled();
+   await page.getByRole('button',{name:'取消',exact:true}).click();
+   await page.evaluate(()=>window.__review.releaseSave());
+   await page.getByRole('button',{name:'继续上次生成',exact:true}).waitFor();
+   const cancelled=await page.evaluate(async()=>({active:(await (await import('/src/storage.ts')).loadPet())?.id,generations:window.__review.generations,saves:window.__review.saves}));
+   await page.evaluate(()=>{window.__review.delayGeneratedCommit=500;});
+   await page.getByRole('button',{name:'继续上次生成',exact:true}).click();
+   await page.waitForFunction(()=>window.__review.committing===true);
+   const committingLocked=await page.getByRole('button',{name:'取消',exact:true}).count()===0&&await page.getByRole('button',{name:'完成入住中...',exact:true}).isDisabled();
+   await page.getByRole('heading',{name:'伴侣互动台',exact:true}).waitFor();
+   const resumed=await page.evaluate(async()=>({active:(await (await import('/src/storage.ts')).loadPet())?.id,generations:window.__review.generations,saves:window.__review.saves}));
+   return {passed:frozen&&committingLocked&&cancelled.active===previous&&cancelled.generations===7&&cancelled.saves===1&&resumed.active!==previous&&resumed.generations===7&&resumed.saves===1&&errors.length===0,frozen,committingLocked,cancelled,resumed,errors};
+  }finally{await context.close();}
+ });
+ await record('ai_failure_resume_and_input_invalidation',async()=>{
+  const {context,page,errors}=await newCase({desktop:true});
+  try{
+   await openAI(page);await page.evaluate(()=>{window.__review.failGenerationAt=3;});
+   await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
+   await page.getByRole('button',{name:'继续上次生成',exact:true}).waitFor();
+   await page.getByRole('button',{name:'继续上次生成',exact:true}).click();
+   await page.getByRole('heading',{name:'伴侣互动台',exact:true}).waitFor();
+   const resumed=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves}));
+   await openAI(page);await page.evaluate(()=>{window.__review.failGenerationAt=window.__review.generations+2;});
+   await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
+   await page.getByRole('button',{name:'继续上次生成',exact:true}).waitFor();
+   await page.getByPlaceholder('例如：糖宝、奶茶').fill('新的名字');
+   await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).waitFor();
+   const invalidated=await page.getByRole('button',{name:'继续上次生成',exact:true}).count()===0;
+   return {passed:resumed.generations===8&&resumed.saves===1&&invalidated&&errors.length===0,resumed,invalidated,errors};
+  }finally{await context.close();}
+ });
+ await record('generated_frame_pixels_and_sheet_validation',async()=>{
+  const {context,page,errors}=await newCase();
+  try{
+   const result=await page.evaluate(async()=>{
+    const {normalizeActionFrames,subjectBounds,loadFrameImage}=await import('/src/frame-quality.ts');
+    const {sliceSpriteSheet}=await import('/src/sprite-sheet.ts');
+    const frame=(top,bottom)=>{const c=document.createElement('canvas');c.width=c.height=300;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(80,top,140,bottom-top+1);return c.toDataURL();};
+    const frames=[frame(35,274),frame(20,259)];
+    const bounds=async frames=>Promise.all(frames.map(async source=>{const image=await loadFrameImage(source);const c=document.createElement('canvas');c.width=image.naturalWidth;c.height=image.naturalHeight;const ctx=c.getContext('2d');ctx.drawImage(image,0,0);return {width:c.width,height:c.height,...subjectBounds(ctx.getImageData(0,0,c.width,c.height).data,c.width,c.height)};}));
+    const grounded=await bounds(await normalizeActionFrames(frames,'idle',true));
+    const jumping=await bounds(await normalizeActionFrames(frames,'jump',true));
+    let rejectsSheet=false;try{await sliceSpriteSheet(frames[0]);}catch(e){rejectsSheet=e.message.includes('网格');}
+    return {grounded,jumping,rejectsSheet};
+   });
+   const {grounded,jumping,rejectsSheet}=result;
+   return {passed:grounded.every(b=>b.width===512&&b.height===512&&b.top>=32&&b.bottom<=475)&&Math.abs(grounded[0].bottom-grounded[1].bottom)<=1&&jumping[0].bottom-jumping[1].bottom>=20&&rejectsSheet&&errors.length===0,...result,errors};
+  }finally{await context.close();}
+ });
  await record('delete_nonactive_pet',async()=>{
   const {context,page,errors}=await newCase();
   try{

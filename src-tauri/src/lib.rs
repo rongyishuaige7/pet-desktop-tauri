@@ -1,4 +1,7 @@
-use base64::Engine;
+use ai_transport::{
+    decode_base64_bytes, http_client, image_data_url, read_limited, MAX_GENERATION_RESPONSE,
+    MAX_IMAGE_BYTES,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{
@@ -7,6 +10,7 @@ use tauri::{
     Manager, WindowEvent,
 };
 
+mod ai_transport;
 mod autostart;
 mod native_pet;
 
@@ -181,25 +185,34 @@ async fn generate_minimax_image(request: MinimaxImageRequest) -> Result<String, 
         .json(&payload)
         .send()
         .await
-        .map_err(|err| format!("Minimax 请求失败：{err}"))?;
+        .map_err(|err| format!("Minimax 请求失败：{}", err.without_url()))?;
 
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|err| format!("读取 Minimax 响应失败：{err}"))?;
-    write_debug_response("minimax raw response", &body);
-
     if !status.is_success() {
-        return Err(format!("Minimax HTTP {status}: {body}"));
+        return Err(format!("Minimax HTTP {status}，请检查密钥、额度与服务状态"));
     }
-
-    let parsed: MinimaxResponse = serde_json::from_str(&body)
-        .map_err(|err| format!("解析 Minimax 响应失败：{err}; 原始响应：{body}"))?;
+    let body = read_limited(response, MAX_GENERATION_RESPONSE).await?;
+    let parsed: MinimaxResponse =
+        serde_json::from_slice(&body).map_err(|_| "Minimax 返回了无效 JSON".to_string())?;
+    if let Some(code) = parsed
+        .base_resp
+        .as_ref()
+        .and_then(|r| r.get("status_code"))
+        .and_then(|c| c.as_i64())
+        .filter(|c| *c != 0)
+    {
+        return Err(format!(
+            "Minimax 服务返回错误代码 {code}，请检查密钥、额度与请求参数"
+        ));
+    }
 
     if let Some(data) = parsed.data {
         if let Some(image_base64) = data.image_base64.into_iter().next() {
-            return Ok(format!("data:image/png;base64,{image_base64}"));
+            return tauri::async_runtime::spawn_blocking(move || {
+                image_data_url(&decode_base64_bytes(&image_base64)?)
+            })
+            .await
+            .map_err(|_| "检查图片任务失败".to_string())?;
         }
 
         if let Some(image_url) = data.image_urls.into_iter().next() {
@@ -207,19 +220,16 @@ async fn generate_minimax_image(request: MinimaxImageRequest) -> Result<String, 
         }
     }
 
-    if let Some(base_resp) = parsed.base_resp {
-        return Err(format!(
-            "Minimax 没有返回图片，base_resp={base_resp}; 原始响应：{body}"
-        ));
-    }
-
-    Err(format!("Minimax 响应里没有图片：{body}"))
+    Err("Minimax 响应里没有图片".into())
 }
 
 #[tauri::command]
 async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<String, String> {
     let upload_url = validate_http_url(&request.upload_url)?;
-    let (content_type, base64) = split_data_url(&request.data_url)?;
+    let (content_type, base64) =
+        tauri::async_runtime::spawn_blocking(move || split_data_url(&request.data_url))
+            .await
+            .map_err(|_| "检查参考图任务失败".to_string())??;
     let payload = UploadReferenceImagePayload {
         filename: request
             .filename
@@ -234,26 +244,16 @@ async fn upload_reference_image(request: UploadReferenceImageRequest) -> Result<
         .json(&payload)
         .send()
         .await
-        .map_err(|err| format!("上传参考图失败：{err}"))?;
+        .map_err(|err| format!("上传参考图失败：{}", err.without_url()))?;
 
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|err| format!("读取上传接口响应失败：{err}"))?;
-
     if !status.is_success() {
-        return Err(format!("上传参考图失败：HTTP {status}: {body}"));
+        return Err(format!("上传参考图失败：HTTP {status}"));
     }
-
-    let parsed: UploadReferenceImageResponse = serde_json::from_str(&body)
-        .map_err(|err| format!("解析上传接口响应失败：{err}; 原始响应：{body}"))?;
-
-    if parsed.url.trim().is_empty() {
-        return Err(format!("上传接口没有返回 url：{body}"));
-    }
-
-    Ok(parsed.url)
+    let body = read_limited(response, 64 * 1024).await?;
+    let parsed: UploadReferenceImageResponse =
+        serde_json::from_slice(&body).map_err(|_| "上传接口未返回有效的图片 URL".to_string())?;
+    validate_http_url(&parsed.url)
 }
 
 #[tauri::command]
@@ -318,70 +318,53 @@ async fn download_image_as_data_url(
     client: &reqwest::Client,
     image_url: &str,
 ) -> Result<String, String> {
-    let response = client.get(image_url).send().await.map_err(|err| {
-        let message = format!("下载 Minimax 图片失败：{err}; image_url={image_url}");
-        write_debug_response("image download request failed", &message);
-        message
-    })?;
+    let response = client
+        .get(validate_http_url(image_url)?)
+        .send()
+        .await
+        .map_err(|err| format!("下载 Minimax 图片失败：{}", err.without_url()))?;
 
     let status = response.status();
     if !status.is_success() {
-        let message = format!("下载 Minimax 图片失败：HTTP {status}; image_url={image_url}");
-        write_debug_response("image download http failed", &message);
-        return Err(message);
+        return Err(format!("下载 Minimax 图片失败：HTTP {status}"));
     }
 
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("image/png")
-        .to_string();
-    let bytes = response.bytes().await.map_err(|err| {
-        let message = format!("读取 Minimax 图片失败：{err}; image_url={image_url}");
-        write_debug_response("image download body failed", &message);
-        message
-    })?;
-    write_debug_response(
-        "image download success",
-        &format!(
-            "content_type={content_type}\nbytes={}\nimage_url={image_url}",
-            bytes.len()
-        ),
-    );
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-
-    Ok(format!("data:{content_type};base64,{encoded}"))
-}
-
-fn write_debug_response(label: &str, body: &str) {
-    if !cfg!(debug_assertions) {
-        return;
-    }
-
-    let payload = format!("{label}\n\n{body}");
-    let _ = std::fs::write("/tmp/pet-desktop-minimax-last-response.txt", payload);
+    let bytes = read_limited(response, MAX_IMAGE_BYTES).await?;
+    tauri::async_runtime::spawn_blocking(move || image_data_url(&bytes))
+        .await
+        .map_err(|_| "检查图片任务失败".to_string())?
 }
 
 fn validate_http_url(url: &str) -> Result<String, String> {
-    let trimmed = url.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        Ok(trimmed.to_string())
-    } else {
-        Err("上传接口必须是 http:// 或 https:// URL".to_string())
+    let parsed =
+        reqwest::Url::parse(url.trim()).map_err(|_| "图片服务地址不是有效 URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err("图片服务必须是有效的 http:// 或 https:// URL".into());
     }
+    Ok(parsed.to_string())
 }
 
 fn split_data_url(data_url: &str) -> Result<(String, String), String> {
     let (header, base64) = data_url
         .split_once(',')
         .ok_or_else(|| "上传图片不是有效 data URL".to_string())?;
-    let content_type = header
-        .strip_prefix("data:")
-        .and_then(|value| value.split_once(';').map(|(mime, _)| mime.to_string()))
-        .unwrap_or_else(|| "image/png".to_string());
-
-    Ok((content_type, base64.to_string()))
+    if !matches!(
+        header,
+        "data:image/png;base64" | "data:image/jpeg;base64" | "data:image/webp;base64"
+    ) {
+        return Err("参考图必须是 PNG、JPEG 或 WebP base64 图片".into());
+    }
+    let canonical = image_data_url(&decode_base64_bytes(base64)?)?;
+    let (header, base64) = canonical.split_once(',').unwrap();
+    Ok((
+        header
+            .strip_prefix("data:")
+            .unwrap()
+            .strip_suffix(";base64")
+            .unwrap()
+            .into(),
+        base64.into(),
+    ))
 }
 
 fn normalize_aspect_ratio(value: Option<String>) -> String {
@@ -389,13 +372,6 @@ fn normalize_aspect_ratio(value: Option<String>) -> String {
         Some("1:1" | "16:9" | "4:3" | "3:2" | "2:3" | "3:4" | "9:16") => value.unwrap(),
         _ => "1:1".to_string(),
     }
-}
-
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|err| format!("创建 HTTP 客户端失败：{err}"))
 }
 
 fn current_timestamp_ms() -> u128 {

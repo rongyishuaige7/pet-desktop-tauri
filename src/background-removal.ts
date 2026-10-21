@@ -1,3 +1,5 @@
+import { loadFrameImage } from "./frame-quality";
+
 export interface BackgroundRemovalResult {
   data: Uint8ClampedArray;
   removedRatio: number;
@@ -145,31 +147,15 @@ export function removeBackgroundFromPixels(
   };
 }
 
-async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-  const image = new Image();
-  image.src = dataUrl;
-  if (typeof image.decode === "function") {
-    await image.decode();
-  } else {
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("图片加载失败"));
-    });
-  }
-  return image;
-}
-
 export async function removeBackgroundFromDataUrl(dataUrl: string, tolerance = 40): Promise<string> {
-  const image = await loadImage(dataUrl);
+  const image = await loadFrameImage(dataUrl);
   const width = image.naturalWidth;
   const height = image.naturalHeight;
-  if (width === 0 || height === 0) return dataUrl;
-
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return dataUrl;
+  if (!context) throw new Error("无法创建去背景画布");
 
   context.drawImage(image, 0, 0);
   const imageData = context.getImageData(0, 0, width, height);

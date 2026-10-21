@@ -1,3 +1,5 @@
+import { FrameQualityError, loadFrameImage } from "./frame-quality";
+
 export const SPRITE_COLUMNS = 3;
 export const SPRITE_ROWS = 2;
 export const SPRITE_FRAMES = 5;
@@ -34,30 +36,22 @@ export function spriteSheetCellRect(
   };
 }
 
-async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-  const image = new Image();
-  image.src = dataUrl;
-  if (typeof image.decode === "function") {
-    await image.decode();
-  } else {
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("图片加载失败"));
-    });
-  }
-  return image;
-}
-
 export async function sliceSpriteSheet(
   dataUrl: string,
   columns = SPRITE_COLUMNS,
   rows = SPRITE_ROWS,
   frames = SPRITE_FRAMES
 ): Promise<string[]> {
-  const image = await loadImage(dataUrl);
+  if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 1 || rows < 1 || !Number.isInteger(frames) || frames < 1 || frames > columns * rows) {
+    throw new FrameQualityError("动作序列图网格参数无效");
+  }
+  const image = await loadFrameImage(dataUrl);
   const width = image.naturalWidth;
   const height = image.naturalHeight;
   if (width === 0 || height === 0) throw new Error("动作序列图尺寸无效");
+  if (Math.abs(width / height - columns / rows) > 0.05 || Math.min(width / columns, height / rows) < 64) {
+    throw new FrameQualityError(`动作序列图应为 ${columns}:${rows} 网格且每格至少 64 像素，请重新生成此动作`);
+  }
 
   const cells: string[] = [];
   for (let index = 0; index < frames; index++) {
