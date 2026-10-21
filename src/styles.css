@@ -378,6 +378,22 @@ h1 {
   box-shadow: var(--shadow-offset-sm);
 }
 
+.ai-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ai-checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary-accent);
+}
+
 .ai-warning {
   font-size: 12px;
   line-height: 1.5;

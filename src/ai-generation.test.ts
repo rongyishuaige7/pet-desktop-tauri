@@ -27,7 +27,8 @@ const options = {
   referencePhoto: "data:image/png;base64,BBBB",
   petName: "奶茶",
   species: "cat" as const,
-  frameDelayMs: 0
+  frameDelayMs: 0,
+  removeBackground: false
 };
 
 describe("AI frame pack generation", () => {

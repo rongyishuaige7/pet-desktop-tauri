@@ -36,6 +36,7 @@ export interface PromptContext {
   appearanceNotes?: string;
   styleNotes?: string;
   negativePrompt?: string;
+  background?: "green" | "neutral";
 }
 
 function compact(value: string | undefined, fallback: string, limit: number) {
@@ -51,6 +52,12 @@ function basePrompt(context: PromptContext) {
   return { species, appearance, style, negative };
 }
 
+function backgroundInstruction(context: PromptContext) {
+  return context.background === "green"
+    ? "背景使用纯色 #00FF00 绿幕，均匀无渐变、无阴影、无地面，角色边缘干净，便于抠图。"
+    : "背景使用干净浅色，均匀无渐变、无阴影、无地面。";
+}
+
 export function buildCharacterPrompt(context: PromptContext) {
   const { species, appearance, style, negative } = basePrompt(context);
   return [
@@ -58,7 +65,7 @@ export function buildCharacterPrompt(context: PromptContext) {
     `宠物名字：${context.petName || "未命名"}。`,
     `必须严格保持参考图中的角色身份：脸型、眼距、耳朵形状和位置、鼻口、毛色、花纹、胸口、爪子、尾巴和身体比例。不要重新设计角色。`,
     `外观备注：${appearance}`,
-    `画面：单个完整全身角色，正面或轻微 3/4 朝向，居中，1:1，干净浅色背景，厚白色贴纸描边，轮廓清晰，适合小尺寸桌面显示。`,
+    `画面：单个完整全身角色，正面或轻微 3/4 朝向，居中，1:1，厚白色贴纸描边，轮廓清晰，适合小尺寸桌面显示。${backgroundInstruction(context)}`,
     `风格：${style}`,
     `禁止：${negative}不要多视图排版、文字、Logo、水印、场景、家具、其他动物或人类。`
   ].join("\n");
@@ -78,7 +85,7 @@ export function buildActionPrompt(
     `动作描述：${ACTION_DESCRIPTIONS[action]}`,
     `角色一致性：保持脸型、眼距、耳朵、毛色、花纹、胸口、爪子、尾巴和身体比例完全一致；只改变姿态、表情和动作节奏，不要重新设计角色。`,
     `外观备注：${appearance}`,
-    `画面：完整全身，居中，1:1，干净浅色背景，厚白色贴纸描边，轮廓清晰。`,
+    `画面：完整全身，居中，1:1，厚白色贴纸描边，轮廓清晰。${backgroundInstruction(context)}`,
     `风格：${style}`,
     `禁止：${negative}不要裁切身体、耳朵、尾巴或爪子，不要奔跑、攻击、摔倒或飞出画面。`,
     `这是该动作连续 ${totalFrames} 帧中的第 ${frameIndex + 1} 帧，只做细微姿态变化，保持构图和角色身份完全一致。`

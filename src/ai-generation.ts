@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildActionPrompt, buildCharacterPrompt, FRAMES_PER_ACTION, actionLabel } from "./prompt-builder";
+import { removeBackgroundFromDataUrl } from "./background-removal";
 import { PET_ACTIONS, type ActionFrameSet, type PetAction, type PetSpecies } from "./types";
 
 interface SavedManualFramePack {
@@ -17,6 +18,7 @@ export interface GenerateFramePackOptions {
   onProgress?: (message: string) => void;
   isCancelled?: () => boolean;
   frameDelayMs?: number;
+  removeBackground?: boolean;
 }
 
 export interface GeneratedFramePack {
@@ -75,6 +77,16 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
   if (!options.referencePhoto) throw new Error("请先选择宠物照片");
 
   const progress = (message: string) => options.onProgress?.(message);
+  const removeBackground = options.removeBackground ?? true;
+  const background = removeBackground ? "green" : "neutral";
+  const cleanImage = async (image: string) => {
+    if (!removeBackground) return image;
+    try {
+      return await removeBackgroundFromDataUrl(image);
+    } catch {
+      return image;
+    }
+  };
   ensureNotCancelled(options.isCancelled);
 
   progress("上传参考照片...");
@@ -86,17 +98,20 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
 
   ensureNotCancelled(options.isCancelled);
   progress("生成角色设定图...");
-  const characterImage = await generateImage(
+  const characterImageRaw = await generateImage(
     apiKey,
     buildCharacterPrompt({
       species: options.species,
       petName: options.petName,
       referenceImageUrl: referenceUrl,
       characterReferenceUrl: referenceUrl,
-      appearanceNotes: options.appearanceNotes
+      appearanceNotes: options.appearanceNotes,
+      background
     }),
     referenceUrl
   );
+  progress("去除角色设定图背景...");
+  const characterImage = await cleanImage(characterImageRaw);
 
   ensureNotCancelled(options.isCancelled);
   progress("上传角色设定图，供动作帧引用...");
@@ -135,14 +150,15 @@ export async function generatePetFramePack(options: GenerateFramePackOptions): P
             petName: options.petName,
             referenceImageUrl: characterUrl,
             characterReferenceUrl: characterUrl,
-            appearanceNotes: options.appearanceNotes
+            appearanceNotes: options.appearanceNotes,
+            background
           },
           action.id,
           frameIndex
         ),
         characterUrl
       );
-      frames.push(image);
+      frames.push(await cleanImage(image));
       completedFrames += 1;
 
       // Keep the API calls sequential and leave a little room for rate limits.

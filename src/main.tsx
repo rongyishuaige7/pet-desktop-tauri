@@ -149,6 +149,7 @@ function StudioWindow() {
   const [uploadUrl, setUploadUrl] = useState(() => localStorage.getItem(UPLOAD_URL_STORAGE) ?? "");
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
   const [appearanceNotes, setAppearanceNotes] = useState("");
+  const [removeAiBackground, setRemoveAiBackground] = useState(true);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiLog, setAiLog] = useState<string[]>([]);
   const aiCancelRef = useRef<{ cancelled: boolean } | null>(null);
@@ -279,6 +280,7 @@ function StudioWindow() {
         petName: name,
         species,
         appearanceNotes,
+        removeBackground: removeAiBackground,
         onProgress: (message) => setAiLog((log) => [...log, message]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -648,9 +650,17 @@ function StudioWindow() {
                     rows={3}
                   />
                 </label>
+                <label className="ai-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={removeAiBackground}
+                    onChange={(event) => setRemoveAiBackground(event.target.checked)}
+                  />
+                  自动去背景（绿幕/纯色背景，实验）
+                </label>
                 <p className="ai-warning">
                   完整生成约 31 次图像请求（1 张角色设定 + 30 帧），耗时可能数分钟；API Key 只保存在当前会话。
-                  生成图通常不含 alpha 通道，如出现方形底色，需要先抠图再替换帧包。
+                  自动去背景是本地颜色抠图，边缘复杂或背景不纯时可能残留，可关闭后自行抠图。
                 </p>
                 <div className="ai-actions">
                   <button
