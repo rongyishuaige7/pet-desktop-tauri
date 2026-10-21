@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { DEFAULT_PRESET_FRAME_DIR, LOOPING_ACTIONS, PET_ZOOM_STORAGE, PRESET_FRAME_DIR_STORAGE } from "./config";
+import { DEFAULT_PRESET_FRAME_DIR, LOOPING_ACTIONS, PET_ZOOM_STORAGE, PRESET_FRAME_DIR_STORAGE, UPLOAD_URL_STORAGE } from "./config";
+import { generatePetFramePack, GenerationCancelled } from "./ai-generation";
 import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction } from "./pet-logic";
 import { loadPet, savePet, setCurrentAction } from "./storage";
 import { PET_ACTIONS, PET_CHANNEL, type ActionFrameSet, type PetAction, type PetProfile, type PetSpecies } from "./types";
@@ -143,7 +144,14 @@ function StudioWindow() {
   const [sourceImage, setSourceImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"preset" | "manual">("preset");
+  const [activeTab, setActiveTab] = useState<"preset" | "manual" | "ai">("preset");
+  const [apiKey, setApiKey] = useState("");
+  const [uploadUrl, setUploadUrl] = useState(() => localStorage.getItem(UPLOAD_URL_STORAGE) ?? "");
+  const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
+  const [appearanceNotes, setAppearanceNotes] = useState("");
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiLog, setAiLog] = useState<string[]>([]);
+  const aiCancelRef = useRef<{ cancelled: boolean } | null>(null);
   const [zoom, setZoom] = useState(() => {
     const stored = Number(localStorage.getItem(PET_ZOOM_STORAGE));
     return Number.isFinite(stored) && stored >= 50 && stored <= 150 ? stored : 100;
@@ -158,6 +166,12 @@ function StudioWindow() {
   useEffect(() => {
     petRef.current = pet;
   }, [pet]);
+
+  useEffect(() => {
+    return () => {
+      if (aiCancelRef.current) aiCancelRef.current.cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -226,6 +240,88 @@ function StudioWindow() {
       unlisten?.();
     };
   }, []);
+
+  async function handleReferencePhoto(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      setReferencePhoto(await readFileAsDataUrl(file));
+      setError(null);
+    } catch (err) {
+      setError(`读取宠物照片失败：${formatError(err)}`);
+    }
+  }
+
+  function handleUploadUrlChange(value: string) {
+    setUploadUrl(value);
+    localStorage.setItem(UPLOAD_URL_STORAGE, value);
+  }
+
+  async function handleGenerateAI() {
+    if (!isTauri) {
+      setError("AI 生成需要在桌面版运行。");
+      return;
+    }
+    if (aiRunning) return;
+
+    setError(null);
+    setPresetStatus(null);
+    setAiLog([]);
+    const cancelToken = { cancelled: false };
+    aiCancelRef.current = cancelToken;
+    setAiRunning(true);
+
+    try {
+      const result = await generatePetFramePack({
+        apiKey,
+        uploadUrl,
+        referencePhoto: referencePhoto ?? "",
+        petName: name,
+        species,
+        appearanceNotes,
+        onProgress: (message) => setAiLog((log) => [...log, message]),
+        isCancelled: () => cancelToken.cancelled
+      });
+
+      const nextPet = createManualPet({
+        name,
+        species,
+        sourceImage: result.characterImage,
+        manualFrames: result.actions,
+        frameRoot: result.frameRoot,
+        storageMode: "preset-root"
+      });
+
+      setSourceImage(result.characterImage);
+      setManualFrames(result.actions);
+      await savePet(toPersistedPet(nextPet), nextPet);
+
+      let synced = true;
+      await invoke("set_native_pet_frame_root", { rootDir: result.frameRoot }).catch((err) => {
+        synced = false;
+        setError(`AI 帧包已保存，但同步桌面宠物失败：${formatError(err)}`);
+      });
+
+      setPet(nextPet);
+      setPresetStatus(
+        synced ? "AI 动作帧包已生成并同步到桌面宠物。" : "AI 动作帧包已保存，但桌面宠物同步失败。"
+      );
+    } catch (err) {
+      if (err instanceof GenerationCancelled) {
+        setPresetStatus("AI 生成已取消。");
+      } else {
+        setError(`AI 生成失败：${formatError(err)}`);
+      }
+    } finally {
+      setAiRunning(false);
+      aiCancelRef.current = null;
+    }
+  }
+
+  function handleCancelAI() {
+    if (aiCancelRef.current) aiCancelRef.current.cancelled = true;
+    setPresetStatus("正在取消 AI 生成...");
+  }
 
   async function handleManualFrames(action: PetAction, files: FileList | null) {
     if (!files?.length) return;
@@ -441,6 +537,13 @@ function StudioWindow() {
             >
               📤 手动上传
             </button>
+            <button
+              type="button"
+              className={activeTab === "ai" ? "tab-btn active" : "tab-btn"}
+              onClick={() => setActiveTab("ai")}
+            >
+              ✨ AI 生成
+            </button>
           </div>
 
           <div className="manual-frame-panel">
@@ -453,11 +556,16 @@ function StudioWindow() {
                   预置帧包目录
                   <input value={presetFrameDir} onChange={(event) => setPresetFrameDir(event.target.value)} />
                 </label>
-                <button className="secondary-action" type="button" onClick={handleLoadPresetFrames} disabled={isGenerating}>
+                <button
+                  className="secondary-action"
+                  type="button"
+                  onClick={handleLoadPresetFrames}
+                  disabled={isGenerating || aiRunning}
+                >
                   一键导入并保存预置帧包
                 </button>
               </div>
-            ) : (
+            ) : activeTab === "manual" ? (
               <div className="manual-upload-section">
                 <p className="section-tip">
                   分别上传 6 个动作状态下的图片文件，每个动作需要至少 5 帧图片。桌面版会把帧包写入本地目录，并同步到桌面宠物。
@@ -496,10 +604,79 @@ function StudioWindow() {
                   })}
                 </div>
               </div>
+            ) : (
+              <div className="ai-generation-section">
+                <p className="section-tip">
+                  使用 Minimax 生成角色设定图和 6 组动作帧。需要 API Key，以及可公网访问的参考图上传服务（见 tools/upload-server.mjs）。
+                </p>
+                {!isTauri && <p className="ai-warning">AI 生成需要在桌面版运行。</p>}
+                <label className="ai-field">
+                  Minimax API Key
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder="sk-..."
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ai-field">
+                  参考图上传服务
+                  <input
+                    value={uploadUrl}
+                    onChange={(event) => handleUploadUrlChange(event.target.value)}
+                    placeholder="https://example.com/upload"
+                  />
+                </label>
+                <label className="ai-field">
+                  宠物照片
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => handleReferencePhoto(event.target.files)}
+                  />
+                </label>
+                {referencePhoto && (
+                  <img src={referencePhoto} className="ai-photo-preview" alt="宠物参考图" />
+                )}
+                <label className="ai-field">
+                  外观备注（可选）
+                  <textarea
+                    value={appearanceNotes}
+                    onChange={(event) => setAppearanceNotes(event.target.value)}
+                    placeholder="例如：黑白短毛猫，白色鼻口，黑色耳朵，胸口和爪子为白色。"
+                    rows={3}
+                  />
+                </label>
+                <p className="ai-warning">
+                  完整生成约 31 次图像请求（1 张角色设定 + 30 帧），耗时可能数分钟；API Key 只保存在当前会话。
+                  生成图通常不含 alpha 通道，如出现方形底色，需要先抠图再替换帧包。
+                </p>
+                <div className="ai-actions">
+                  <button
+                    className="secondary-action"
+                    type="button"
+                    onClick={handleGenerateAI}
+                    disabled={aiRunning || !isTauri}
+                  >
+                    {aiRunning ? "AI 生成中..." : "开始生成"}
+                  </button>
+                  {aiRunning && (
+                    <button type="button" className="ai-cancel-btn" onClick={handleCancelAI}>
+                      取消
+                    </button>
+                  )}
+                </div>
+                {aiLog.length > 0 && <pre className="ai-log">{aiLog.join("\n")}</pre>}
+              </div>
             )}
           </div>
 
-          <button className="primary-action" onClick={handleGenerate} disabled={isGenerating}>
+          <button
+            className="primary-action"
+            onClick={handleGenerate}
+            disabled={isGenerating || aiRunning}
+          >
             {isGenerating ? "正在保存..." : isTauri ? "保存并同步到桌面" : "保存当前帧包"}
           </button>
 

@@ -2,6 +2,8 @@
 
 这个目录用于保存 AI 角色原型图和动作帧生成的通用 prompt 模板。
 
+桌面版“AI 生成”页签运行时使用 `src/prompt-builder.ts` 中的压缩 prompt（Minimax `image-01` 限制 1500 字符）；本目录的完整模板用于 ChatGPT 人工合成、调优和后续扩展。
+
 这里的模板可以提交到 GitHub。真实生成记录、私有参考图 URL、API Key、token、用户原图等不要提交。
 
 ## 目录结构

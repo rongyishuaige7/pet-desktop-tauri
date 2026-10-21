@@ -2,7 +2,7 @@
 
 一个 Linux / macOS 桌面宠物应用原型。它用 Tauri + React 提供管理界面，用 Rust 创建透明置顶的原生桌面宠物窗口：Linux 使用 GTK，macOS 使用 AppKit，让本地动作帧包里的猫猫狗狗在桌面上活动。
 
-当前版本的核心路线是“导入本地动作帧包并播放”，因此不依赖在线 AI 服务也能运行。仓库里保留了 Minimax 图像生成和参考图上传链路，方便后续继续扩展为“上传宠物照片 -> 生成动作帧 -> 桌面宠物”的完整工作流。
+当前版本的核心路线是“导入本地动作帧包并播放”，不依赖在线 AI 服务也能运行；同时提供 AI 生成页签，可走“上传宠物照片 -> 生成角色设定图 -> 生成 6 组动作帧 -> 自动导入桌面宠物”的完整链路。
 
 ## 功能特性
 
@@ -14,6 +14,7 @@
 - macOS：单击宠物触发开心反馈，拖拽移动窗口。
 - macOS：透明区域默认点击穿透，可通过托盘菜单关闭。
 - 托盘菜单支持切换动作、暂停自主行为/动画、透明区域穿透、重置位置和开机自启。
+- AI 生成页签：照片 + Minimax API Key + 上传服务，生成角色设定图和 6×5 动作帧并自动导入。
 - 管理界面可预览动画、切换动作、调整宠物缩放比例。
 - 原生桌面宠物窗口透明、置顶、可拖拽（Linux GTK / macOS AppKit）。
 - 宠物窗口右键菜单可直接切换动作。
@@ -196,6 +197,7 @@ sudo apt install "./src-tauri/target/release/bundle/deb/桌面贴贴宠物_0.1.0
 - 点击“预置帧包”页签，填写本地帧包目录。
 - 点击“一键导入并保存预置帧包”。
 - 或在“手动上传”页签上传 6 组帧，点击“保存并同步到桌面”；桌面版会把帧包写入应用数据目录。
+- 或在“AI 生成”页签填写 Minimax API Key、参考图上传服务和宠物照片，点击“开始生成”。
 - 在管理界面右侧预览动画并切换动作。
 - 拖拽桌面宠物窗口可以移动位置。
 - 右键桌面宠物窗口可以切换动作。
@@ -233,6 +235,8 @@ React 管理界面
 | `src/styles.css` | 管理界面和宠物窗口样式。 |
 | `src/types.ts` | 宠物类型、动作枚举、帧集合类型和存储 key。 |
 | `src/storage.ts` | IndexedDB 持久化、BroadcastChannel 同步、动作切换同步。 |
+| `src/ai-generation.ts` | 照片上传、角色设定图与 30 帧动作生成、帧包落盘。 |
+| `src/prompt-builder.ts` | 适配 Minimax 1500 字符限制的压缩 prompt 构建。 |
 | `src-tauri/src/lib.rs` | Tauri 主逻辑，注册命令、启动原生宠物窗口、托盘菜单、窗口关闭拦截、Minimax/上传命令。 |
 | `src-tauri/src/native_pet/mod.rs` | 共享运行时状态、设置与帧包 API、平台分发。 |
 | `src-tauri/src/native_pet/linux.rs` | Linux GTK 宠物窗口。 |
@@ -291,14 +295,31 @@ React 管理界面
 -> 桌面宠物继续存在
 ```
 
-## Minimax 预留链路
+## AI 生成链路
 
-仓库中保留了 AI 生成相关实现：
+桌面版“AI 生成”页签使用以下链路：
 
-- `prompts/`
-- `generate_minimax_image`
-- `upload_reference_image`
-- `tools/upload-server.mjs`
+```text
+宠物照片
+-> upload_reference_image 上传为公网 URL
+-> generate_minimax_image 生成角色设定图
+-> 上传角色设定图作为动作帧参考
+-> 逐动作生成 5 帧（6 × 5 = 30 帧）
+-> save_manual_frame_pack 写入应用数据目录
+-> set_native_pet_frame_root 同步桌面宠物
+```
+
+要求：
+
+- Minimax API Key（只保存在当前会话，不写入磁盘）。
+- 可公网访问的参考图上传服务，例如：
+
+```bash
+PUBLIC_BASE_URL="https://your-domain.example" node tools/upload-server.mjs
+```
+
+- `image-01` 的 prompt 上限是 1500 字符，运行时使用 [src/prompt-builder.ts](src/prompt-builder.ts) 的压缩 prompt；`prompts/` 中的完整模板仍用于 ChatGPT 合成和人工调优。
+- 完整生成约 31 次图像请求，耗时可能数分钟，可随时取消。
 
 AI 角色原型图和动作帧 prompt 模板保存在 `prompts/`。这些模板只保存通用结构和可复用描述，真实生成记录建议放在本地 `generation-runs/`，不要提交 API Key、私有图片 URL、用户原图或未脱敏生成参数。
 
@@ -332,7 +353,9 @@ PUBLIC_BASE_URL="https://your-domain.example" node /path/to/upload-server.mjs
 
 ## 当前限制
 
-- 目前主流程依赖现成动作帧包，暂未内置完整 AI 生成流程。
+- AI 生成依赖 Minimax API Key 和公网上传服务，未接入本地模型。
+- AI 生成图通常不含 alpha 通道，可能带浅色背景；需要透明效果时请先抠图再替换帧包。
+- 每个动作的 5 帧是独立请求，动作连贯性受模型影响，可能需要人工筛选或替换。
 - 默认帧包目录是相对工作目录的 `./frame-pack`；打包后请填写绝对路径，其他用户需要在界面中改成自己的帧包目录。
 - 手动上传的帧包会复制到应用数据目录，不会修改原始图片。
 - macOS 已持久化桌面宠物窗口位置；Linux 暂未持久化窗口位置。
