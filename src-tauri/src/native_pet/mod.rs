@@ -1,5 +1,6 @@
 mod frame_pack;
 mod model;
+mod playback;
 mod settings;
 
 #[cfg(target_os = "linux")]
@@ -27,7 +28,7 @@ pub use model::{
     DEFAULT_FRAME_ROOT, LOOPING_ACTIONS, MAX_SCALE, MIN_SCALE, PET_SIZE, SETTINGS_FILE_NAME,
 };
 pub use settings::{
-    load_settings, save_settings, settings_file_path, write_atomic, NativePetSettings, PetPosition,
+    load_settings, settings_file_path, write_atomic, NativePetSettings, PetPosition,
 };
 
 use std::path::PathBuf;
@@ -59,6 +60,10 @@ pub(crate) fn bundled_frame_root() -> Option<PathBuf> {
 
 pub struct Runtime {
     pub action: String,
+    pub action_revision: u64,
+    pub pet_id: Option<String>,
+    pub frame_source: String,
+    pub visible: bool,
     pub root_dir: PathBuf,
     pub scale: f64,
     pub reload_requested: bool,
@@ -78,6 +83,10 @@ impl Default for Runtime {
     fn default() -> Self {
         Self {
             action: "idle".to_string(),
+            action_revision: 0,
+            pet_id: None,
+            frame_source: DEFAULT_FRAME_ROOT.to_string(),
+            visible: true,
             root_dir: resolve_frame_root(DEFAULT_FRAME_ROOT),
             scale: 1.0,
             reload_requested: false,
@@ -108,6 +117,9 @@ pub fn init_runtime() {
 pub fn configure(settings: &NativePetSettings, settings_path: Option<PathBuf>) {
     if let Ok(mut runtime) = runtime().lock() {
         runtime.action = normalize_action(settings.current_action.clone());
+        runtime.action_revision += 1;
+        runtime.frame_source = normalize_frame_root(Some(settings.frame_root.clone()));
+        runtime.visible = settings.visible;
         runtime.root_dir =
             resolve_frame_root(&normalize_frame_root(Some(settings.frame_root.clone())));
         runtime.scale = normalize_scale(settings.scale);
@@ -144,6 +156,7 @@ pub fn set_action(action: &str) -> Result<(), String> {
         .lock()
         .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
     runtime.action = action.to_string();
+    runtime.action_revision += 1;
     runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(20));
     Ok(())
 }
@@ -157,19 +170,28 @@ pub fn return_to_idle() -> Result<(), String> {
         .lock()
         .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
     runtime.action = "idle".to_string();
+    runtime.action_revision += 1;
     Ok(())
 }
 
-pub fn set_frame_root(root_dir: &str) -> Result<(), String> {
+pub fn set_frame_root(root_dir: &str, pet_id: Option<String>) -> Result<(), String> {
     let root = root_dir.trim();
     if root.is_empty() {
         return Err("帧目录不能为空".to_string());
     }
 
+    let source = normalize_frame_root(Some(root.to_string()));
+    let resolved = resolve_frame_root(&source);
+    // Prepare before committing the runtime path. Invalid packs leave the old pet intact.
+    scan_pack(&resolved)?;
     let mut runtime = runtime()
         .lock()
         .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
-    runtime.root_dir = resolve_frame_root(root);
+    runtime.root_dir = resolved;
+    runtime.frame_source = source;
+    runtime.pet_id = pet_id;
+    runtime.visible = true;
+    runtime.action_revision += 1;
     runtime.reload_requested = true;
     Ok(())
 }
@@ -245,7 +267,7 @@ pub fn set_animation_paused(paused: bool) -> Result<(), String> {
 
 pub fn maybe_auto_advance(now: Instant) -> Option<String> {
     let mut runtime = runtime().lock().ok()?;
-    if !runtime.autonomous || runtime.animation_paused {
+    if !runtime.autonomous || runtime.animation_paused || !runtime.visible {
         return None;
     }
 
@@ -264,6 +286,7 @@ pub fn maybe_auto_advance(now: Instant) -> Option<String> {
     let next = choose_next_action(&current, &mut runtime.behavior_rng);
     let duration = action_duration(next, &mut runtime.behavior_rng);
     runtime.action = next.to_string();
+    runtime.action_revision += 1;
     runtime.next_behavior_at = Some(now + duration);
     Some(next.to_string())
 }
@@ -359,7 +382,8 @@ pub fn current_settings() -> NativePetSettings {
     let runtime = runtime().lock();
     match runtime {
         Ok(runtime) => NativePetSettings {
-            frame_root: runtime.root_dir.to_string_lossy().to_string(),
+            frame_root: runtime.frame_source.clone(),
+            visible: runtime.visible,
             scale: runtime.scale,
             current_action: runtime.action.clone(),
             autonomous: runtime.autonomous,
@@ -371,6 +395,10 @@ pub fn current_settings() -> NativePetSettings {
 }
 
 pub fn persist_runtime_settings() -> Result<(), String> {
+    static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
+    let _write_guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|_| "配置写入锁已损坏".to_string())?;
     let (settings, path) = {
         let runtime = runtime()
             .lock()
@@ -380,7 +408,8 @@ pub fn persist_runtime_settings() -> Result<(), String> {
         };
         (
             NativePetSettings {
-                frame_root: runtime.root_dir.to_string_lossy().to_string(),
+                frame_root: runtime.frame_source.clone(),
+                visible: runtime.visible,
                 scale: runtime.scale,
                 current_action: runtime.action.clone(),
                 autonomous: runtime.autonomous,
@@ -410,6 +439,43 @@ pub fn emit_error(message: &str) {
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeActionEvent {
+    pub action: String,
+    pub pet_id: Option<String>,
+    pub revision: u64,
+}
+
+pub fn action_event() -> Result<NativeActionEvent, String> {
+    let state = runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+    Ok(NativeActionEvent {
+        action: state.action.clone(),
+        pet_id: state.pet_id.clone(),
+        revision: state.action_revision,
+    })
+}
+
+pub fn emit_action_changed() {
+    if let (Some(app), Ok(event)) = (app_handle(), action_event()) {
+        let _ = app.emit("native-pet-action-changed", event);
+    }
+}
+
+pub fn visible() -> bool {
+    runtime().lock().map(|state| state.visible).unwrap_or(false)
+}
+
+pub fn set_visible(visible: bool) -> Result<(), String> {
+    runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?
+        .visible = visible;
+    Ok(())
+}
+
 pub(crate) fn runtime_root() -> PathBuf {
     runtime()
         .lock()
@@ -417,11 +483,17 @@ pub(crate) fn runtime_root() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_FRAME_ROOT))
 }
 
-pub(crate) fn runtime_action_scale() -> (String, f64) {
+pub(crate) fn runtime_action_scale() -> (String, f64, u64) {
     runtime()
         .lock()
-        .map(|runtime| (runtime.action.clone(), runtime.scale))
-        .unwrap_or_else(|_| ("idle".to_string(), 1.0))
+        .map(|runtime| {
+            (
+                runtime.action.clone(),
+                runtime.scale,
+                runtime.action_revision,
+            )
+        })
+        .unwrap_or_else(|_| ("idle".to_string(), 1.0, 0))
 }
 
 pub(crate) fn take_reload_request() -> Option<PathBuf> {
@@ -443,5 +515,13 @@ mod tests {
         reset_position().expect("reset position");
         assert!(take_position_reset_request());
         assert!(!take_position_reset_request());
+    }
+
+    #[test]
+    fn invalid_pack_keeps_runtime_selection() {
+        let previous = current_settings();
+        let missing = tempfile::tempdir().unwrap();
+        assert!(set_frame_root(missing.path().to_str().unwrap(), Some("invalid".into())).is_err());
+        assert_eq!(current_settings().frame_root, previous.frame_root);
     }
 }

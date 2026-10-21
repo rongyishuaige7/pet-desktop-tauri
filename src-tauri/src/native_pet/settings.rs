@@ -20,6 +20,8 @@ pub struct NativePetSettings {
     pub scale: f64,
     pub current_action: String,
     #[serde(default = "default_autonomous")]
+    pub visible: bool,
+    #[serde(default = "default_autonomous")]
     pub autonomous: bool,
     #[serde(default = "default_click_through")]
     pub click_through: bool,
@@ -41,6 +43,7 @@ impl Default for NativePetSettings {
             frame_root: "./frame-pack".to_string(),
             scale: 1.0,
             current_action: "idle".to_string(),
+            visible: true,
             autonomous: true,
             click_through: true,
             position: None,
@@ -83,13 +86,6 @@ pub fn load_settings(app: &AppHandle) -> NativePetSettings {
         .unwrap_or_default()
 }
 
-pub fn save_settings(app: &AppHandle, settings: &NativePetSettings) -> Result<(), String> {
-    let path = settings_file_path(app)?;
-    let data = serde_json::to_vec_pretty(&settings.clone().normalized())
-        .map_err(|err| format!("序列化原生宠物配置失败：{err}"))?;
-    write_atomic(&path, &data)
-}
-
 pub fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -125,6 +121,7 @@ mod tests {
             frame_root: "  ".to_string(),
             scale: 9.0,
             current_action: "dance".to_string(),
+            visible: true,
             autonomous: false,
             click_through: true,
             position: Some(PetPosition {

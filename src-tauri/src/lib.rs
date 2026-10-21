@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tauri::{
     menu::{CheckMenuItem, MenuBuilder, MenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager, WindowEvent,
+    Manager, WindowEvent,
 };
 
 mod autostart;
@@ -16,44 +16,43 @@ fn ping() -> &'static str {
 }
 
 #[tauri::command]
-fn set_native_pet_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+fn set_native_pet_action(action: String) -> Result<native_pet::NativeActionEvent, String> {
     native_pet::set_action(&action)?;
-    let mut settings = native_pet::load_settings(&app);
-    settings.current_action = action;
-    native_pet::save_settings(&app, &settings)?;
-    Ok(())
+    native_pet::persist_runtime_settings()?;
+    native_pet::action_event()
 }
 
 #[tauri::command]
-fn set_native_pet_frame_root(app: tauri::AppHandle, root_dir: String) -> Result<(), String> {
-    native_pet::set_frame_root(&root_dir)?;
-    let mut settings = native_pet::load_settings(&app);
-    settings.frame_root = native_pet::normalize_frame_root(Some(root_dir));
-    native_pet::save_settings(&app, &settings)?;
-    Ok(())
+async fn set_native_pet_frame_root(root_dir: String, pet_id: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        native_pet::set_frame_root(&root_dir, pet_id)?;
+        native_pet::persist_runtime_settings()
+    })
+    .await
+    .map_err(|err| format!("加载帧包任务失败：{err}"))?
 }
 
 #[tauri::command]
-fn set_native_pet_scale(app: tauri::AppHandle, scale: f64) -> Result<(), String> {
+fn set_native_pet_visible(visible: bool) -> Result<(), String> {
+    native_pet::set_visible(visible)?;
+    native_pet::persist_runtime_settings()
+}
+
+#[tauri::command]
+fn set_native_pet_scale(scale: f64) -> Result<(), String> {
     native_pet::set_scale(scale)?;
-    let mut settings = native_pet::load_settings(&app);
-    settings.scale = native_pet::normalize_scale(scale);
-    native_pet::save_settings(&app, &settings)?;
-    Ok(())
+    native_pet::persist_runtime_settings()
 }
 
 #[tauri::command]
-fn get_native_pet_settings(app: tauri::AppHandle) -> native_pet::NativePetSettings {
-    native_pet::load_settings(&app)
+fn get_native_pet_settings() -> native_pet::NativePetSettings {
+    native_pet::current_settings()
 }
 
 #[tauri::command]
-fn reset_native_pet_position(app: tauri::AppHandle) -> Result<(), String> {
+fn reset_native_pet_position() -> Result<(), String> {
     native_pet::reset_position()?;
-    let mut settings = native_pet::load_settings(&app);
-    settings.position = None;
-    native_pet::save_settings(&app, &settings)?;
-    Ok(())
+    native_pet::persist_runtime_settings()
 }
 
 #[derive(Debug, Deserialize)]
@@ -433,6 +432,7 @@ pub fn run() {
             set_native_pet_action,
             set_native_pet_frame_root,
             set_native_pet_scale,
+            set_native_pet_visible,
             get_native_pet_settings,
             reset_native_pet_position,
             generate_minimax_image,
@@ -575,7 +575,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn switch_native_action(app: &tauri::AppHandle, action: &str) {
+fn switch_native_action(_app: &tauri::AppHandle, action: &str) {
     if let Err(err) = native_pet::set_action(action) {
         eprintln!("failed to set native pet action: {err}");
         return;
@@ -583,17 +583,15 @@ fn switch_native_action(app: &tauri::AppHandle, action: &str) {
     if let Err(err) = native_pet::persist_runtime_settings() {
         eprintln!("failed to persist native pet settings: {err}");
     }
-    let _ = app.emit("native-pet-action-changed", action);
+    native_pet::emit_action_changed();
 }
 
-fn reset_native_position(app: &tauri::AppHandle) {
+fn reset_native_position(_app: &tauri::AppHandle) {
     if let Err(err) = native_pet::reset_position() {
         eprintln!("failed to reset native pet position: {err}");
         return;
     }
-    let mut settings = native_pet::load_settings(app);
-    settings.position = None;
-    if let Err(err) = native_pet::save_settings(app, &settings) {
+    if let Err(err) = native_pet::persist_runtime_settings() {
         eprintln!("failed to persist reset position: {err}");
     }
 }

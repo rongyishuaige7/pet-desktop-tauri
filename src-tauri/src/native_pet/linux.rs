@@ -8,12 +8,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::{
-    frame_interval_ms, is_looping, one_shot_next, persist_runtime_settings, runtime,
-    runtime_action_scale, runtime_root, scaled_canvas_size, scan_action_frames, set_action,
-    take_reload_request, ACTIONS, CANVAS_SIZE, PET_SIZE,
+    persist_runtime_settings, runtime, runtime_action_scale, runtime_root, scaled_canvas_size,
+    set_action, take_reload_request, ACTIONS, CANVAS_SIZE, PET_SIZE,
 };
 
 thread_local! {
@@ -47,14 +46,20 @@ pub fn spawn_window(app_handle: AppHandle) {
     drawing_area.add_events(gdk::EventMask::BUTTON_PRESS_MASK);
     window.add(&drawing_area);
 
-    let frames = Rc::new(RefCell::new(load_frames(&runtime_root())));
+    let frames = Rc::new(RefCell::new(if super::visible() {
+        load_frames(&runtime_root())
+    } else {
+        HashMap::new()
+    }));
     let render_state = Rc::new(RefCell::new(RenderState::default()));
 
     setup_draw_handler(&drawing_area, Rc::clone(&frames), Rc::clone(&render_state));
     setup_mouse_handler(&window, &drawing_area, app_handle);
     setup_animation_timer(&window, &drawing_area, frames, render_state);
 
-    window.show_all();
+    if super::visible() {
+        window.show_all();
+    }
     NATIVE_WINDOW.with(|native_window| {
         *native_window.borrow_mut() = Some(window);
     });
@@ -138,13 +143,12 @@ fn setup_mouse_handler(
     });
 }
 
-fn build_action_menu(drawing_area: &gtk::DrawingArea, app_handle: AppHandle) -> gtk::Menu {
+fn build_action_menu(drawing_area: &gtk::DrawingArea, _app_handle: AppHandle) -> gtk::Menu {
     let menu = gtk::Menu::new();
 
     for (action, label) in ACTIONS {
         let item = gtk::MenuItem::with_label(label);
         let drawing_area = drawing_area.clone();
-        let app_handle = app_handle.clone();
         item.connect_activate(move |_| {
             if let Err(err) = set_action(action) {
                 eprintln!("failed to set native pet action: {err}");
@@ -152,9 +156,7 @@ fn build_action_menu(drawing_area: &gtk::DrawingArea, app_handle: AppHandle) -> 
             if let Err(err) = persist_runtime_settings() {
                 eprintln!("failed to persist native pet settings: {err}");
             }
-            if let Err(err) = app_handle.emit("native-pet-action-changed", action) {
-                eprintln!("failed to emit native pet action change: {err}");
-            }
+            super::emit_action_changed();
             drawing_area.queue_draw();
         });
         menu.append(&item);
@@ -175,19 +177,31 @@ fn setup_animation_timer(
     let window = window.clone();
     let drawing_area = drawing_area.clone();
     let mut applied_scale = 1.0;
-    let mut last_advance = Instant::now();
+    let mut playback = super::playback::Playback::default();
+    let mut applied_visible = super::visible();
 
-    glib::timeout_add_local(Duration::from_millis(100), move || {
-        if let Some(action) = super::maybe_auto_advance(Instant::now()) {
-            if let Some(app) = super::app_handle() {
-                let _ = app.emit("native-pet-action-changed", action);
-            }
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        if super::maybe_auto_advance(Instant::now()).is_some() {
+            super::emit_action_changed();
         }
-        maybe_reload_frames(&frames);
 
-        let (next_action, next_scale) = runtime_action_scale();
+        let (next_action, next_scale, revision) = runtime_action_scale();
+        let visible = super::visible();
+        if applied_visible != visible {
+            if visible {
+                window.show_all();
+            } else {
+                window.hide();
+            }
+            applied_visible = visible;
+        }
+        if !visible {
+            return ControlFlow::Continue;
+        }
+        let reloaded = maybe_reload_frames(&frames);
 
-        if (next_scale - applied_scale).abs() > f64::EPSILON {
+        let scale_changed = (next_scale - applied_scale).abs() > f64::EPSILON;
+        if scale_changed {
             applied_scale = next_scale;
             let canvas_size = scaled_canvas_size(next_scale) as i32;
             drawing_area.set_size_request(canvas_size, canvas_size);
@@ -204,78 +218,68 @@ fn setup_animation_timer(
         };
 
         let mut state = render_state.borrow_mut();
-        let mut finished = false;
-        if state.action != next_action {
-            state.action = next_action.clone();
-            state.frame_index = 0;
-            last_advance = Instant::now();
-        } else if !super::animation_paused()
-            && frame_count > 0
-            && last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&next_action))
-        {
-            if is_looping(&state.action) {
-                state.frame_index = (state.frame_index + 1) % frame_count;
-            } else {
-                state.frame_index = (state.frame_index + 1).min(frame_count - 1);
-            }
-            last_advance = Instant::now();
-        }
-
-        // A finished one-shot (jump, happy) hands control back to idle instead of
-        // freezing on its last frame.
-        if frame_count > 0
-            && state.frame_index + 1 >= frame_count
-            && !is_looping(&state.action)
-            && one_shot_next(&state.action).is_some()
-            && last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&next_action))
-        {
-            finished = true;
-        }
+        let previous_frame = state.frame_index;
+        let action_changed = state.action != next_action;
+        state.action = next_action.clone();
+        let finished = playback
+            .tick(
+                &next_action,
+                revision,
+                frame_count,
+                super::animation_paused(),
+                Instant::now(),
+            )
+            .is_some();
+        state.frame_index = playback.frame_index;
+        let redraw =
+            reloaded || scale_changed || action_changed || previous_frame != state.frame_index;
         drop(state);
-
-        if finished {
-            let _ = super::return_to_idle();
+        if finished && super::return_to_idle().is_ok() {
+            super::emit_action_changed();
         }
 
-        drawing_area.queue_draw();
+        if redraw {
+            drawing_area.queue_draw();
+        }
         ControlFlow::Continue
     });
 }
 
-fn maybe_reload_frames(frames: &Rc<RefCell<HashMap<String, Vec<Pixbuf>>>>) {
+fn maybe_reload_frames(frames: &Rc<RefCell<HashMap<String, Vec<Pixbuf>>>>) -> bool {
     if let Some(root_dir) = take_reload_request() {
-        *frames.borrow_mut() = load_frames(&root_dir);
+        match try_load_frames(&root_dir) {
+            Ok(prepared) => {
+                *frames.borrow_mut() = prepared;
+                return true;
+            }
+            Err(error) => super::emit_error(&error),
+        }
     }
+    false
 }
 
 fn load_frames(root: &Path) -> HashMap<String, Vec<Pixbuf>> {
-    let mut result = HashMap::new();
+    try_load_frames(root).unwrap_or_else(|error| {
+        super::emit_error(&error);
+        HashMap::new()
+    })
+}
 
-    for (action, _) in ACTIONS {
-        let paths = match scan_action_frames(root, action) {
-            Ok(paths) => paths,
-            Err(err) => {
-                eprintln!("failed to read native pet frames: {err}");
-                Vec::new()
-            }
-        };
-
-        let pixbufs = paths
-            .into_iter()
-            .filter_map(|path| {
-                Pixbuf::from_file(&path)
-                    .map_err(|err| {
-                        eprintln!("failed to load native pet frame {}: {err}", path.display());
-                        err
-                    })
-                    .ok()
-            })
-            .collect::<Vec<_>>();
-
-        result.insert(action.to_string(), pixbufs);
-    }
-
-    result
+fn try_load_frames(root: &Path) -> Result<HashMap<String, Vec<Pixbuf>>, String> {
+    let paths = super::scan_pack(root)?;
+    paths
+        .into_iter()
+        .map(|(action, paths)| {
+            let frames = paths
+                .into_iter()
+                .map(|path| {
+                    Pixbuf::from_file(&path)
+                        .map_err(|err| format!("解码帧图失败 {}：{err}", path.display()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((action, frames))
+        })
+        .collect()
 }
 
 fn clear_context(context: &cairo::Context) {

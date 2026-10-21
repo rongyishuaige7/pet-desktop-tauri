@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -26,14 +26,13 @@ use objc2_image_io::{
     kCGImageSourceShouldCacheImmediately, kCGImageSourceThumbnailMaxPixelSize, CGImageSource,
 };
 use objc2_quartz_core::{CALayer, CATransaction};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::{
-    current_settings, emit_error, frame_interval_ms, is_looping, mark_position_dirty,
-    normalize_scale, one_shot_next, persist_runtime_settings, runtime_action_scale, runtime_root,
-    scaled_canvas_size, scan_action_frames, set_action, take_position_dirty_request,
-    take_position_reset_request, take_reload_request, update_position, PetPosition, ACTIONS,
-    CANVAS_SIZE, MIN_FRAMES_PER_ACTION, PET_SIZE,
+    current_settings, emit_error, mark_position_dirty, normalize_scale, persist_runtime_settings,
+    runtime_action_scale, runtime_root, scaled_canvas_size, scan_action_frames, set_action,
+    take_position_dirty_request, take_position_reset_request, take_reload_request, update_position,
+    PetPosition, ACTIONS, CANVAS_SIZE, MIN_FRAMES_PER_ACTION, PET_SIZE,
 };
 
 const COMMON_RUN_LOOP_MODE: &str = "kCFRunLoopCommonModes";
@@ -49,6 +48,7 @@ struct AlphaMask {
     width: usize,
     height: usize,
     data: Vec<u8>,
+    aspect: f64,
 }
 
 impl AlphaMask {
@@ -57,11 +57,12 @@ impl AlphaMask {
             width: 1,
             height: 1,
             data: vec![255],
+            aspect: 1.0,
         }
     }
 
     fn from_path(path: &Path) -> Self {
-        let Ok(image) = image::open(path) else {
+        let Ok(image) = super::frame_pack::read_frame(path) else {
             return Self::opaque();
         };
         let rgba = image.to_rgba8();
@@ -85,6 +86,7 @@ impl AlphaMask {
             width,
             height,
             data,
+            aspect: source_width as f64 / source_height as f64,
         }
     }
 
@@ -125,7 +127,8 @@ struct UiState {
     current_action: String,
     ignores_mouse: bool,
     frame_index: usize,
-    last_advance: Instant,
+    playback: super::playback::Playback,
+    applied_visible: bool,
     applied_scale: f64,
     applied_backing_scale: f64,
     root: PathBuf,
@@ -238,7 +241,9 @@ pub fn spawn_window(_app_handle: AppHandle) {
     unsafe {
         let _: () = msg_send![&*panel, setContentView: &*pet_view];
         let _: () = msg_send![&*pet_view, setMenu: &*menu];
-        let _: () = msg_send![&*panel, orderFrontRegardless];
+        if settings.visible {
+            let _: () = msg_send![&*panel, orderFrontRegardless];
+        }
     }
 
     let monitor = install_mouse_monitor(&panel, &pet_view, &menu);
@@ -264,7 +269,8 @@ pub fn spawn_window(_app_handle: AppHandle) {
             current_action: String::new(),
             frame_index: 0,
             ignores_mouse: false,
-            last_advance: Instant::now(),
+            playback: super::playback::Playback::default(),
+            applied_visible: settings.visible,
             applied_scale: scale,
             applied_backing_scale: 1.0,
             root: runtime_root(),
@@ -484,7 +490,7 @@ fn install_timer() -> Retained<NSTimer> {
     let timer: Retained<NSTimer> = unsafe {
         let pointer: *mut NSTimer = msg_send![
             NSTimer::class(),
-            timerWithTimeInterval: 0.1f64,
+            timerWithTimeInterval: 0.016f64,
             repeats: Bool::YES,
             block: &*block
         ];
@@ -589,7 +595,7 @@ fn point_is_opaque(ui: &UiState, mouse: NSPoint, window_frame: NSRect) -> bool {
         return false;
     }
 
-    let aspect = mask.width as f64 / mask.height as f64;
+    let aspect = mask.aspect;
     let (draw_width, draw_height) = if aspect >= 1.0 {
         (pet_size, pet_size / aspect)
     } else {
@@ -611,13 +617,15 @@ fn point_is_opaque(ui: &UiState, mouse: NSPoint, window_frame: NSRect) -> bool {
 }
 
 fn tick() {
-    if let Some(action) = super::maybe_auto_advance(Instant::now()) {
-        if let Some(app) = super::app_handle() {
-            let _ = app.emit("native-pet-action-changed", action);
-        }
+    if super::maybe_auto_advance(Instant::now()).is_some() {
+        super::emit_action_changed();
     }
-    let (action, scale) = runtime_action_scale();
-    let reload_root = take_reload_request();
+    let (action, scale, revision) = runtime_action_scale();
+    let reload_root = if super::visible() {
+        take_reload_request()
+    } else {
+        None
+    };
     let reset_position = take_position_reset_request();
     let mut finished: Option<&'static str> = None;
 
@@ -629,10 +637,38 @@ fn tick() {
             return;
         };
 
+        let mut image_dirty = false;
+        let visible = super::visible();
+        if ui.applied_visible != visible {
+            unsafe {
+                if visible {
+                    let _: () = msg_send![&*ui.panel, orderFrontRegardless];
+                } else {
+                    let _: () = msg_send![&*ui.panel, orderOut: std::ptr::null::<AnyObject>()];
+                }
+            }
+            ui.applied_visible = visible;
+        }
         if let Some(root) = reload_root {
-            ui.frames.clear();
-            ui.root = root;
-            ui.current_action.clear();
+            let prepared = ACTIONS
+                .iter()
+                .map(|(id, _)| load_frames(&root, id).map(|frames| (id.to_string(), frames)))
+                .collect::<Result<HashMap<_, _>, _>>();
+            match prepared {
+                Ok(frames) => {
+                    ui.frames = frames;
+                    ui.root = root;
+                    ui.current_action.clear();
+                    image_dirty = true;
+                }
+                Err(error) => {
+                    emit_error(&error);
+                    return;
+                }
+            }
+        }
+        if !visible {
+            return;
         }
 
         if reset_position {
@@ -659,9 +695,10 @@ fn tick() {
         }
 
         if ui.current_action != action {
+            image_dirty = true;
             ui.current_action = action.clone();
             ui.frame_index = 0;
-            ui.last_advance = Instant::now();
+
             update_menu_states(&ui.menu, &action);
         }
 
@@ -673,36 +710,24 @@ fn tick() {
             .map(|frames| frames.len())
             .unwrap_or(0);
 
-        if !super::animation_paused()
-            && frame_count > 0
-            && ui.last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&action))
-        {
-            if is_looping(&action) {
-                ui.frame_index = (ui.frame_index + 1) % frame_count;
-            } else {
-                ui.frame_index = (ui.frame_index + 1).min(frame_count - 1);
-            }
-            ui.last_advance = Instant::now();
-        }
+        let previous_frame = ui.frame_index;
+        finished = ui.playback.tick(
+            &action,
+            revision,
+            frame_count,
+            super::animation_paused(),
+            Instant::now(),
+        );
+        ui.frame_index = ui.playback.frame_index;
 
-        // A finished one-shot (jump, happy) hands control back to idle instead of
-        // freezing on its last frame.
-        if frame_count > 0
-            && ui.frame_index + 1 >= frame_count
-            && !is_looping(&action)
-            && ui.last_advance.elapsed() >= Duration::from_millis(frame_interval_ms(&action))
-        {
-            finished = one_shot_next(&action);
+        if image_dirty || previous_frame != ui.frame_index {
+            update_image(ui);
         }
-
-        update_image(ui);
     });
 
-    if let Some(next) = finished {
+    if finished.is_some() {
         if super::return_to_idle().is_ok() {
-            if let Some(app) = super::app_handle() {
-                let _ = app.emit("native-pet-action-changed", next.to_string());
-            }
+            super::emit_action_changed();
         }
     }
 }
@@ -863,9 +888,7 @@ fn handle_menu_action(action: &str) {
             }
         }
     });
-    if let Some(app) = super::app_handle() {
-        let _ = app.emit("native-pet-action-changed", action);
-    }
+    super::emit_action_changed();
     tick();
 }
 
@@ -917,4 +940,19 @@ fn intersects_any_screen(rect: NSRect, mtm: MainThreadMarker) -> bool {
             && rect.origin.y < visible.origin.y + visible.size.height
             && rect.origin.y + rect.size.height > visible.origin.y
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn alpha_mask_retains_original_aspect_ratio() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wide.png");
+        image::DynamicImage::new_rgba8(400, 200)
+            .save(&path)
+            .unwrap();
+        let mask = AlphaMask::from_path(&path);
+        assert_eq!(mask.aspect, 2.0);
+    }
 }

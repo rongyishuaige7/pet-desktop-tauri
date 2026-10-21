@@ -42,6 +42,8 @@ import "./styles.css";
 const isTauri = typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ !== undefined;
 const isMacOS = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 
+interface NativeActionEvent { action: PetAction; petId: string | null; revision: number }
+
 interface NativePetSettings {
   frameRoot: string;
   scale: number;
@@ -97,6 +99,12 @@ function StudioApp() {
 
   const mutations = useRef<Promise<unknown>>(Promise.resolve());
   const transitioning = useRef(false);
+  const nativeRevision = useRef(0);
+  async function syncNativeAction(action: PetAction) {
+    const reply = await invoke<NativeActionEvent | undefined>("set_native_pet_action", { action });
+    if (reply) nativeRevision.current = Math.max(nativeRevision.current, reply.revision);
+    return reply?.action ?? action;
+  }
   function serial<T>(work: () => Promise<T>): Promise<T> {
     const task = mutations.current.then(work);
     mutations.current = task.catch(() => undefined);
@@ -121,9 +129,9 @@ function StudioApp() {
         if (!selected) throw new Error("该宠物已被移除");
         const full = await ensurePetHydrated(selected);
         if (isTauri && full.frameRoot) {
-          await invoke("set_native_pet_frame_root", { rootDir: full.frameRoot });
           nativeChanged = true;
-          await invoke("set_native_pet_action", { action: full.currentAction });
+          await invoke("set_native_pet_frame_root", { rootDir: full.frameRoot, petId: full.id });
+          full.currentAction = await syncNativeAction(full.currentAction);
         }
         if (create) await savePet(toPersistedPet(full));
         else if (!await setActivePetId(full.id)) throw new Error("该宠物已被移除");
@@ -133,8 +141,8 @@ function StudioApp() {
       } catch (error) {
         if (nativeChanged && previous?.frameRoot) {
           try {
-            await invoke("set_native_pet_frame_root", { rootDir: previous.frameRoot });
-            await invoke("set_native_pet_action", { action: previous.currentAction });
+            await invoke("set_native_pet_frame_root", { rootDir: previous.frameRoot, petId: previous.id });
+            await syncNativeAction(previous.currentAction);
           } catch (rollbackError) {
             showToast(`恢复原桌宠失败：${formatError(rollbackError)}`, "error");
           }
@@ -181,11 +189,13 @@ function StudioApp() {
           const full = await ensurePetHydrated(current, settings?.currentAction);
           if (cancelled) return;
           // The selected profile owns its assets; runtime settings supply the live action.
-          if (isTauri && full.frameRoot && full.frameRoot !== settings?.frameRoot) {
-            await invoke("set_native_pet_frame_root", { rootDir: full.frameRoot });
+          if (isTauri && full.frameRoot) {
+            await invoke("set_native_pet_frame_root", { rootDir: full.frameRoot, petId: full.id });
           }
           setActivePet(full);
           await refreshList();
+        } else if (isTauri) {
+          await invoke("set_native_pet_visible", { visible: false });
         }
       } finally {
         transitioning.current = false;
@@ -202,13 +212,18 @@ function StudioApp() {
         if (!cancelled) { setActivePet(full); await refreshList(); }
       }).catch((err) => { if (!cancelled) showToast(`同步宠物失败：${formatError(err)}`, "error"); });
     });
-    const unlistenAction = isTauri ? listen<PetAction>("native-pet-action-changed", (event) => {
-      if (cancelled || transitioning.current || !isPetAction(event.payload)) return;
+    const unlistenAction = isTauri ? listen<PetAction | NativeActionEvent>("native-pet-action-changed", (event) => {
+      const payload = event.payload;
+      const action = typeof payload === "string" ? payload : payload.action;
+      if (cancelled || transitioning.current || !isPetAction(action)) return;
       const id = activePetRef.current?.id;
+      const revision = typeof payload === "string" ? null : payload.revision;
+      if (typeof payload !== "string" && (payload.petId !== id || payload.revision <= nativeRevision.current)) return;
+      if (revision !== null) nativeRevision.current = revision;
       void serial(async () => {
         const current = activePetRef.current;
-        if (cancelled || !current || current.id !== id) return;
-        const saved = await updatePetAction(current.id, event.payload);
+        if (cancelled || !current || current.id !== id || (revision !== null && revision < nativeRevision.current)) return;
+        const saved = await updatePetAction(current.id, action);
         if (saved && !cancelled) {
           const next = { ...current, currentAction: saved.currentAction, actionStartedAt: saved.actionStartedAt };
           setActivePet(next);
@@ -232,17 +247,17 @@ function StudioApp() {
       await serial(async () => {
         const current = activePetRef.current;
         if (!current || !hasRenderableFrames(current)) return;
-        if (isTauri) await invoke("set_native_pet_action", { action });
+        const confirmed = isTauri ? await syncNativeAction(action) : action;
         let saved;
-        try { saved = await updatePetAction(current.id, action); }
+        try { saved = await updatePetAction(current.id, confirmed); }
         catch (error) {
-          if (isTauri) await invoke("set_native_pet_action", { action: current.currentAction });
+          if (isTauri) await syncNativeAction(current.currentAction);
           throw error;
         }
         if (!saved) throw new Error("该宠物已被移除");
-        const next = withCurrentAction(current, action, saved.actionStartedAt);
+        const next = withCurrentAction(current, confirmed, saved.actionStartedAt);
         setActivePet(next);
-        setPets((prev) => prev.map((p) => p.id === next.id ? { ...p, currentAction: action } : p));
+        setPets((prev) => prev.map((p) => p.id === next.id ? { ...p, currentAction: confirmed } : p));
       });
     } catch (err) { showToast(`切换动作失败：${formatError(err)}`, "error"); }
   }
@@ -463,12 +478,20 @@ function StudioApp() {
           const candidate = current?.id === id ? remaining[0] ?? null : current;
           const full = candidate ? await ensurePetHydrated(candidate) : null;
           if (isTauri && current?.id === id && full?.frameRoot) {
-            await invoke("set_native_pet_frame_root", { rootDir: full.frameRoot });
-            await invoke("set_native_pet_action", { action: full.currentAction });
+            await invoke("set_native_pet_frame_root", { rootDir: full.frameRoot, petId: full.id });
+            full.currentAction = await syncNativeAction(full.currentAction);
           }
+          if (isTauri && remaining.length === 0) await invoke("set_native_pet_visible", { visible: false });
           const next = await deletePet(id);
           setActivePet(next && full?.id === next.id ? { ...full, name: next.name } : next ? await ensurePetHydrated(next) : null);
           await refreshList();
+        } catch (error) {
+          const previous = activePetRef.current;
+          if (isTauri && previous?.frameRoot) {
+            await invoke("set_native_pet_frame_root", { rootDir: previous.frameRoot, petId: previous.id });
+            await syncNativeAction(previous.currentAction);
+          }
+          throw error;
         } finally { transitioning.current = false; }
       });
       showToast(`已移除「${pet.name}」`, "info");

@@ -16,7 +16,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
   localStorage.setItem('desktop-sticker-pet:autonomous','off');
   if(!desktop)return;
   const callbacks=new Map(); const listeners=new Map(); let seq=1;
-  const state=window.__review={calls:[],root:'/review/A',action:settingsAction,delayB:0,emitOnSet:false};
+  const state=window.__review={calls:[],root:'/review/A',action:settingsAction,visible:true,delayB:0,emitOnSet:false};
   state.emit=async(payload)=>{
    await Promise.all([...listeners.entries()].filter(([,v])=>v.event==='native-pet-action-changed').map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload})));
   };
@@ -37,11 +37,12 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     }
     if(cmd==='set_native_pet_frame_root'){
      if (state.failB && args.rootDir==='/review/B') throw new Error('audit: invalid pack');
-     state.root=args.rootDir;
+     state.root=args.rootDir;state.visible=true;
      if(state.emitOnSet)setTimeout(()=>{state.action='walk';void state.emit('walk');},30);
      return;
     }
     if(cmd==='set_native_pet_action'){state.action=args.action;return;}
+    if(cmd==='set_native_pet_visible'){state.visible=args.visible;return;}
     if(cmd==='set_native_pet_scale'||cmd==='reset_native_pet_position')return;
     throw new Error('unexpected mock IPC: '+cmd);
    }
@@ -167,6 +168,31 @@ try{
    const state=await page.evaluate(async()=>({stored:(await (await import('/src/storage.ts')).loadPet())?.id,root:window.__review.root}));
    const visible=await page.locator('.widget-name').innerText();
    return {passed:state.stored==='A'&&state.root==='/review/A'&&visible==='测试甲',...state,visible};
+  }finally{await context.close();}
+ });
+ await record('old_pet_event_after_deploy_is_ignored',async()=>{
+  const {context,page}=await newCase({desktop:true});
+  try{
+   await seed(page,{desktop:true});
+   await page.getByRole('button',{name:/我的宠物架/}).click();
+   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+   await page.waitForFunction(()=>document.querySelector('.widget-name')?.textContent==='测试乙');
+   await page.evaluate(()=>window.__review.emit({action:'sleep',petId:'A',revision:100}));
+   await page.getByRole('button',{name:/互动伴侣台/}).click();
+   const action=await page.locator('.action-pill-btn.active').innerText();
+   return {passed:action.includes('待机'),action};
+  }finally{await context.close();}
+ });
+ await record('last_desktop_pet_is_hidden',async()=>{
+  const {context,page}=await newCase({desktop:true});
+  try{
+   await seed(page,{desktop:true});await page.getByRole('button',{name:/我的宠物架/}).click();
+   for (const name of ['测试甲','测试乙']) {
+    page.once('dialog',d=>d.accept());const card=page.locator('.pet-card').filter({hasText:name});
+    await card.getByTitle('删除宠物').click();await card.waitFor({state:'detached'});
+   }
+   const visible=await page.evaluate(()=>window.__review.visible);
+   return {passed:visible===false,visible};
   }finally{await context.close();}
  });
  await record('empty_collection_stays_empty_after_reload',async()=>{

@@ -121,10 +121,22 @@ pub fn pick_frame_root(candidates: &[PathBuf], bundled: Option<&Path>) -> PathBu
 }
 
 pub fn normalize_frame_root(root_dir: Option<String>) -> String {
-    root_dir
+    let root = root_dir
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_FRAME_ROOT.to_string())
+        .unwrap_or_else(|| DEFAULT_FRAME_ROOT.to_string());
+    // Migrate only paths inside an application bundle, never arbitrary user packs.
+    let path = Path::new(&root);
+    if is_default_frame_root(&root)
+        || (path.ends_with("Contents/Resources/frame-pack")
+            && path
+                .ancestors()
+                .any(|p| p.extension().is_some_and(|ext| ext == "app")))
+    {
+        DEFAULT_FRAME_ROOT.to_string()
+    } else {
+        root
+    }
 }
 
 pub fn scaled_canvas_size(scale: f64) -> f64 {
@@ -178,6 +190,18 @@ mod tests {
         assert!(is_default_frame_root(" ./frame-pack/ "));
         assert!(!is_default_frame_root("/Users/me/my-pack"));
         assert!(!is_default_frame_root("./my-pack"));
+    }
+
+    #[test]
+    fn migrates_old_bundled_paths_without_rewriting_custom_roots() {
+        assert_eq!(
+            normalize_frame_root(Some("/old/Pet.app/Contents/Resources/frame-pack".into())),
+            DEFAULT_FRAME_ROOT
+        );
+        assert_eq!(
+            normalize_frame_root(Some("/pets/custom/frame-pack".into())),
+            "/pets/custom/frame-pack"
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ tauri = { version = "2.11.2", features = ["tray-icon"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
@@ -64,7 +65,6 @@ objc2-core-graphics = { version = "0.3.2", features = ["CGImage"] }
 objc2-image-io = { version = "0.3.2", features = ["CGImageSource", "CGImageProperties"] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer", "CATransaction"] }
 block2 = "0.6.2"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 tempfile = "3"
