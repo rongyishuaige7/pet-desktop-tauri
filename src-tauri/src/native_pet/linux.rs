@@ -63,7 +63,9 @@ pub fn spawn_window(app_handle: AppHandle) {
 pub fn shutdown() {
     NATIVE_WINDOW.with(|native_window| {
         if let Some(window) = native_window.borrow_mut().take() {
-            window.destroy();
+            // Use GTK's safe window-close path. No delete-event handler inhibits
+            // closing this window; WidgetExtManual::destroy requires unsafe.
+            window.close();
         }
     });
 }
