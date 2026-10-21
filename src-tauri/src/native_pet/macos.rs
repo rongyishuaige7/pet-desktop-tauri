@@ -40,8 +40,74 @@ const COMMON_RUN_LOOP_MODE: &str = "kCFRunLoopCommonModes";
 const FLOATING_WINDOW_LEVEL: isize = 3;
 const MAX_THUMBNAIL_PIXEL: i32 = 640;
 
+struct Frame {
+    image: CFRetained<CGImage>,
+    mask: AlphaMask,
+}
+
+struct AlphaMask {
+    width: usize,
+    height: usize,
+    data: Vec<u8>,
+}
+
+impl AlphaMask {
+    fn opaque() -> Self {
+        Self {
+            width: 1,
+            height: 1,
+            data: vec![255],
+        }
+    }
+
+    fn from_path(path: &Path) -> Self {
+        let Ok(image) = image::open(path) else {
+            return Self::opaque();
+        };
+        let rgba = image.to_rgba8();
+        let (source_width, source_height) = rgba.dimensions();
+        if source_width == 0 || source_height == 0 {
+            return Self::opaque();
+        }
+
+        let width = 128usize;
+        let height = 128usize;
+        let mut data = vec![0u8; width * height];
+        for y in 0..height {
+            let source_y = (y as u32 * source_height / height as u32).min(source_height - 1);
+            for x in 0..width {
+                let source_x = (x as u32 * source_width / width as u32).min(source_width - 1);
+                data[y * width + x] = rgba.get_pixel(source_x, source_y)[3];
+            }
+        }
+
+        Self {
+            width,
+            height,
+            data,
+        }
+    }
+
+    fn sample(&self, x: f64, y: f64) -> bool {
+        if self.width == 0 || self.height == 0 {
+            return true;
+        }
+        let x = (x.clamp(0.0, 1.0) * (self.width - 1) as f64).round() as usize;
+        let y = (y.clamp(0.0, 1.0) * (self.height - 1) as f64).round() as usize;
+        self.data[y * self.width + x] > 8
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DragState {
+    start_mouse: NSPoint,
+    start_origin: NSPoint,
+    dragging: bool,
+}
+
 thread_local! {
     static UI: RefCell<Option<UiState>> = const { RefCell::new(None) };
+    static DRAG_STATE: RefCell<Option<DragState>> = const { RefCell::new(None) };
 }
 
 #[allow(dead_code)]
@@ -52,10 +118,12 @@ struct UiState {
     menu: Retained<NSMenu>,
     menu_target: Retained<PetMenuTarget>,
     timer: Retained<NSTimer>,
+    click_through_timer: Retained<NSTimer>,
     monitor: Option<Retained<AnyObject>>,
     activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
-    frames: HashMap<String, Vec<CFRetained<CGImage>>>,
+    frames: HashMap<String, Vec<Frame>>,
     current_action: String,
+    ignores_mouse: bool,
     frame_index: usize,
     last_advance: Instant,
     applied_scale: f64,
@@ -92,6 +160,61 @@ define_class!(
         fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
             true
         }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, _event: &NSEvent) {
+            let Some(window) = self.window() else {
+                return;
+            };
+            let frame: NSRect = unsafe { msg_send![&*window, frame] };
+            let start_mouse = NSEvent::mouseLocation();
+            DRAG_STATE.with(|state| {
+                *state.borrow_mut() = Some(DragState {
+                    start_mouse,
+                    start_origin: frame.origin,
+                    dragging: false,
+                });
+            });
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, _event: &NSEvent) {
+            let Some(window) = self.window() else {
+                return;
+            };
+            let current = NSEvent::mouseLocation();
+            DRAG_STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                let Some(state) = state.as_mut() else {
+                    return;
+                };
+                let dx = current.x - state.start_mouse.x;
+                let dy = current.y - state.start_mouse.y;
+                if !state.dragging && (dx.abs() > 3.0 || dy.abs() > 3.0) {
+                    state.dragging = true;
+                }
+                if state.dragging {
+                    let origin = NSPoint::new(state.start_origin.x + dx, state.start_origin.y + dy);
+                    let _: () = unsafe { msg_send![&*window, setFrameOrigin: origin] };
+                }
+            });
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, _event: &NSEvent) {
+            let dragging = DRAG_STATE.with(|state| {
+                state
+                    .borrow_mut()
+                    .take()
+                    .map(|state| state.dragging)
+                    .unwrap_or(false)
+            });
+            if dragging {
+                mark_position_dirty();
+            } else {
+                handle_menu_action("happy");
+            }
+        }
     }
 );
 
@@ -120,6 +243,7 @@ pub fn spawn_window(_app_handle: AppHandle) {
 
     let monitor = install_mouse_monitor(&panel, &pet_view, &menu);
     let timer = install_timer();
+    let click_through_timer = install_click_through_timer();
     let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
         NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
         &NSString::from_str("Desktop pet animation"),
@@ -133,11 +257,13 @@ pub fn spawn_window(_app_handle: AppHandle) {
             menu,
             menu_target,
             timer,
+            click_through_timer,
             monitor,
             activity,
             frames: HashMap::new(),
             current_action: String::new(),
             frame_index: 0,
+            ignores_mouse: false,
             last_advance: Instant::now(),
             applied_scale: scale,
             applied_backing_scale: 1.0,
@@ -156,6 +282,7 @@ pub fn shutdown() {
 
         unsafe {
             let _: () = msg_send![&*ui.timer, invalidate];
+            let _: () = msg_send![&*ui.click_through_timer, invalidate];
             if let Some(monitor) = ui.monitor.take() {
                 let _: () = msg_send![NSEvent::class(), removeMonitor: &*monitor];
             }
@@ -323,15 +450,6 @@ fn install_mouse_monitor(
         }
 
         match event.r#type() {
-            NSEventType::LeftMouseDown => {
-                let _: () = unsafe { msg_send![&*panel, performWindowDragWithEvent: event] };
-                mark_position_dirty();
-                std::ptr::null_mut()
-            }
-            NSEventType::LeftMouseUp => {
-                mark_position_dirty();
-                event as *const NSEvent as *mut NSEvent
-            }
             NSEventType::RightMouseDown => {
                 let _: () = unsafe {
                     msg_send![
@@ -350,9 +468,7 @@ fn install_mouse_monitor(
     let monitor: *mut AnyObject = unsafe {
         msg_send![
             NSEvent::class(),
-            addLocalMonitorForEventsMatchingMask: NSEventMask::LeftMouseDown
-                | NSEventMask::LeftMouseUp
-                | NSEventMask::RightMouseDown,
+            addLocalMonitorForEventsMatchingMask: NSEventMask::RightMouseDown,
             handler: &*block
         ]
     };
@@ -382,6 +498,116 @@ fn install_timer() -> Retained<NSTimer> {
     }
 
     timer
+}
+
+fn install_click_through_timer() -> Retained<NSTimer> {
+    let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+        update_click_through();
+    });
+
+    let timer: Retained<NSTimer> = unsafe {
+        let pointer: *mut NSTimer = msg_send![
+            NSTimer::class(),
+            timerWithTimeInterval: 0.03f64,
+            repeats: Bool::YES,
+            block: &*block
+        ];
+        Retained::from_raw(pointer).expect("failed to create click-through timer")
+    };
+
+    let run_loop = objc2_foundation::NSRunLoop::mainRunLoop();
+    let mode = NSString::from_str(COMMON_RUN_LOOP_MODE);
+    unsafe {
+        let _: () = msg_send![&*run_loop, addTimer: &*timer, forMode: &*mode];
+    }
+
+    timer
+}
+
+fn update_click_through() {
+    UI.with(|slot| {
+        let Ok(mut slot) = slot.try_borrow_mut() else {
+            return;
+        };
+        let Some(ui) = slot.as_mut() else {
+            return;
+        };
+
+        // Do not change hit testing while the user is dragging or clicking.
+        if DRAG_STATE.with(|state| state.borrow().is_some()) {
+            return;
+        }
+
+        let ignore = if super::click_through_enabled() {
+            let mouse = NSEvent::mouseLocation();
+            let window_frame: NSRect = unsafe { msg_send![&*ui.panel, frame] };
+            !point_is_opaque(ui, mouse, window_frame)
+        } else {
+            false
+        };
+
+        if ignore != ui.ignores_mouse {
+            let _: () = unsafe { msg_send![&*ui.panel, setIgnoresMouseEvents: ignore] };
+            ui.ignores_mouse = ignore;
+        }
+    });
+}
+
+fn current_frame(ui: &UiState) -> Option<&Frame> {
+    ui.frames.get(&ui.current_action).and_then(|frames| {
+        if frames.is_empty() {
+            None
+        } else {
+            frames.get(ui.frame_index.min(frames.len() - 1))
+        }
+    })
+}
+
+fn point_is_opaque(ui: &UiState, mouse: NSPoint, window_frame: NSRect) -> bool {
+    if mouse.x < window_frame.origin.x
+        || mouse.y < window_frame.origin.y
+        || mouse.x >= window_frame.origin.x + window_frame.size.width
+        || mouse.y >= window_frame.origin.y + window_frame.size.height
+    {
+        return false;
+    }
+
+    let scale = ui.applied_scale;
+    let pet_size = PET_SIZE * scale;
+    let inset = (CANVAS_SIZE - PET_SIZE) / 2.0 * scale;
+    let local_x = mouse.x - window_frame.origin.x - inset;
+    let local_y = mouse.y - window_frame.origin.y - inset;
+    if local_x < 0.0 || local_y < 0.0 || local_x >= pet_size || local_y >= pet_size {
+        return false;
+    }
+
+    let Some(frame) = current_frame(ui) else {
+        return false;
+    };
+    let mask = &frame.mask;
+    if mask.width == 0 || mask.height == 0 {
+        return false;
+    }
+
+    let aspect = mask.width as f64 / mask.height as f64;
+    let (draw_width, draw_height) = if aspect >= 1.0 {
+        (pet_size, pet_size / aspect)
+    } else {
+        (pet_size * aspect, pet_size)
+    };
+    let offset_x = (pet_size - draw_width) / 2.0;
+    let offset_y = (pet_size - draw_height) / 2.0;
+    if local_x < offset_x
+        || local_y < offset_y
+        || local_x >= offset_x + draw_width
+        || local_y >= offset_y + draw_height
+    {
+        return false;
+    }
+
+    let nx = (local_x - offset_x) / draw_width;
+    let ny = 1.0 - (local_y - offset_y) / draw_height;
+    mask.sample(nx, ny)
 }
 
 fn tick() {
@@ -479,7 +705,7 @@ fn ensure_frames(ui: &mut UiState, action: &str) {
     }
 }
 
-fn load_frames(root: &Path, action: &str) -> Result<Vec<CFRetained<CGImage>>, String> {
+fn load_frames(root: &Path, action: &str) -> Result<Vec<Frame>, String> {
     let paths = scan_action_frames(root, action)?;
     if paths.len() < MIN_FRAMES_PER_ACTION {
         return Err(format!(
@@ -493,7 +719,10 @@ fn load_frames(root: &Path, action: &str) -> Result<Vec<CFRetained<CGImage>>, St
 
     let mut images = Vec::with_capacity(paths.len());
     for path in paths {
-        images.push(decode_image(&path)?);
+        images.push(Frame {
+            image: decode_image(&path)?,
+            mask: AlphaMask::from_path(&path),
+        });
     }
 
     Ok(images)
@@ -567,8 +796,8 @@ fn update_image(ui: &UiState) {
     CATransaction::setDisableActions(true);
     unsafe {
         match image {
-            Some(image) => {
-                let pointer = CFRetained::as_ptr(image).as_ptr() as *const AnyObject;
+            Some(frame) => {
+                let pointer = CFRetained::as_ptr(&frame.image).as_ptr() as *const AnyObject;
                 ui.layer.setContents(Some(&*pointer));
             }
             None => ui.layer.setContents(None),

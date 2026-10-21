@@ -470,6 +470,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         !native_pet::animation_paused(),
         None::<&str>,
     )?;
+    let click_through_item = CheckMenuItem::with_id(
+        app,
+        "toggle_click_through",
+        "透明区域穿透",
+        true,
+        native_pet::click_through_enabled(),
+        None::<&str>,
+    )?;
     let reset_item = MenuItem::with_id(app, "reset_position", "重置位置", true, None::<&str>)?;
     let autostart_item = CheckMenuItem::with_id(
         app,
@@ -493,6 +501,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .separator()
         .item(&autonomous_item)
         .item(&animation_item)
+        .item(&click_through_item)
         .item(&reset_item)
         .item(&autostart_item)
         .separator()
@@ -501,6 +510,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
     let autonomous_for_event = autonomous_item.clone();
     let animation_for_event = animation_item.clone();
+    let click_through_for_event = click_through_item.clone();
     let autostart_for_event = autostart_item.clone();
 
     let mut tray = TrayIconBuilder::new()
@@ -525,6 +535,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 let paused = !native_pet::animation_paused();
                 if native_pet::set_animation_paused(paused).is_ok() {
                     let _ = animation_for_event.set_checked(!paused);
+                }
+            }
+            "toggle_click_through" => {
+                let enabled = !native_pet::click_through_enabled();
+                if native_pet::set_click_through(enabled).is_ok() {
+                    let _ = native_pet::persist_runtime_settings();
+                    let _ = click_through_for_event.set_checked(enabled);
                 }
             }
             "reset_position" => reset_native_position(app),

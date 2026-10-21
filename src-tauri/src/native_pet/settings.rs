@@ -21,11 +21,17 @@ pub struct NativePetSettings {
     pub current_action: String,
     #[serde(default = "default_autonomous")]
     pub autonomous: bool,
+    #[serde(default = "default_click_through")]
+    pub click_through: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<PetPosition>,
 }
 
 fn default_autonomous() -> bool {
+    true
+}
+
+fn default_click_through() -> bool {
     true
 }
 
@@ -36,6 +42,7 @@ impl Default for NativePetSettings {
             scale: 1.0,
             current_action: "idle".to_string(),
             autonomous: true,
+            click_through: true,
             position: None,
         }
     }
@@ -119,6 +126,7 @@ mod tests {
             scale: 9.0,
             current_action: "dance".to_string(),
             autonomous: false,
+            click_through: true,
             position: Some(PetPosition {
                 x: f64::NAN,
                 y: 10.0,

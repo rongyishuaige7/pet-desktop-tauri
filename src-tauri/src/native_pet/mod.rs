@@ -46,6 +46,7 @@ pub struct Runtime {
     pub reset_position_requested: bool,
     pub position_dirty_at: Option<Instant>,
     pub autonomous: bool,
+    pub click_through: bool,
     pub animation_paused: bool,
     pub next_behavior_at: Option<Instant>,
     pub behavior_rng: u64,
@@ -64,6 +65,7 @@ impl Default for Runtime {
             reset_position_requested: false,
             position_dirty_at: None,
             autonomous: true,
+            click_through: true,
             animation_paused: false,
             next_behavior_at: None,
             behavior_rng: behavior_seed(),
@@ -93,6 +95,7 @@ pub fn configure(settings: &NativePetSettings, settings_path: Option<PathBuf>) {
         runtime.reset_position_requested = false;
         runtime.position_dirty_at = None;
         runtime.autonomous = settings.autonomous;
+        runtime.click_through = settings.click_through;
         runtime.animation_paused = false;
         runtime.behavior_rng = behavior_seed();
         runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(5));
@@ -170,6 +173,21 @@ pub fn set_autonomous(enabled: bool) -> Result<(), String> {
     } else {
         None
     };
+    Ok(())
+}
+
+pub fn click_through_enabled() -> bool {
+    runtime()
+        .lock()
+        .map(|runtime| runtime.click_through)
+        .unwrap_or(true)
+}
+
+pub fn set_click_through(enabled: bool) -> Result<(), String> {
+    let mut runtime = runtime()
+        .lock()
+        .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+    runtime.click_through = enabled;
     Ok(())
 }
 
@@ -311,6 +329,7 @@ pub fn current_settings() -> NativePetSettings {
             scale: runtime.scale,
             current_action: runtime.action.clone(),
             autonomous: runtime.autonomous,
+            click_through: runtime.click_through,
             position: runtime.position.clone(),
         },
         Err(_) => NativePetSettings::default(),
@@ -331,6 +350,7 @@ pub fn persist_runtime_settings() -> Result<(), String> {
                 scale: runtime.scale,
                 current_action: runtime.action.clone(),
                 autonomous: runtime.autonomous,
+                click_through: runtime.click_through,
                 position: runtime.position.clone(),
             },
             path,

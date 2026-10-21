@@ -64,6 +64,7 @@ objc2-core-graphics = { version = "0.3.2", features = ["CGImage"] }
 objc2-image-io = { version = "0.3.2", features = ["CGImageSource", "CGImageProperties"] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer", "CATransaction"] }
 block2 = "0.6.2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 tempfile = "3"
