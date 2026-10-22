@@ -142,6 +142,18 @@ impl PreferencesRequest {
     }
 }
 
+/// A targeted detach is only valid for the companion it names. `None` keeps
+/// the existing untargeted behaviour used by startup and rollback paths.
+pub fn detach_target_conflict(
+    current_pet_id: Option<&str>,
+    expected_pet_id: Option<&str>,
+) -> bool {
+    match expected_pet_id {
+        Some(expected) => current_pet_id != Some(expected),
+        None => false,
+    }
+}
+
 /// A late operation must not act on a different companion or a newer native
 /// snapshot. Returning a code lets the interface invalidate only that entry.
 pub fn target_conflict(
@@ -443,6 +455,15 @@ mod tests {
                 .0,
             "TARGET_CHANGED"
         );
+    }
+
+    #[test]
+    fn targeted_detach_only_accepts_the_named_companion() {
+        assert!(!detach_target_conflict(Some("pet-a"), Some("pet-a")));
+        assert!(detach_target_conflict(Some("pet-b"), Some("pet-a")));
+        assert!(detach_target_conflict(None, Some("pet-a")));
+        assert!(!detach_target_conflict(None, None));
+        assert!(!detach_target_conflict(Some("pet-a"), None));
     }
 
     #[test]
