@@ -10,8 +10,8 @@ const browser=await chromium.launch({executablePath:process.env.PET_CHROME_PATH 
 const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function openCompanionDetails(page){const details=page.locator('.companion-details');if(await details.count()&&!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
-async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0,nativeMode='shown'}={}) {
- const context=await browser.newContext({viewport:{width:1120,height:760}});
+async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0,nativeMode='shown',viewport={width:1120,height:760}}={}) {
+ const context=await browser.newContext({viewport});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
  await context.addInitScript(({desktop,settingsAction,missing,packDelay,failStateReads,nativeMode})=>{
   localStorage.setItem('desktop-sticker-pet:autonomous','off');
@@ -1186,6 +1186,73 @@ await record('web_import_reports_preview_not_desktop',async()=>{
   await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent?.includes('网页演示'));
   const state=await page.evaluate(async()=>({pets:(await (await import('/src/storage.ts')).loadAllPets()).length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent),webTag:document.querySelector('.status-chip')?.textContent?.includes('网页演示')??false}));
   return {passed:state.pets===1&&state.toasts.some(text=>text?.includes('可在网页预览'))&&!state.toasts.some(text=>text?.includes('桌面')||text?.includes('同步'))&&state.webTag&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('compact_first_screen_controls_are_reachable',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,viewport:{width:840,height:620}});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  const measure=()=>page.evaluate(()=>{
+   const rect=(el)=>{const r=el.getBoundingClientRect();return {top:r.top,left:r.left,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
+   return {status:rect(document.querySelector('.status-chip')),bar:rect(document.querySelector('.companion-core-controls')),buttons:[...document.querySelectorAll('.companion-control-buttons button')].map(el=>({text:(el.textContent||'').trim(),...rect(el)})),scrollTop:document.querySelector('.app-content')?.scrollTop??0,scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,bars:document.querySelectorAll('.companion-controls').length};
+  });
+  const inView=(r)=>Boolean(r)&&r.top>=-0.5&&r.left>=-0.5&&r.bottom<=620.5&&r.right<=840.5;
+  const buttonsOk=(state)=>state.buttons.length===3&&state.buttons.every(button=>inView(button)&&button.width>=40&&button.height>=40);
+  const normal=await measure();
+  const normalOk=inView(normal.status)&&inView(normal.bar)&&buttonsOk(normal)&&normal.buttons.some(button=>button.text==='暂时收起')&&normal.buttons.some(button=>button.text==='休息一小时')&&normal.buttons.some(button=>button.text.includes('偏好设置'))&&normal.scrollTop===0&&normal.bars===1&&normal.scrollWidth<=normal.clientWidth;
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  const hidden=await measure();
+  const hiddenOk=inView(hidden.status)&&buttonsOk(hidden)&&hidden.buttons.some(button=>button.text==='立即唤回')&&hidden.scrollTop===0;
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'休息一小时',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
+  const snoozed=await measure();
+  const snoozedOk=inView(snoozed.status)&&buttonsOk(snoozed)&&snoozed.buttons.some(button=>button.text==='提前唤回')&&snoozed.scrollTop===0;
+  await page.screenshot({path:join(evidenceDir,'c01-compact-840x620.png')});
+  return {passed:normalOk&&hiddenOk&&snoozedOk&&errors.length===0,normalOk,hiddenOk,snoozedOk,normal,hidden,snoozed,errors};
+ }finally{await context.close();}
+});
+await record('compact_long_name_and_zoom_reflow',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,viewport:{width:1120,height:760}});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.evaluate(async()=>{await (await import('/src/storage.ts')).renamePet('A','一二三四五六七八九十一二三四五六七八九十');});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.companion-title').waitFor();
+  const wide=await page.evaluate(()=>({scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,titleRight:document.querySelector('.companion-title')?.getBoundingClientRect().right??0,innerWidth:window.innerWidth,bars:document.querySelectorAll('.companion-controls').length}));
+  await page.setViewportSize({width:420,height:310});
+  await page.waitForTimeout(250);
+  const zoom=await page.evaluate(()=>{const buttons=[...document.querySelectorAll('.companion-control-buttons button')].map(el=>{const r=el.getBoundingClientRect();return {text:(el.textContent||'').trim(),width:r.width,height:r.height,left:r.left,right:r.right};});return {scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,buttons,bars:document.querySelectorAll('.companion-controls').length};});
+  const zoomOk=zoom.scrollWidth<=zoom.clientWidth&&zoom.buttons.length===3&&zoom.buttons.every(button=>button.width>=40&&button.height>=40&&button.left>=-0.5&&button.right<=420.5)&&zoom.bars===1;
+  return {passed:wide.scrollWidth<=wide.clientWidth&&wide.bars===1&&wide.titleRight<=wide.innerWidth&&zoomOk&&errors.length===0,wide,zoom,errors};
+ }finally{await context.close();}
+});
+await record('keyboard_focus_clear_of_sticky_controls',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,viewport:{width:840,height:620}});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.evaluate(()=>{const content=document.querySelector('.app-content');if(content)content.scrollTop=content.scrollHeight;});
+  await page.waitForTimeout(200);
+  const stops=[];
+  for(let i=0;i<20;i++){
+   await page.keyboard.press('Tab');
+   stops.push(await page.evaluate(()=>{const el=document.activeElement;if(!el||el===document.body)return null;const r=el.getBoundingClientRect();const bar=document.querySelector('.companion-core-controls')?.getBoundingClientRect();return {tag:el.tagName,text:(el.textContent||'').trim().slice(0,32),top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height,barBottom:bar?.bottom??0,barLeft:bar?.left??0,barRight:bar?.right??0,inBar:Boolean(el.closest('.companion-core-controls'))};}));
+  }
+  const usable=stops.filter(Boolean);
+  const inView=usable.filter(stop=>stop.top>=-0.5&&stop.bottom<=620.5&&stop.left>=-0.5&&stop.right<=840.5);
+  const covered=usable.filter(stop=>!stop.inBar&&stop.top<stop.barBottom&&stop.bottom>0&&stop.right>stop.barLeft&&stop.left<stop.barRight);
+  const core=usable.filter(stop=>stop.inBar).length;
+  const details=usable.filter(stop=>stop.text.includes('更多动作')).length;
+  return {passed:usable.length>=12&&inView.length===usable.length&&covered.length===0&&core>=2&&details>=1&&errors.length===0,stops:usable,covered,core,details,errors};
+ }finally{await context.close();}
+});
+await record('compact_recovery_not_covered_by_sticky_bar',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,missing:true,viewport:{width:840,height:620}});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.recovery-notice').waitFor();
+  const state=await page.evaluate(()=>{const rect=(el)=>{const r=el.getBoundingClientRect();return {top:r.top,bottom:r.bottom};};return {recovery:rect(document.querySelector('.recovery-notice')),bar:rect(document.querySelector('.companion-core-controls')),scrollTop:document.querySelector('.app-content')?.scrollTop??0};});
+  return {passed:state.recovery.top>=0&&state.recovery.bottom<=state.bar.top+1&&state.bar.bottom<=620.5&&state.scrollTop===0&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

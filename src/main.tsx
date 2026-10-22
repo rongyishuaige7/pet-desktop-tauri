@@ -102,6 +102,7 @@ function StudioApp() {
   const [onboarding, setOnboarding] = useState<OnboardingRecord | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [startingAdoption, setStartingAdoption] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [onboardingSpeech, setOnboardingSpeech] = useState("");
   const [adoptionDisplayPending, setAdoptionDisplayPending] = useState(false);
@@ -124,6 +125,7 @@ function StudioApp() {
   const onboardingBusyRef = useRef(false);
   const adoptionCommittedRef = useRef(false);
   const nameEditSeqRef = useRef(0);
+  const intentWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const activePetRef = useRef<PetProfile | null>(null);
   const native = useNativePet({
     isTauri,
@@ -920,6 +922,7 @@ function StudioApp() {
     setOnboarding(next);
     setOnboardingError(null);
     try {
+      await intentWriteRef.current;
       const saved = await saveOnboardingProgress(next);
       setOnboarding((current) =>
         keepNewerDraftName(saved, current, editSeq, nameEditSeqRef.current)
@@ -950,7 +953,8 @@ function StudioApp() {
       return;
     }
     const editSeq = nameEditSeqRef.current;
-    void saveOnboardingProgress(onboarding)
+    void intentWriteRef.current
+      .then(() => saveOnboardingProgress(onboarding))
       .then((saved) => {
         // A reply must not replace a name typed while it was in flight.
         if (nameEditSeqRef.current !== editSeq) return;
@@ -986,6 +990,7 @@ function StudioApp() {
     setOnboardingError(null);
     setCurrentTab("workshop");
     try {
+      await intentWriteRef.current;
       const saved = await saveOnboardingProgress(next);
       setOnboarding(saved);
     } catch (error) {
@@ -1023,7 +1028,8 @@ function StudioApp() {
     setOnboardingSpeech("");
     setAdoptionDisplayPending(false);
     adoptionCommittedRef.current = false;
-    void startNewAdoptionIntent(next)
+    setStartingAdoption(true);
+    const intentWrite = startNewAdoptionIntent(next)
       .then((saved) => {
         setOnboarding((current) => {
           if (!current || current.intentId !== saved.intentId) return saved;
@@ -1035,7 +1041,9 @@ function StudioApp() {
       })
       .catch((err) => {
         setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
-      });
+      })
+      .finally(() => setStartingAdoption(false));
+    intentWriteRef.current = intentWrite.catch(() => undefined);
   }
 
   async function handleAdopt(nameOverride?: string, recordOverride?: OnboardingRecord) {
@@ -1393,6 +1401,7 @@ function StudioApp() {
       activePetRef.current?.id ?? onboarding.confirmedPetId
     );
     try {
+      await intentWriteRef.current;
       const saved = await saveOnboardingProgress(completed);
       setOnboarding(saved);
       setOnboardingOpen(false);
@@ -1950,6 +1959,7 @@ function StudioApp() {
             pet={activePet}
             isTauri={isTauri}
             busy={onboardingBusy}
+            starting={startingAdoption}
             error={onboardingError}
             displayPending={adoptionDisplayPending}
             speech={onboardingSpeech}

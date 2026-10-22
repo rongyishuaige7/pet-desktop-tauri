@@ -129,7 +129,20 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
       {recovery}
 
       {pet ? (
-        <div className="companion-grid">
+        <>
+          <div className="companion-core-controls">
+            <CompanionControls
+              state={state}
+              webMode={webMode}
+              busy={busy}
+              showStatus={false}
+              onToggleVisibility={onToggleVisibility}
+              onSnooze={onSnooze}
+              onOpenSettings={onOpenSettings}
+            />
+          </div>
+
+          <div className="companion-grid">
           <section className="companion-main">
             <div className="card companion-hero">
               <div className="companion-hero-top">
@@ -297,16 +310,6 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
           </section>
 
           <aside className="companion-side">
-            <CompanionControls
-              state={state}
-              webMode={webMode}
-              busy={busy}
-              showStatus={false}
-              onToggleVisibility={onToggleVisibility}
-              onSnooze={onSnooze}
-              onOpenSettings={onOpenSettings}
-            />
-
             <section className="card companion-toggles" aria-labelledby="companion-toggles-title">
               <h2 id="companion-toggles-title">按你的节奏陪伴</h2>
               <label className="toggle-row" htmlFor="companion-paused">
@@ -348,15 +351,10 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
                   onChange={(event) => onChangeZoom(Number(event.target.value))}
                 />
               </div>
-              <button type="button" className="btn-secondary" onClick={onOpenSettings}>
-                ⚙️ 偏好设置
-              </button>
-              <p className="companion-control-note">
-                收起不会移除伙伴。你随时可以从菜单栏 / 托盘找回它。
-              </p>
             </section>
           </aside>
-        </div>
+          </div>
+        </>
       ) : (
         <section className="card companion-empty">
           <span className="companion-empty-icon" aria-hidden="true">🌱</span>

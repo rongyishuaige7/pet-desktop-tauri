@@ -1174,9 +1174,10 @@ button {
 }
 
 .companion-control-buttons .btn-secondary {
-  height: 36px;
+  min-height: 40px;
+  height: 40px;
   padding: 0 14px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .companion-control-note {
@@ -1537,6 +1538,34 @@ button {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+/* One operation bar above the preview; it stays reachable while the page
+   scrolls, and its solid card keeps text from showing through. */
+.companion-core-controls {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  min-width: 0;
+  margin: -6px 0 0;
+  padding: 6px 0 10px;
+  background: var(--bg-app);
+  scroll-margin-top: 12px;
+}
+
+.companion-core-controls .companion-controls {
+  background: var(--bg-card-solid);
+}
+
+/* Keyboard focus must not land under the sticky bar. */
+.companion-page :is(button, summary, input) {
+  scroll-margin-top: 200px;
+}
+
+.companion-details,
+.companion-toggles,
+.recovery-notice {
+  scroll-margin-top: 132px;
 }
 
 .companion-head {
@@ -2195,6 +2224,9 @@ a:focus-visible,
   .companion-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+  .companion-page {
+    gap: 14px;
+  }
   .companion-head {
     flex-direction: column;
   }
@@ -2205,21 +2237,30 @@ a:focus-visible,
     font-size: 24px;
   }
   .companion-pet-space {
-    min-height: 280px;
+    min-height: 220px;
   }
   .companion-pet-button {
-    width: 230px;
-    height: 230px;
+    width: 190px;
+    height: 190px;
   }
   .companion-pet-button img {
-    width: 210px;
-    height: 210px;
+    width: 170px;
+    height: 170px;
   }
 }
 
 @media (max-width: 620px) {
   .app-content {
     padding: 16px;
+  }
+  .companion-core-controls {
+    position: static;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+  }
+  .companion-page :is(button, summary, input) {
+    scroll-margin-top: 12px;
   }
   .companion-action-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

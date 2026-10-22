@@ -10,6 +10,7 @@ interface OnboardingProps {
   pet: PetProfile | null;
   isTauri: boolean;
   busy: boolean;
+  starting?: boolean;
   error: string | null;
   displayPending?: boolean;
   speech: string;
@@ -29,6 +30,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
   pet,
   isTauri,
   busy,
+  starting = false,
   error,
   displayPending = false,
   speech,
@@ -132,7 +134,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                 <button type="button" className="btn-secondary" onClick={onBrowse} disabled={busy}>
                   先浏览
                 </button>
-                <button type="button" className="btn-primary" onClick={onNext} disabled={busy}>
+                <button type="button" className="btn-primary" onClick={onNext} disabled={busy || starting}>
                   下一步
                 </button>
               </div>
@@ -154,7 +156,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                 type="text"
                 maxLength={MAX_PET_NAME_LENGTH}
                 value={record.draftName}
-                disabled={busy}
+                disabled={busy || starting}
                 autoComplete="off"
                 onChange={(event) => onChangeName(event.target.value)}
                 onBlur={onNameBlur}
@@ -176,14 +178,14 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                 </p>
               )}
               <div className="onboarding-actions">
-                <button type="button" className="btn-secondary" onClick={onUseDefault} disabled={busy}>
+                <button type="button" className="btn-secondary" onClick={onUseDefault} disabled={busy || starting}>
                   直接使用咕唧
                 </button>
                 <button
                   type="button"
                   className="btn-primary"
                   onClick={onAdopt}
-                  disabled={busy || !trimmed}
+                  disabled={busy || starting || !trimmed}
                 >
                   {busy ? "正在邀请…" : "领养并入住"}
                 </button>
