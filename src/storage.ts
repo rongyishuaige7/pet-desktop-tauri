@@ -274,6 +274,62 @@ export interface AdoptionClaim {
 }
 
 /**
+ * Explicit "adopt again" starts a new intent. This is intentionally separate
+ * from progress writes so an old completed/committed record cannot suppress
+ * the user's new adoption, and old records without an intent can migrate.
+ */
+export async function startNewAdoptionIntent(
+  record: OnboardingRecord
+): Promise<OnboardingRecord> {
+  if (record.state !== "in_progress" || !record.intentId) {
+    throw new Error("无效的新领养意图");
+  }
+  await transaction<void>("readwrite", (tx, done) => {
+    tx.objectStore("metadata").put(record, ONBOARDING_KEY);
+    done();
+  });
+  return record;
+}
+
+/**
+ * Confirms display only for the exact adoption intent and pet still stored.
+ * A waiting window cannot write an older intent over a newer adoption.
+ */
+export async function confirmAdoptionDisplay(
+  record: OnboardingRecord
+): Promise<OnboardingRecord> {
+  return transaction<OnboardingRecord>("readwrite", (tx, done, fail) => {
+    const store = tx.objectStore("metadata");
+    const current = store.get(ONBOARDING_KEY);
+    current.onsuccess = () => {
+      const existing = normalizeOnboardingRecord(current.result);
+      const sameIntent =
+        !record.intentId || (existing?.intentId ?? null) === record.intentId;
+      if (
+        !existing ||
+        existing.confirmedPetId !== record.confirmedPetId ||
+        !sameIntent ||
+        existing.phase !== "committed"
+      ) {
+        fail(new Error("领养已更新，未写入显示确认"));
+        return;
+      }
+      if (existing.displayConfirmed) {
+        done(existing);
+        return;
+      }
+      const next: OnboardingRecord = {
+        ...existing,
+        displayConfirmed: true,
+        updatedAt: new Date().toISOString()
+      };
+      store.put(next, ONBOARDING_KEY);
+      done(next);
+    };
+  });
+}
+
+/**
  * Claims one adoption inside a single readwrite transaction. Two windows that
  * start together reuse the same adoption/pending ids; the second window sees
  * the first prepared or committed record instead of minting new ids.

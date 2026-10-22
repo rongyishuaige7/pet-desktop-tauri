@@ -25,8 +25,10 @@ import {
   isCollectionInitialized,
   loadOnboardingRecord,
   saveOnboardingRecord,
+  startNewAdoptionIntent,
   claimAdoptionRecord,
-  commitAdoptedPet
+  commitAdoptedPet,
+  confirmAdoptionDisplay
 } from "./storage";
 import {
   PET_ACTIONS,
@@ -104,6 +106,7 @@ function StudioApp() {
   } | null>(null);
   const [dismissedRecovery, setDismissedRecovery] = useState<string | null>(null);
   const lastPreferenceRef = useRef<PreferenceRequest | null>(null);
+  const displayConfirmRef = useRef<string | null>(null);
   const speechTimerRef = useRef<number | null>(null);
   const scaleTimerRef = useRef<number | null>(null);
   const onboardingBusyRef = useRef(false);
@@ -114,6 +117,62 @@ function StudioApp() {
     pet: activePet,
     initialAutonomous: localStorage.getItem(AUTONOMOUS_STORAGE) !== "off"
   });
+
+  // A follow window that is waiting for display must leave the waiting state
+  // when the matching native pet becomes visible and the persisted record is
+  // confirmed (possibly by the other window).
+  useEffect(() => {
+    if (!adoptionDisplayPending || !onboarding?.confirmedPetId) return;
+    const confirmedId = onboarding.confirmedPetId;
+    if (!native.state.visible || native.state.petId !== confirmedId) return;
+    const key = `${onboarding.intentId ?? "legacy"}:${confirmedId}:${native.state.revision}`;
+    if (displayConfirmRef.current === key) return;
+    displayConfirmRef.current = key;
+    let cancelled = false;
+    void (async () => {
+      const latest = await loadOnboardingRecord().catch(() => null);
+      if (cancelled) return;
+      const current = latest?.record;
+      if (current && current.intentId !== onboarding.intentId) {
+        setOnboarding(current);
+        setAdoptionDisplayPending(
+          current.state === "in_progress" &&
+            current.phase === "committed" &&
+            !current.displayConfirmed
+        );
+        setOnboardingOpen(current.state !== "completed");
+        setOnboardingError("这次等待显示已失效，已读取最新领养结果。");
+        return;
+      }
+      if (current?.displayConfirmed && current.confirmedPetId === confirmedId) {
+        setOnboarding(current);
+        setAdoptionDisplayPending(false);
+        return;
+      }
+      try {
+        const confirmed = await confirmAdoptionDisplay(onboarding);
+        if (cancelled) return;
+        setOnboarding(confirmed);
+        setAdoptionDisplayPending(false);
+      } catch (err) {
+        if (!cancelled) {
+          setOnboardingError(
+            `这次等待显示已失效，已读取最新领养结果：${formatError(err)}`
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    adoptionDisplayPending,
+    native.state.visible,
+    native.state.petId,
+    native.state.revision,
+    onboarding?.intentId,
+    onboarding?.confirmedPetId
+  ]);
   const lastNativeActionRevision = useRef(0);
 
   // Workshop Form State
@@ -328,16 +387,15 @@ function StudioApp() {
                 attached?.visible &&
                 attached.petId === pendingDisplayRecord.confirmedPetId
               ) {
-                const confirmedRecord: OnboardingRecord = {
-                  ...pendingDisplayRecord,
-                  displayConfirmed: true,
-                  updatedAt: new Date().toISOString()
-                };
                 try {
-                  await saveOnboardingRecord(confirmedRecord);
+                  const confirmedRecord = await confirmAdoptionDisplay(
+                    pendingDisplayRecord
+                  );
                   setOnboarding(confirmedRecord);
                   setAdoptionDisplayPending(false);
                 } catch (err) {
+                  const latest = await loadOnboardingRecord().catch(() => null);
+                  if (latest?.record) setOnboarding(latest.record);
                   setOnboardingError(
                     `显示已经确认，但记录没有保存成功：${formatError(err)}`
                   );
@@ -713,9 +771,19 @@ function StudioApp() {
     setOnboardingSpeech("");
     setAdoptionDisplayPending(false);
     adoptionCommittedRef.current = false;
-    void saveOnboardingRecord(next).catch((err) => {
-      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
-    });
+    void startNewAdoptionIntent(next)
+      .then((saved) => {
+        setOnboarding((current) => {
+          if (!current || current.intentId !== saved.intentId) return saved;
+          // Do not overwrite a name the user typed while the intent write was
+          // in flight, and never regress a step that already advanced.
+          if (current.step !== "name" || current.phase !== "draft") return current;
+          return { ...saved, draftName: current.draftName };
+        });
+      })
+      .catch((err) => {
+        setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+      });
   }
 
   async function handleAdopt(nameOverride?: string, recordOverride?: OnboardingRecord) {
@@ -758,7 +826,19 @@ function StudioApp() {
       if (confirmedId) {
         try {
           const stored = (await loadAllPets()).find((pet) => pet.id === confirmedId);
-          if (stored) setActivePet(await ensurePetHydrated(stored));
+          if (stored) {
+            const full = await ensurePetHydrated(stored);
+            setActivePet(full);
+            if (isTauri && full.frameRoot) {
+              // The following window may not have attached this profile yet;
+              // attaching lets the shared native state confirm the display.
+              try {
+                await native.attach(full.frameRoot, full.id, full.name);
+              } catch {
+                // The recovery entry can retry the native attach.
+              }
+            }
+          }
         } catch {
           // The record still points at the committed profile; a later read can recover.
         }
@@ -844,7 +924,17 @@ function StudioApp() {
             const stored = (await loadAllPets()).find(
               (pet) => pet.id === latest.record!.confirmedPetId
             );
-            if (stored) setActivePet(await ensurePetHydrated(stored));
+            if (stored) {
+              const full = await ensurePetHydrated(stored);
+              setActivePet(full);
+              if (isTauri && full.frameRoot) {
+                try {
+                  await native.attach(full.frameRoot, full.id, full.name);
+                } catch {
+                  // Keep the record; the recovery entry can retry.
+                }
+              }
+            }
           } catch {
             // Keep the record; the list can be re-read later.
           }
@@ -896,9 +986,10 @@ function StudioApp() {
     setOnboardingSpeech("");
 
     if (isTauri) {
+      let shown;
       try {
         lastPreferenceRef.current = { kind: "show" };
-        await native.update({ kind: "show" });
+        shown = await native.update({ kind: "show" });
       } catch {
         // The profile is committed; stay in a waiting state and retry the
         // display command, not the tutorial.
@@ -909,21 +1000,49 @@ function StudioApp() {
         setOnboardingBusy(false);
         return;
       }
+      if (!shown?.visible || shown.petId !== plan.pendingPetId) {
+        // Another adoption may have become active while this command was in
+        // flight. Never confirm a different pet or overwrite its record.
+        const latest = await loadOnboardingRecord().catch(() => null);
+        if (latest?.record) {
+          setOnboarding(latest.record);
+          setAdoptionDisplayPending(
+            latest.record.state === "in_progress" &&
+              latest.record.phase === "committed" &&
+              !latest.record.displayConfirmed
+          );
+          setOnboardingOpen(latest.record.state !== "completed");
+        } else {
+          setOnboarding(committed);
+          setAdoptionDisplayPending(true);
+        }
+        setOnboardingError("当前桌面伙伴已切换，这次显示没有确认。");
+        onboardingBusyRef.current = false;
+        setOnboardingBusy(false);
+        return;
+      }
     }
 
-    const confirmedRecord: OnboardingRecord = {
-      ...committed,
-      displayConfirmed: true,
-      updatedAt: new Date().toISOString()
-    };
+    let confirmedRecord: OnboardingRecord;
     try {
-      await saveOnboardingRecord(confirmedRecord);
+      confirmedRecord = await confirmAdoptionDisplay(committed);
       setOnboarding(confirmedRecord);
     } catch (err) {
-      setOnboarding(committed);
-      setAdoptionDisplayPending(true);
+      const latest = await loadOnboardingRecord().catch(() => null);
+      if (latest?.record) {
+        setOnboarding(latest.record);
+        setAdoptionDisplayPending(
+          latest.record.state === "in_progress" &&
+            latest.record.phase === "committed" &&
+            !latest.record.displayConfirmed
+        );
+        setOnboardingOpen(latest.record.state !== "completed");
+      } else {
+        setOnboarding(committed);
+        setAdoptionDisplayPending(true);
+      }
       setOnboardingError(
-        `显示已经确认，但记录没有保存成功：${formatError(err)}`
+        `这次等待显示已失效，已读取最新领养结果：${formatError(err)}`
       );
       onboardingBusyRef.current = false;
       setOnboardingBusy(false);
@@ -944,9 +1063,10 @@ function StudioApp() {
     onboardingBusyRef.current = true;
     setOnboardingBusy(true);
     setOnboardingError(null);
+    let shown;
     try {
       lastPreferenceRef.current = { kind: "show" };
-      await native.update({ kind: "show" });
+      shown = await native.update({ kind: "show" });
     } catch {
       setAdoptionDisplayPending(true);
       setOnboardingError("还没显示到桌面，资料已经保存。请重试显示。");
@@ -954,22 +1074,43 @@ function StudioApp() {
       setOnboardingBusy(false);
       return;
     }
-    const confirmedRecord: OnboardingRecord = {
-      ...onboarding,
-      step: "meet",
-      displayConfirmed: true,
-      updatedAt: new Date().toISOString()
-    };
+    if (!shown?.visible || shown.petId !== onboarding.confirmedPetId) {
+      const latest = await loadOnboardingRecord().catch(() => null);
+      if (latest?.record) {
+        setOnboarding(latest.record);
+        setAdoptionDisplayPending(
+          latest.record.state === "in_progress" &&
+            latest.record.phase === "committed" &&
+            !latest.record.displayConfirmed
+        );
+        setOnboardingOpen(latest.record.state !== "completed");
+      }
+      setOnboardingError("当前桌面伙伴已切换，这次等待显示已失效。");
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
     try {
-      await saveOnboardingRecord(confirmedRecord);
+      const confirmedRecord = await confirmAdoptionDisplay(onboarding);
       setOnboarding(confirmedRecord);
       setAdoptionDisplayPending(false);
       setOnboardingSpeech("");
       showToast("伙伴已经显示到桌面。", "success");
     } catch (err) {
-      setAdoptionDisplayPending(true);
+      const latest = await loadOnboardingRecord().catch(() => null);
+      if (latest?.record) {
+        setOnboarding(latest.record);
+        setAdoptionDisplayPending(
+          latest.record.state === "in_progress" &&
+            latest.record.phase === "committed" &&
+            !latest.record.displayConfirmed
+        );
+        setOnboardingOpen(latest.record.state !== "completed");
+      } else {
+        setAdoptionDisplayPending(true);
+      }
       setOnboardingError(
-        `显示已经确认，但记录没有保存成功：${formatError(err)}`
+        `这次等待显示已失效，已读取最新领养结果：${formatError(err)}`
       );
     } finally {
       onboardingBusyRef.current = false;

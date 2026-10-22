@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingRecord, savePet, setActivePetId, updatePetAction } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingRecord, savePet, setActivePetId, startNewAdoptionIntent, updatePetAction } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -335,5 +335,77 @@ describe("late onboarding writes", () => {
     const loaded = await loadOnboardingRecord();
     expect(loaded.record?.phase).toBe("committed");
     expect(loaded.record?.confirmedPetId).toBe("pet-b");
+  });
+});
+
+describe("explicit intents and display confirmation", () => {
+  it("lets a new intent replace an old completed record without an intent id", async () => {
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "completed",
+        step: "meet",
+        phase: "committed",
+        confirmedPetId: "old-pet",
+        pendingPetId: "old-pet",
+        intentId: null,
+        displayConfirmed: true,
+        updatedAt: "2026-10-22T00:00:01.000Z"
+      })
+    );
+    const next = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "新伙伴",
+      phase: "draft",
+      intentId: "intent-new",
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    const saved = await startNewAdoptionIntent(next);
+    expect(saved.intentId).toBe("intent-new");
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.state).toBe("in_progress");
+    expect(loaded.record?.intentId).toBe("intent-new");
+  });
+
+  it("refuses a display confirmation from a different intent", async () => {
+    const current = createOnboardingRecord({
+      state: "in_progress",
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "pet-new",
+      pendingPetId: "pet-new",
+      intentId: "intent-new",
+      displayConfirmed: false,
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    await saveOnboardingRecord(current);
+    const stale = {
+      ...current,
+      confirmedPetId: "pet-old",
+      pendingPetId: "pet-old",
+      intentId: "intent-old"
+    };
+    await expect(confirmAdoptionDisplay(stale)).rejects.toThrow("未写入显示确认");
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.intentId).toBe("intent-new");
+    expect(loaded.record?.displayConfirmed).toBe(false);
+  });
+
+  it("confirms display only for the matching committed intent", async () => {
+    const current = createOnboardingRecord({
+      state: "in_progress",
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "pet-a",
+      pendingPetId: "pet-a",
+      intentId: "intent-a",
+      displayConfirmed: false,
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    await saveOnboardingRecord(current);
+    const confirmed = await confirmAdoptionDisplay(current);
+    expect(confirmed.displayConfirmed).toBe(true);
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.displayConfirmed).toBe(true);
   });
 });

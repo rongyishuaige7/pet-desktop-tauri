@@ -932,4 +932,73 @@ await record('web_scheduling_stops_when_hidden_paused_or_reduced',async()=>{
  }
  return {passed:cases.every(item=>item.after.action==='idle'&&item.after.startedAt===item.before.startedAt&&item.errors.length===0),cases};
 });
+await record('old_waiting_retry_cannot_overwrite_new_intent',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep',nativeMode:'hidden'});
+ try{
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('甲');
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
+  const newer=await page.evaluate(async()=>{
+   const s=await import('/src/storage.ts');const o=await import('/src/onboarding.ts');
+   const previousActivePetId=(await s.loadPet())?.id??null;
+   const next=o.createOnboardingRecord({state:'in_progress',step:'name',draftName:'乙',phase:'draft',intentId:'intent-2',previousActivePetId});
+   const started=await s.startNewAdoptionIntent(next);
+   const claim=await s.claimAdoptionRecord(started,'乙',previousActivePetId);
+   const committed=o.markAdoptionCommitted(claim.record,claim.record.pendingPetId);
+   const pet={id:claim.record.pendingPetId,name:'乙',species:'dog',style:'q-sticker',storageMode:'preset-root',frameRoot:'./frame-pack',createdAt:new Date().toISOString(),sourceImage:'',actions:{idle:[],sit:[],sleep:[],happy:[],walk:[],jump:[]},currentAction:'idle',actionStartedAt:new Date().toISOString(),scale:1};
+   await s.commitAdoptedPet(pet,{...committed,displayConfirmed:true},claim.record.previousActivePetId);
+   await s.setActivePetId(pet.id);
+   return {petId:pet.id,intentId:claim.record.intentId,record:(await s.loadOnboardingRecord()).record};
+  });
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForTimeout(600);
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),active:(await s.loadPet())?.id,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:after.record?.intentId==='intent-2'&&after.record?.confirmedPetId===newer.petId&&after.active===newer.petId&&after.pets.length===2&&errors.length===0,newer,after,errors};
+ }finally{await context.close();}
+});
+await record('old_record_new_adoption_draft_saves',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const o=await import('/src/onboarding.ts');await s.saveOnboardingRecord(o.createOnboardingRecord({state:'completed',step:'meet',phase:'committed',confirmedPetId:'A',pendingPetId:'A',intentId:null,displayConfirmed:true,updatedAt:new Date().toISOString()}));});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  await page.getByRole('button',{name:'再领养一只',exact:true}).click();
+  await page.locator('#onboarding-name').fill('新伙伴');
+  const afterStart=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'新伙伴，很高兴见到你',exact:true}).waitFor();
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),record:(await s.loadOnboardingRecord()).record};});
+  return {passed:afterStart?.state==='in_progress'&&Boolean(afterStart?.intentId)&&after.pets.length===3&&after.pets.some(pet=>pet.name==='新伙伴')&&after.record?.confirmedPetId!==null&&errors.length===0,afterStart,after,errors};
+ }finally{await context.close();}
+});
+await record('follow_window_leaves_waiting_when_native_confirms',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep',nativeMode:'hidden'});
+ try{
+  const second=await context.newPage();
+  await second.goto(base,{waitUntil:'domcontentloaded'});
+  await second.locator('.onboarding-dialog').waitFor();
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('待显示');
+  await second.getByRole('button',{name:'下一步',exact:true}).click();
+  await second.locator('#onboarding-name').fill('待显示');
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
+  await second.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await second.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
+  const waiting=await second.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.getByRole('heading',{name:'待显示，很高兴见到你',exact:true}).waitFor();
+  const confirmed=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  await second.evaluate((petId)=>{window.__review.native.petId=petId;window.__review.native.availability='ready';window.__review.native.visibilityMode='shown';window.__review.native.visible=true;window.__review.emitNative();},confirmed.confirmedPetId);
+  await second.getByRole('heading',{name:'待显示，很高兴见到你',exact:true}).waitFor();
+  const followed=await second.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  return {passed:waiting?.displayConfirmed===false&&confirmed?.displayConfirmed===true&&followed?.displayConfirmed===true&&errors.length===0,waiting,confirmed,followed,errors};
+ }finally{await context.close();}
+});
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}
