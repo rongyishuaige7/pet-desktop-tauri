@@ -233,11 +233,34 @@ export async function saveOnboardingRecord(record: OnboardingRecord): Promise<vo
     const current = store.get(ONBOARDING_KEY);
     current.onsuccess = () => {
       const existing = normalizeOnboardingRecord(current.result);
-      // A late blur/retry callback must not overwrite a newer prepared or
-      // committed record. Equal timestamps are allowed to land.
-      if (existing && existing.updatedAt > record.updatedAt) {
-        done();
-        return;
+      if (existing) {
+        const sameIntent =
+          Boolean(existing.intentId) &&
+          Boolean(record.intentId) &&
+          existing.intentId === record.intentId;
+        const sameOrUnknownIntent =
+          sameIntent || !record.intentId || !existing.intentId;
+        // A stale window must not replace a completed or committed adoption
+        // with its older step form just because it clicked later.
+        const lateStep =
+          sameOrUnknownIntent &&
+          existing.phase === "committed" &&
+          record.phase !== "committed" &&
+          record.state === "in_progress";
+        const afterCompletion =
+          sameOrUnknownIntent &&
+          existing.state === "completed" &&
+          record.state !== "completed";
+        if (lateStep || afterCompletion) {
+          done();
+          return;
+        }
+        // A late blur/retry callback must not overwrite a newer prepared or
+        // committed record. Equal timestamps are allowed to land.
+        if (existing.updatedAt > record.updatedAt) {
+          done();
+          return;
+        }
       }
       store.put(record, ONBOARDING_KEY);
       done();
@@ -266,15 +289,42 @@ export async function claimAdoptionRecord(
     const current = store.get(ONBOARDING_KEY);
     current.onsuccess = () => {
       const existing = normalizeOnboardingRecord(current.result);
-      const base = existing?.state === "in_progress" ? existing : fallback;
-      if (base.phase === "committed" && base.confirmedPetId) {
-        done({ record: base, alreadyCommitted: true });
-        return;
+      const sameIntent =
+        Boolean(existing?.intentId) &&
+        Boolean(fallback.intentId) &&
+        existing?.intentId === fallback.intentId;
+      const explicitNew =
+        fallback.state === "in_progress" &&
+        (!existing || fallback.updatedAt > existing.updatedAt) &&
+        !sameIntent;
+
+      if (existing && !explicitNew) {
+        if (
+          existing.state !== "in_progress" ||
+          (existing.phase === "committed" && existing.confirmedPetId)
+        ) {
+          // A stale window joins the persisted adoption result instead of
+          // minting another generation. Explicit "adopt again" writes a newer
+          // in-progress intent first, which is handled above.
+          done({ record: existing, alreadyCommitted: true });
+          return;
+        }
       }
-      const canonicalName =
-        base.phase === "prepared" && base.draftName.trim()
-          ? base.draftName.trim()
-          : name;
+
+      const base =
+        explicitNew || existing?.state !== "in_progress" ? fallback : existing;
+      // Preserve stable ids, but let the submitting form update the draft name
+      // for the same intent. A stale window with a different intent cannot
+      // rename a newer prepared draft.
+      const canEditName =
+        !existing ||
+        !existing.intentId ||
+        !fallback.intentId ||
+        sameIntent ||
+        existing.phase !== "prepared";
+      const canonicalName = canEditName
+        ? name.trim() || base.draftName
+        : base.draftName;
       let prepared: OnboardingRecord;
       try {
         prepared = prepareAdoption(

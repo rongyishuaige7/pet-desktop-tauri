@@ -256,6 +256,7 @@ function StudioApp() {
         if (cancelled) return;
         setPets(all);
         let current = stored ?? all[0] ?? null;
+        let pendingDisplayRecord: OnboardingRecord | null = null;
 
         if (onboardingLoad.corrupt || collectionInitialized === null) {
           // A failed read must never be mistaken for a clean install.
@@ -283,8 +284,13 @@ function StudioApp() {
               saveError = `还没保存成功，名字和选择都保留着：${formatError(err)}`;
             }
           }
+          const needsDisplay =
+            start.record.state === "in_progress" &&
+            start.record.phase === "committed" &&
+            !start.record.displayConfirmed;
+          if (needsDisplay) pendingDisplayRecord = start.record;
           setOnboarding(start.record);
-          setAdoptionDisplayPending(false);
+          setAdoptionDisplayPending(needsDisplay);
           adoptionCommittedRef.current = start.record.phase === "committed";
           setOnboardingOpen(start.kind === "show" || start.kind === "clean");
           if (saveError) setOnboardingError(saveError);
@@ -315,8 +321,28 @@ function StudioApp() {
           // Loading material is not a display intent; hidden/snoozed stays hidden.
           if (isTauri && full.frameRoot) {
             try {
-              await native.attach(full.frameRoot, full.id, full.name);
+              const attached = await native.attach(full.frameRoot, full.id, full.name);
               full.currentAction = await syncNativeAction(full.currentAction);
+              if (
+                pendingDisplayRecord &&
+                attached?.visible &&
+                attached.petId === pendingDisplayRecord.confirmedPetId
+              ) {
+                const confirmedRecord: OnboardingRecord = {
+                  ...pendingDisplayRecord,
+                  displayConfirmed: true,
+                  updatedAt: new Date().toISOString()
+                };
+                try {
+                  await saveOnboardingRecord(confirmedRecord);
+                  setOnboarding(confirmedRecord);
+                  setAdoptionDisplayPending(false);
+                } catch (err) {
+                  setOnboardingError(
+                    `显示已经确认，但记录没有保存成功：${formatError(err)}`
+                  );
+                }
+              }
             } catch (err) {
               setLocalError({
                 id: `native-${full.id}`,
@@ -380,6 +406,8 @@ function StudioApp() {
   // Keep the latest handler reachable from the wandering timer without
   // rescheduling on every render.
   const switchActionRef = useRef(handleSwitchAction);
+  const nativeStateRef = useRef(native.state);
+  nativeStateRef.current = native.state;
   useEffect(() => {
     switchActionRef.current = handleSwitchAction;
   });
@@ -387,18 +415,21 @@ function StudioApp() {
   // Browser preview wanders on its own, mirroring the native runtime. In the
   // desktop app the Rust side owns this and pushes actions through events.
   useEffect(() => {
-    if (isTauri || !native.state.autonomous) return;
+    if (isTauri || !native.state.effectiveAutonomous) return;
     const pet = activePetRef.current;
     if (!pet || !hasRenderableFrames(pet)) return;
 
     const timer = window.setTimeout(() => {
+      // Re-check at fire time: hiding, pausing or reduced motion may have
+      // changed after this timer was scheduled.
+      if (!nativeStateRef.current.effectiveAutonomous) return;
       void switchActionRef.current(chooseNextAction(pet.currentAction));
     }, actionDurationMs(pet.currentAction));
 
     return () => window.clearTimeout(timer);
   }, [
     isTauri,
-    native.state.autonomous,
+    native.state.effectiveAutonomous,
     activePet?.id,
     activePet?.currentAction,
     activePet?.actionStartedAt
@@ -635,7 +666,13 @@ function StudioApp() {
   }
 
   async function handleOnboardingBrowse() {
-    if (onboardingBusyRef.current || adoptionDisplayPending) return;
+    if (
+      onboardingBusyRef.current ||
+      adoptionDisplayPending ||
+      (onboarding?.phase === "committed" && !onboarding.displayConfirmed)
+    ) {
+      return;
+    }
     const base = onboarding ?? createOnboardingRecord();
     const next: OnboardingRecord = {
       ...base,
@@ -666,6 +703,8 @@ function StudioApp() {
       previousActivePetId: activePetRef.current?.id ?? null,
       confirmedPetId: null,
       phase: "draft",
+      intentId: crypto.randomUUID(),
+      displayConfirmed: true,
       updatedAt: new Date().toISOString()
     };
     setOnboarding(next);
@@ -705,10 +744,16 @@ function StudioApp() {
     }
 
     if (claim.alreadyCommitted) {
-      // Another window finished this adoption first. Open the same meet step
+      // Another window finished this adoption first. Join its persisted result
       // instead of creating a second profile.
+      const completed = claim.record.state === "completed";
+      const needsDisplay =
+        !completed &&
+        claim.record.phase === "committed" &&
+        !claim.record.displayConfirmed;
       setOnboarding(claim.record);
-      setAdoptionDisplayPending(false);
+      setAdoptionDisplayPending(needsDisplay);
+      setOnboardingOpen(!completed);
       const confirmedId = claim.record.confirmedPetId;
       if (confirmedId) {
         try {
@@ -722,7 +767,14 @@ function StudioApp() {
       adoptionCommittedRef.current = true;
       onboardingBusyRef.current = false;
       setOnboardingBusy(false);
-      showToast("这次领养已在另一个窗口完成，已为你打开见面。", "info");
+      showToast(
+        completed
+          ? "这次领养已在另一个窗口完成。"
+          : needsDisplay
+            ? "这次领养已在另一个窗口完成，正在等待桌面显示。"
+            : "这次领养已在另一个窗口完成，已为你打开见面。",
+        "info"
+      );
       return;
     }
 
@@ -796,12 +848,23 @@ function StudioApp() {
           } catch {
             // Keep the record; the list can be re-read later.
           }
+          const completed = latest.record.state === "completed";
+          const needsDisplay =
+            !completed &&
+            latest.record.phase === "committed" &&
+            !latest.record.displayConfirmed;
           setOnboarding(latest.record);
-          setAdoptionDisplayPending(false);
+          setAdoptionDisplayPending(needsDisplay);
+          setOnboardingOpen(!completed);
           adoptionCommittedRef.current = true;
           onboardingBusyRef.current = false;
           setOnboardingBusy(false);
-          showToast("这次领养已在另一个窗口完成，已为你打开见面。", "info");
+          showToast(
+            completed
+              ? "这次领养已在另一个窗口完成。"
+              : "这次领养已在另一个窗口完成，已为你打开见面。",
+            "info"
+          );
           return;
         }
       }
@@ -830,7 +893,6 @@ function StudioApp() {
     }
 
     adoptionCommittedRef.current = true;
-    setOnboarding(committed);
     setOnboardingSpeech("");
 
     if (isTauri) {
@@ -840,12 +902,32 @@ function StudioApp() {
       } catch {
         // The profile is committed; stay in a waiting state and retry the
         // display command, not the tutorial.
+        setOnboarding(committed);
         setAdoptionDisplayPending(true);
         setOnboardingError("伙伴资料已经保存，但桌面还没有确认显示。请重试显示。");
         onboardingBusyRef.current = false;
         setOnboardingBusy(false);
         return;
       }
+    }
+
+    const confirmedRecord: OnboardingRecord = {
+      ...committed,
+      displayConfirmed: true,
+      updatedAt: new Date().toISOString()
+    };
+    try {
+      await saveOnboardingRecord(confirmedRecord);
+      setOnboarding(confirmedRecord);
+    } catch (err) {
+      setOnboarding(committed);
+      setAdoptionDisplayPending(true);
+      setOnboardingError(
+        `显示已经确认，但记录没有保存成功：${formatError(err)}`
+      );
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
     }
 
     setAdoptionDisplayPending(false);
@@ -865,13 +947,30 @@ function StudioApp() {
     try {
       lastPreferenceRef.current = { kind: "show" };
       await native.update({ kind: "show" });
-      setAdoptionDisplayPending(false);
-      setOnboarding({ ...onboarding, step: "meet" });
-      setOnboardingSpeech("");
-      showToast("伙伴已经显示到桌面。", "success");
     } catch {
       setAdoptionDisplayPending(true);
       setOnboardingError("还没显示到桌面，资料已经保存。请重试显示。");
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
+    const confirmedRecord: OnboardingRecord = {
+      ...onboarding,
+      step: "meet",
+      displayConfirmed: true,
+      updatedAt: new Date().toISOString()
+    };
+    try {
+      await saveOnboardingRecord(confirmedRecord);
+      setOnboarding(confirmedRecord);
+      setAdoptionDisplayPending(false);
+      setOnboardingSpeech("");
+      showToast("伙伴已经显示到桌面。", "success");
+    } catch (err) {
+      setAdoptionDisplayPending(true);
+      setOnboardingError(
+        `显示已经确认，但记录没有保存成功：${formatError(err)}`
+      );
     } finally {
       onboardingBusyRef.current = false;
       setOnboardingBusy(false);
@@ -880,7 +979,10 @@ function StudioApp() {
 
   async function handleOnboardingFinish() {
     if (!onboarding) return;
-    if (adoptionDisplayPending) {
+    if (
+      adoptionDisplayPending ||
+      (onboarding.phase === "committed" && !onboarding.displayConfirmed)
+    ) {
       setOnboardingError("伙伴还没有显示到桌面，请先重试显示。");
       return;
     }

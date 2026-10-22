@@ -58,7 +58,7 @@
 - 显示与休息：设置文件升级到 `schemaVersion: 2`，保存显示意图、休息到期时刻、动态偏好和宠物 id；隐藏/休息停止播放与自主调度；到期由 Rust 按绝对时刻处理；低动态合成不覆盖用户的暂停和自主活动选择。
 - 领养引导：新增 `onboarding_v1` 记录、老用户静默迁移、稳定 `adoptionId / pendingPetId`、单事务提交和失败回滚；命名输入失焦不会再覆盖已提交的引导记录（双击流程已复现并修复）。
 - 陪伴界面：陪伴主页、互动冷却、设置抽屉、能力驱动的系统选项、持续错误恢复、焦点陷阱、Escape 关闭和 840×620 布局；主操作颜色调整以满足文本对比度。
-- 验证：93 项前端单元测试（14 个文件）、33 项 Rust 测试、42 个隔离浏览器流程（保留原 16 个并新增 26 个，含复核 8 个）、TypeScript/Vite 生产构建通过；本机 macOS `.app` 打包通过（`/tmp/pet-desktop-tauri-release-target/release/bundle/macos/桌面贴贴宠物.app`）。
+- 验证：100 项前端单元测试（14 个文件）、33 项 Rust 测试、46 个隔离浏览器流程（保留原 16 个并新增 30 个，含两轮复核 12 个）、TypeScript/Vite 生产构建通过；本机 macOS `.app` 打包通过（`/tmp/pet-desktop-tauri-release-target/release/bundle/macos/桌面贴贴宠物.app`）。
 - CI：S02、S03、S04 和最终复核修复 `fac9813` 的 macOS / Linux Rust 检查、前端测试和构建通过；复核修复运行见 [CI 39739448141](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39739448141)。S01 运行因后续提交的并发取消，S02 起覆盖。
 - 未完成：真实 macOS / Linux 桌面操作（主窗口关闭后托盘恢复、睡眠唤醒、拖拽/单击、透明穿透、低动态在原生窗口中的表现、安装签名与常驻资源量测）。浏览器模拟 IPC 和本地 `.app` 构建不能替代这些验收。
 - 未新增运行时依赖，未升级既有依赖，未修改 package / Cargo 版本。
@@ -75,7 +75,18 @@
 6. `refresh` 会复用或补建事件订阅、标记 ready、重放缓存事件并合并当前快照；hook 清除连接错误并恢复 connected。
 7. 网页自主活动只由适配层状态驱动，复选框、localStorage 和浏览器调度共用同一值。
 
-验证：93 项前端单元测试、33 项 Rust 测试、42 个隔离浏览器流程（原 34 个 + 复核 8 个）、生产构建通过。仍待真实桌面验收。
+验证（本轮修复后）：93 项前端单元测试、33 项 Rust 测试、42 个隔离浏览器流程（原 34 个 + 复核 8 个）、生产构建通过；二次复核随后再补 4 个流程。仍待真实桌面验收。
+
+## 二次复核修复（2026-10-22）
+
+针对 `137666c` 复核记录的 4 项问题：
+
+1. 引导记录增加 `intentId` 与 `displayConfirmed`；`saveOnboardingRecord` 拒绝同代次旧窗口的迟到步骤写回，`claimAdoptionRecord` 对已完成/已提交记录返回持久化结果，只有更新的显式意图才开启新领养。
+2. `markAdoptionCommitted` 写入 `displayConfirmed:false`，显示成功后持久化 `true`；刷新恢复时若原生未确认可见则保持“等待显示”，完成见面被阻止。
+3. 领取时允许同一意图的 prepared 草稿更新名字，保留稳定 adoption/pending id；失败后改名重试使用新名字。
+4. 网页自主调度改用 `effectiveAutonomous`，隐藏、暂停、低动态时清理定时器，并在回调执行前复查最新状态。
+
+验证：100 项前端单元测试、33 项 Rust 测试、46 个隔离浏览器流程（原 42 个 + 二次复核 4 个）、生产构建通过。仍待真实桌面验收。
 
 ## 本轮之外的依赖维护
 

@@ -10,16 +10,16 @@ const browser=await chromium.launch({executablePath:process.env.PET_CHROME_PATH 
 const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function openCompanionDetails(page){const details=page.locator('.companion-details');if(await details.count()&&!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
-async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0}={}) {
+async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0,nativeMode='shown'}={}) {
  const context=await browser.newContext({viewport:{width:1120,height:760}});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
- await context.addInitScript(({desktop,settingsAction,missing,packDelay,failStateReads})=>{
+ await context.addInitScript(({desktop,settingsAction,missing,packDelay,failStateReads,nativeMode})=>{
   localStorage.setItem('desktop-sticker-pet:autonomous','off');
   if(!desktop)return;
   const callbacks=new Map(); const listeners=new Map(); let seq=1;
   const state=window.__review={calls:[],root:'/review/A',action:settingsAction,visible:true,delayB:0,emitOnSet:false,generations:0,saves:0};
-  state.native={sessionId:'mock-session',revision:1,petId:null,petName:null,availability:'absent',visibilityMode:'shown',snoozeUntilMs:null,visible:false,action:settingsAction,actionRevision:1,animationPaused:false,autonomous:true,motionPreference:'system',systemReducedMotion:false,effectivePaused:false,effectiveAutonomous:false,scale:1,clickThrough:true,pending:false,autostart:{enabled:false,pending:false},lastOperationError:null,capabilities:{nativeWindow:true,tapFeedback:true,clickThrough:true,resetPosition:true,autostart:true,systemReducedMotion:true}};
-  state.missing=missing;state.failPreference=false;state.failAutostart=false;state.failStateReads=failStateReads;state.stalePreferenceReply=false;state.lastInteractionAt=0;
+  state.native={sessionId:'mock-session',revision:1,petId:null,petName:null,availability:'absent',visibilityMode:nativeMode,snoozeUntilMs:null,visible:false,action:settingsAction,actionRevision:1,animationPaused:false,autonomous:true,motionPreference:'system',systemReducedMotion:false,effectivePaused:false,effectiveAutonomous:false,scale:1,clickThrough:true,pending:false,autostart:{enabled:false,pending:false},lastOperationError:null,capabilities:{nativeWindow:true,tapFeedback:true,clickThrough:true,resetPosition:true,autostart:true,systemReducedMotion:true}};
+  state.missing=missing;state.failPreference=false;state.failAutostart=false;state.failStateReads=failStateReads;state.stalePreferenceReply=false;state.failAttach=false;state.lastInteractionAt=0;
   state.refreshNative=()=>{const n=state.native;n.revision++;n.effectivePaused=n.animationPaused||n.motionPreference==='reduce'||(n.motionPreference==='system'&&n.systemReducedMotion);n.visible=Boolean(n.petId)&&n.visibilityMode==='shown'&&n.availability==='ready';n.effectiveAutonomous=n.autonomous&&!n.effectivePaused&&n.visible&&n.availability==='ready';return n;};
   state.emitNative=async()=>{const n=state.refreshNative();await Promise.all([...listeners.entries()].filter(([,v])=>v.event==='native-pet-state-changed').map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload:n})));return n;};
   state.makeImage=(sheet=false)=>{
@@ -49,6 +49,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      return {sourceImage:actions.idle[0],actions};
     }
     if(cmd==='set_native_pet_frame_root'){
+     if(state.failAttach)throw new Error('mock attach failed');
      if(args.rootDir==='/review/generated'&&state.delayGeneratedCommit){state.committing=true;await new Promise(r=>setTimeout(r,state.delayGeneratedCommit));}
      if (state.failB && args.rootDir==='/review/B') throw new Error('audit: invalid pack');
      state.root=args.rootDir;state.visible=true;
@@ -118,7 +119,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     throw new Error('unexpected mock IPC: '+cmd);
    }
   };
- },{desktop,settingsAction,missing,packDelay,failStateReads});
+ },{desktop,settingsAction,missing,packDelay,failStateReads,nativeMode});
  const page=await context.newPage();
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base,{waitUntil:'domcontentloaded'});
@@ -844,5 +845,91 @@ await record('prepared_second_adoption_resumes_name_not_old_companion',async()=>
   const value=input?await page.locator('#onboarding-name').inputValue():'';
   return {passed:title.includes('想怎么称呼它')&&input===1&&value==='新伙伴'&&errors.length===0,title,input,value,errors};
  }finally{await context.close();}
+});
+await record('stale_window_after_first_finishes_joins_result',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  const second=await context.newPage();
+  await second.goto(base,{waitUntil:'domcontentloaded'});
+  await second.locator('.onboarding-dialog').waitFor();
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('窗口甲');
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'窗口甲，很高兴见到你',exact:true}).waitFor();
+  await page.getByRole('button',{name:'完成见面',exact:true}).click();
+  await page.waitForTimeout(500);
+  const finishDebug=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
+  if(finishDebug.dialog)return {passed:false,reason:'finish did not close',finishDebug};
+  await page.locator('.onboarding-dialog').waitFor({state:'detached'});
+  await second.getByRole('button',{name:'下一步',exact:true}).click();
+  await second.locator('#onboarding-name').fill('窗口乙');
+  await second.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await second.waitForTimeout(500);
+  const secondDebug=await second.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,pets:await s.loadAllPets(),dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
+  if(secondDebug.dialog)return {passed:false,reason:'second did not close',finishDebug,secondDebug};
+  await second.locator('.onboarding-dialog').waitFor({state:'detached'});
+  const state=await second.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),active:(await s.loadPet())?.id,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:state.pets.length===1&&state.record?.state==='completed'&&state.active===state.pets[0].id&&errors.length===0,pets:state.pets,record:state.record,errors};
+ }finally{await context.close();}
+});
+await record('adoption_show_failure_reload_keeps_waiting',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep',nativeMode:'hidden'});
+ try{
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('待显示伙伴');
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,native:window.__review.native};});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
+  const reloaded=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,native:window.__review.native};});
+  await page.keyboard.press('Escape');
+  const stillWaiting=await page.locator('.onboarding-dialog').isVisible();
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.getByRole('heading',{name:'待显示伙伴，很高兴见到你',exact:true}).waitFor();
+  const confirmed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,native:window.__review.native};});
+  return {passed:failed.record?.displayConfirmed===false&&failed.native.visible===false&&reloaded.record?.displayConfirmed===false&&reloaded.native.visible===false&&stillWaiting&&confirmed.record?.displayConfirmed===true&&confirmed.native.visible===true&&errors.length===0,failed,reloaded,stillWaiting,confirmed,errors};
+ }finally{await context.close();}
+});
+await record('retry_after_editing_prepared_name_uses_new_name',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('旧名字');
+  await page.evaluate(()=>{window.__review.failAttach=true;});
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.locator('.onboarding-error').waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:(await s.loadOnboardingRecord()).record};});
+  await page.evaluate(()=>{window.__review.failAttach=false;});
+  await page.locator('#onboarding-name').fill('新名字');
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'新名字，很高兴见到你',exact:true}).waitFor();
+  const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),record:(await s.loadOnboardingRecord()).record};});
+  return {passed:failed.pets===0&&failed.record?.phase==='prepared'&&retried.pets.length===1&&retried.pets[0].name==='新名字'&&retried.record?.draftName==='新名字'&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('web_scheduling_stops_when_hidden_paused_or_reduced',async()=>{
+ const cases=[];
+ for(const scenario of ['hidden','paused','reduced']){
+  const {context,page,errors}=await newCase();
+  try{
+   await seed(page);
+   const checkbox=page.locator('#companion-autonomous');
+   if(!(await checkbox.isChecked()))await checkbox.click();
+   if(scenario==='hidden')await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+   if(scenario==='paused')await page.locator('#companion-paused').click();
+   if(scenario==='reduced'){
+    await page.locator('.sidebar-settings').click();
+    await page.locator('#settings-motion').selectOption('reduce');
+    await page.keyboard.press('Escape');
+   }
+   const before=await page.evaluate(async()=>({pet:await (await import('/src/storage.ts')).loadPet()}));
+   await page.waitForTimeout(14000);
+   const after=await page.evaluate(async()=>({pet:await (await import('/src/storage.ts')).loadPet()}));
+   cases.push({scenario,errors,before:{action:before.pet?.currentAction,startedAt:before.pet?.actionStartedAt},after:{action:after.pet?.currentAction,startedAt:after.pet?.actionStartedAt}});
+  }finally{await context.close();}
+ }
+ return {passed:cases.every(item=>item.after.action==='idle'&&item.after.startedAt===item.before.startedAt&&item.errors.length===0),cases};
 });
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}

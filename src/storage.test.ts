@@ -197,3 +197,143 @@ describe("adoption claims", () => {
     expect((await loadPet())?.id).toBe("B");
   });
 });
+
+describe("adoption intent races", () => {
+  it("joins a completed adoption from a stale window instead of minting a new one", async () => {
+    const intent = "intent-old";
+    const stale = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "窗口甲",
+      phase: "draft",
+      intentId: intent,
+      updatedAt: "2026-10-22T00:00:01.000Z"
+    });
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "completed",
+        step: "meet",
+        phase: "committed",
+        confirmedPetId: "pet-a",
+        adoptionId: "adoption-a",
+        pendingPetId: "pet-a",
+        intentId: intent,
+        displayConfirmed: true,
+        updatedAt: "2026-10-22T00:00:02.000Z"
+      })
+    );
+    const claim = await claimAdoptionRecord(stale, "窗口乙", null);
+    expect(claim.alreadyCommitted).toBe(true);
+    expect(claim.record.confirmedPetId).toBe("pet-a");
+    expect(claim.record.state).toBe("completed");
+  });
+
+  it("allows a newer explicit intent after the previous adoption completed", async () => {
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "completed",
+        step: "meet",
+        phase: "committed",
+        confirmedPetId: "pet-a",
+        adoptionId: "adoption-a",
+        pendingPetId: "pet-a",
+        intentId: "intent-old",
+        displayConfirmed: true,
+        updatedAt: "2026-10-22T00:00:01.000Z"
+      })
+    );
+    const next = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "新伙伴",
+      phase: "draft",
+      intentId: "intent-new",
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    let calls = 0;
+    const claim = await claimAdoptionRecord(next, "新伙伴", null, () => `new-${++calls}`);
+    expect(claim.alreadyCommitted).toBe(false);
+    expect(claim.record.pendingPetId).not.toBe("pet-a");
+    expect(claim.record.intentId).toBe("intent-new");
+  });
+
+  it("updates the draft name while keeping the prepared ids", async () => {
+    const base = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "旧名字",
+      phase: "draft",
+      intentId: "intent-a"
+    });
+    let calls = 0;
+    const first = await claimAdoptionRecord(base, "旧名字", null, () => `id-${++calls}`);
+    const second = await claimAdoptionRecord(
+      { ...first.record, draftName: "旧名字" },
+      "新名字",
+      null
+    );
+    expect(second.record.pendingPetId).toBe(first.record.pendingPetId);
+    expect(second.record.adoptionId).toBe(first.record.adoptionId);
+    expect(second.record.draftName).toBe("新名字");
+  });
+});
+
+describe("late onboarding writes", () => {
+  it("does not let a stale step form replace a completed adoption", async () => {
+    const intent = "intent-a";
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "completed",
+        step: "meet",
+        phase: "committed",
+        confirmedPetId: "pet-a",
+        pendingPetId: "pet-a",
+        intentId: intent,
+        displayConfirmed: true,
+        updatedAt: "2026-10-22T00:00:02.000Z"
+      })
+    );
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "in_progress",
+        step: "name",
+        draftName: "旧窗口",
+        phase: "draft",
+        intentId: intent,
+        updatedAt: "2026-10-22T00:00:03.000Z"
+      })
+    );
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.state).toBe("completed");
+    expect(loaded.record?.confirmedPetId).toBe("pet-a");
+  });
+
+  it("does not let a stale step form replace a committed waiting record", async () => {
+    const intent = "intent-b";
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "in_progress",
+        step: "meet",
+        phase: "committed",
+        confirmedPetId: "pet-b",
+        pendingPetId: "pet-b",
+        intentId: intent,
+        displayConfirmed: false,
+        updatedAt: "2026-10-22T00:00:02.000Z"
+      })
+    );
+    await saveOnboardingRecord(
+      createOnboardingRecord({
+        state: "in_progress",
+        step: "name",
+        draftName: "旧窗口",
+        phase: "prepared",
+        intentId: intent,
+        updatedAt: "2026-10-22T00:00:03.000Z"
+      })
+    );
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.phase).toBe("committed");
+    expect(loaded.record?.confirmedPetId).toBe("pet-b");
+  });
+});

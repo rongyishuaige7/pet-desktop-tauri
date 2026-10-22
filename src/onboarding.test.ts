@@ -243,3 +243,25 @@ describe("second adoption resume", () => {
     expect(start.record.confirmedPetId).toBe("new-pet");
   });
 });
+
+describe("adoption intent and display confirmation", () => {
+  it("marks a committed adoption as waiting for display until completed", () => {
+    const prepared = prepareAdoption(createOnboardingRecord(), "咕唧", null).record;
+    expect(prepared.displayConfirmed).toBe(true);
+    const committed = markAdoptionCommitted(prepared, "pet-a");
+    expect(committed.displayConfirmed).toBe(false);
+    expect(committed.phase).toBe("committed");
+    const completed = completeOnboarding(committed, "pet-a");
+    expect(completed.displayConfirmed).toBe(true);
+  });
+
+  it("keeps the intent id stable through preparation and completion", () => {
+    const base = createOnboardingRecord({ intentId: "intent-a" });
+    const prepared = prepareAdoption(base, "咕唧", null).record;
+    const committed = markAdoptionCommitted(prepared, "pet-a");
+    const completed = completeOnboarding(committed, "pet-a");
+    expect(prepared.intentId).toBe("intent-a");
+    expect(committed.intentId).toBe("intent-a");
+    expect(completed.intentId).toBe("intent-a");
+  });
+});

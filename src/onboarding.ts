@@ -21,6 +21,10 @@ export interface OnboardingRecord {
   pendingPetId: string | null;
   previousActivePetId: string | null;
   phase: AdoptionPhase | null;
+  /** One explicit adoption intent; stale windows keep the intent they loaded. */
+  intentId: string | null;
+  /** False until the native window confirms the committed pet is visible. */
+  displayConfirmed: boolean;
   updatedAt: string;
 }
 
@@ -44,6 +48,8 @@ export function createOnboardingRecord(
     pendingPetId: null,
     previousActivePetId: null,
     phase: null,
+    intentId: crypto.randomUUID(),
+    displayConfirmed: true,
     updatedAt: new Date().toISOString(),
     ...overrides
   };
@@ -85,6 +91,11 @@ export function normalizeOnboardingRecord(value: unknown): OnboardingRecord | nu
     pendingPetId: idOrNull(record.pendingPetId),
     previousActivePetId: idOrNull(record.previousActivePetId),
     phase: isPhase(record.phase) ? record.phase : null,
+    intentId: idOrNull(record.intentId),
+    // Records written before this field existed are treated as confirmed; only
+    // a committed adoption can write false.
+    displayConfirmed:
+      typeof record.displayConfirmed === "boolean" ? record.displayConfirmed : true,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
   };
 }
@@ -203,6 +214,7 @@ export function prepareAdoption(
       pendingPetId,
       previousActivePetId: record.previousActivePetId ?? previousActivePetId,
       phase: "prepared",
+      displayConfirmed: true,
       updatedAt: new Date().toISOString()
     }
   };
@@ -218,6 +230,7 @@ export function markAdoptionCommitted(
     step: "meet",
     confirmedPetId: petId,
     phase: "committed",
+    displayConfirmed: false,
     updatedAt: new Date().toISOString()
   };
 }
@@ -232,6 +245,7 @@ export function completeOnboarding(
     step: "meet",
     confirmedPetId: petId ?? record.confirmedPetId,
     phase: record.phase ?? "committed",
+    displayConfirmed: true,
     updatedAt: new Date().toISOString()
   };
 }

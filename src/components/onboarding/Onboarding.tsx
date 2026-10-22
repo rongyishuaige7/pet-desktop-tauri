@@ -55,19 +55,21 @@ export const Onboarding: React.FC<OnboardingProps> = ({
   useFocusTrap(dialogRef, escape, !busy);
 
   useEffect(() => {
+    if (busy) return;
     if (record.step === "name") {
       nameRef.current?.focus({ preventScroll: true });
       nameRef.current?.select();
       return;
     }
     // Keep keyboard focus inside the dialog after a step swap removes the
-    // previously focused input or button.
+    // previously focused input or button. Buttons are disabled while busy, so
+    // wait until the adoption command has settled.
     const target =
       dialogRef.current?.querySelector<HTMLElement>(".onboarding-actions .btn-primary") ??
       dialogRef.current?.querySelector<HTMLElement>(".onboarding-actions .btn-secondary") ??
       dialogRef.current?.querySelector<HTMLElement>(".onboarding-pet");
     target?.focus({ preventScroll: true });
-  }, [record.step]);
+  }, [record.step, busy]);
 
   const steps = (
     <div
