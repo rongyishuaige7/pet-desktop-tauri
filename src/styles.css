@@ -943,6 +943,164 @@ button {
   background: #1f6b5f;
 }
 
+/* Pet shelf card actions and state */
+.pet-card.is-busy {
+  opacity: 0.78;
+}
+
+.pet-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.pet-card-status .status-dot {
+  background: var(--text-tertiary);
+}
+
+.pet-card-status.is-live {
+  color: #405338;
+}
+
+.pet-card-status.is-live .status-dot {
+  background: #2a6b60;
+}
+
+.pet-card-status.is-hidden {
+  color: var(--text-secondary);
+}
+
+.pet-card-status.is-snoozed {
+  color: #7a5a20;
+}
+
+.pet-card-status.is-snoozed .status-dot {
+  background: var(--accent-amber);
+}
+
+.pet-card-status.is-warning {
+  color: #7f2f24;
+}
+
+.pet-card-status.is-warning .status-dot {
+  background: #b54735;
+}
+
+.pet-card-status.is-syncing {
+  color: var(--text-tertiary);
+}
+
+.pet-card-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pet-card-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pet-card-action-row .pet-card-action {
+  height: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.pet-card-more {
+  position: relative;
+  margin-left: auto;
+}
+
+.pet-card-more > summary {
+  list-style: none;
+  cursor: pointer;
+  height: 40px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card-solid);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.pet-card-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pet-card-more[open] > summary {
+  border-color: var(--accent-amber);
+}
+
+.pet-card-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 200px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card-solid);
+  box-shadow: var(--shadow-lg);
+}
+
+.pet-card-more-menu button {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.pet-card-more-menu button:hover:not(:disabled) {
+  background: rgba(45, 35, 25, 0.06);
+}
+
+.pet-card-more-menu button.danger {
+  color: var(--accent-coral);
+}
+
+.pet-card-more-menu button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pet-card-more-note {
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.pet-card-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: #fdf1ef;
+  color: #7f2f24;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* Toast Notification (Floating, Non-intrusive) */
 .toast-container {
   position: fixed;

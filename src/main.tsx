@@ -111,6 +111,7 @@ function StudioApp() {
   const [companionSpeech, setCompanionSpeech] = useState("");
   const [localError, setLocalError] = useState<{
     id: string;
+    petId?: string;
     title: string;
     body: string;
     operation?: string;
@@ -531,6 +532,7 @@ function StudioApp() {
             setActivePet(current);
             setLocalError({
               id: `asset-${current.id}`,
+              petId: current.id,
               title: `暂时找不到${current.name}的动作素材，资料仍在`,
               body: "名字和选择都保留着。可以重试加载，或换一位已有伙伴。",
               operation: "set_frame_root",
@@ -806,6 +808,41 @@ function StudioApp() {
     else if (result.reason === "stalePet") setCompanionSpeech("伙伴已经切换，请再试一次。");
   }
 
+  async function retryAssetFor(pet: PetProfile) {
+    if (!pet.frameRoot) throw new Error("该伙伴没有可加载的素材目录");
+    const full = await ensurePetHydrated(pet);
+    if (isTauri) {
+      // Attaching preserves the confirmed hidden/snoozed intent; restoring
+      // material is not a request to wake the companion.
+      await native.attach(full.frameRoot!, full.id, full.name);
+    }
+    setActivePet(full);
+    setLocalError(null);
+    showToast("伙伴的动作素材已恢复。", "success");
+  }
+
+  async function handleRetryAssetPet(petId: string) {
+    const pet =
+      activePetRef.current?.id === petId
+        ? activePetRef.current
+        : pets.find((candidate) => candidate.id === petId);
+    if (!pet) throw new Error("该宠物已被移除");
+    try {
+      await retryAssetFor(pet);
+    } catch (err) {
+      setLocalError({
+        id: `asset-${pet.id}-${Date.now()}`,
+        petId: pet.id,
+        title: `暂时找不到${pet.name}的动作素材，资料仍在`,
+        body: "名字和选择都保留着。可以重试加载，或换一位已有伙伴。",
+        operation: "set_frame_root",
+        code: "ASSET_NOT_FOUND"
+      });
+      showToast(`重试加载失败：${formatError(err)}`, "error");
+      throw err;
+    }
+  }
+
   async function handleRetryAsset() {
     const current = activePetRef.current;
     if (!current?.frameRoot) {
@@ -813,23 +850,9 @@ function StudioApp() {
       return;
     }
     try {
-      const full = await ensurePetHydrated(current);
-      if (isTauri) {
-        await native.attach(full.frameRoot!, full.id, full.name);
-        await native.update({ kind: "show", expectedPetId: full.id });
-      }
-      setActivePet(full);
-      setLocalError(null);
-      showToast("伙伴的动作素材已恢复。", "success");
-    } catch (err) {
-      setLocalError({
-        id: `asset-${current.id}-${Date.now()}`,
-        title: `暂时找不到${current.name}的动作素材，资料仍在`,
-        body: "名字和选择都保留着。可以重试加载，或换一位已有伙伴。",
-        operation: "set_frame_root",
-        code: "ASSET_NOT_FOUND"
-      });
-      showToast(`重试加载失败：${formatError(err)}`, "error");
+      await handleRetryAssetPet(current.id);
+    } catch {
+      // handleRetryAssetPet already reported the failure.
     }
   }
 
@@ -1615,6 +1638,57 @@ function StudioApp() {
     } catch (err) { showToast(`切换宠物失败：${formatError(err)}`, "error"); }
   }
 
+  /**
+   * A card recall stays on the shelf. When the native companion already
+   * matches, only the display intent changes; a mismatch goes through the
+   * normal attach/select path so the card can recover the right profile.
+   */
+  async function handleRecallPet(pet: PetProfile) {
+    const nativeMatches = native.snapshot().petId === pet.id;
+    if (activePetRef.current?.id === pet.id && nativeMatches) {
+      await applyPreference({ kind: "show", expectedPetId: pet.id });
+      showToast(`「${pet.name}」回来了。`, "success");
+      return;
+    }
+    const result = await activatePet(pet);
+    announceActivation(result, `已把「${pet.name}」带回桌面。`);
+  }
+
+  async function handleSnoozePet(pet: PetProfile, adjust: boolean) {
+    const next = await applyPreference({ kind: "snooze", expectedPetId: pet.id });
+    const until = next?.snoozeUntilMs ?? Date.now() + 60 * 60 * 1000;
+    showToast(
+      adjust
+        ? `已从现在的时刻重新计时，休息到 ${formatSnoozeTime(until)}。`
+        : `「${pet.name}」休息到 ${formatSnoozeTime(until)}，到时自动回来。`,
+      "success"
+    );
+  }
+
+  async function handleResetPositionPet(pet: PetProfile) {
+    await applyPreference({
+      kind: "resetPosition",
+      expectedPetId: pet.id
+    });
+    showToast("已把桌面伙伴移回右下角；显示或休息状态没有改变。", "success");
+  }
+
+  async function handleRetryDisplayPet(petId: string) {
+    if (!displayRetry || displayRetry.petId !== petId) return;
+    await retryDisplay(displayRetry);
+  }
+
+  function handleShowRecovery() {
+    const node = document.querySelector<HTMLElement>(".recovery-notice");
+    if (!node) return;
+    node.scrollIntoView({ block: "start" });
+    node.focus({ preventScroll: true });
+  }
+
+  function handleGoToCompanion() {
+    setCurrentTab("stage");
+  }
+
   async function handleDeletePet(id: string) {
     const pet = pets.find((p) => p.id === id);
     if (!pet || !confirm(`确定要从宠物架移除「${pet.name}」吗？`)) return;
@@ -1668,6 +1742,8 @@ function StudioApp() {
 
   const companionStatus = isTauri ? statusText(native.state) : "网页演示";
   const operationError = native.state.lastOperationError;
+  const assetErrorPetId =
+    localError?.code === "ASSET_NOT_FOUND" ? localError.petId ?? null : null;
 
   const assetRecovery = {
     title: `暂时找不到${activePet?.name ?? "伙伴"}的动作素材，资料仍在`,
@@ -1980,9 +2056,20 @@ function StudioApp() {
             pets={pets}
             activePetId={activePet?.id ?? null}
             nativeState={native.state}
+            displayRetryPetId={displayRetry?.petId ?? null}
+            assetErrorPetId={assetErrorPetId}
+            hasRecovery={Boolean(recovery)}
             onDeployPet={handleDeployPet}
             onDeletePet={handleDeletePet}
             onRenamePet={handleRenamePet}
+            onRecallPet={handleRecallPet}
+            onSnoozePet={(pet) => handleSnoozePet(pet, false)}
+            onAdjustSnooze={(pet) => handleSnoozePet(pet, true)}
+            onRetryDisplayPet={handleRetryDisplayPet}
+            onRetryAssetPet={handleRetryAssetPet}
+            onResetPositionPet={handleResetPositionPet}
+            onShowRecovery={handleShowRecovery}
+            onGoToCompanion={handleGoToCompanion}
             onStartAdoption={handleStartAdoption}
             onGoToWorkshop={() => setCurrentTab("workshop")}
           />

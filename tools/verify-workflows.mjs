@@ -10,6 +10,8 @@ const browser=await chromium.launch({executablePath:process.env.PET_CHROME_PATH 
 const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function openCompanionDetails(page){const details=page.locator('.companion-details');if(await details.count()&&!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
+async function deleteCard(card){await card.locator('.pet-card-more > summary').click();await card.getByRole('button',{name:'移除宠物',exact:true}).click();}
+async function joinOrAdopt(page){const adopt=page.getByRole('button',{name:'领养并入住',exact:true});if(await adopt.count()){await adopt.click();return;}const finish=page.getByRole('button',{name:'完成见面',exact:true});if(await finish.count())await finish.click();}
 async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0,nativeMode='shown',viewport={width:1120,height:760}}={}) {
  const context=await browser.newContext({viewport});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
@@ -250,9 +252,9 @@ try{
    await seed(page,{active:'B'});
    await page.getByRole('button',{name:/我的伙伴/}).click();
    page.once('dialog',d=>d.accept());
-   await page.locator('.pet-card').filter({hasText:'测试甲'}).getByTitle('删除宠物').click();
+   await deleteCard(page.locator('.pet-card').filter({hasText:'测试甲'}));
    await page.locator('.pet-card').filter({hasText:'测试甲'}).waitFor({state:'detached'});
-   await page.getByRole('button',{name:/陪伴/}).click();
+   await page.getByRole('button',{name:'陪伴',exact:true}).click();
    const stored=await page.evaluate(async()=>{const m=await import('/src/storage.ts');return (await m.loadPet())?.id;});
    const empty=await page.locator('.companion-empty').isVisible();
    await page.screenshot({path:join(evidenceDir,'delete-nonactive-fixed.png')});
@@ -351,7 +353,7 @@ try{
    await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
    await page.waitForFunction(()=>document.querySelector('.widget-name')?.textContent==='测试乙');
    await page.evaluate(()=>window.__review.emit({action:'sleep',petId:'A',revision:100}));
-   await page.getByRole('button',{name:/陪伴/}).click();
+   await page.getByRole('button',{name:'陪伴',exact:true}).click();
    await openCompanionDetails(page);
    const action=await page.locator('.action-pill-btn.active').innerText();
    return {passed:action.includes('待机'),action};
@@ -363,7 +365,7 @@ try{
    await seed(page,{desktop:true});await page.getByRole('button',{name:/我的伙伴/}).click();
    for (const name of ['测试甲','测试乙']) {
     page.once('dialog',d=>d.accept());const card=page.locator('.pet-card').filter({hasText:name});
-    await card.getByTitle('删除宠物').click();await card.waitFor({state:'detached'});
+    await deleteCard(card);await card.waitFor({state:'detached'});
    }
    const visible=await page.evaluate(()=>window.__review.visible);
    return {passed:visible===false,visible};
@@ -376,7 +378,7 @@ try{
    for (const name of ['测试甲','测试乙']) {
     page.once('dialog',d=>d.accept());
     const card=page.locator('.pet-card').filter({hasText:name});
-    await card.getByTitle('删除宠物').click();await card.waitFor({state:'detached'});
+    await deleteCard(card);await card.waitFor({state:'detached'});
    }
    await page.reload();await page.locator('.companion-empty').waitFor();
    const stored=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadAllPets()).length);
@@ -474,7 +476,7 @@ await record('onboarding_empty_old_user_stays_empty',async()=>{
   for(const name of ['测试甲','测试乙']){
    page.once('dialog',d=>d.accept());
    const card=page.locator('.pet-card').filter({hasText:name});
-   await card.getByTitle('删除宠物').click();
+   await deleteCard(card);
    await card.waitFor({state:'detached'});
   }
   await page.reload({waitUntil:'domcontentloaded'});
@@ -649,7 +651,7 @@ await record('shelf_empty_and_reonboard_entry',async()=>{
   for(const name of ['测试甲','测试乙']){
    page.once('dialog',d=>d.accept());
    const card=page.locator('.pet-card').filter({hasText:name});
-   await card.getByTitle('删除宠物').click();
+   await deleteCard(card);
    await card.waitFor({state:'detached'});
   }
   const emptyText=await page.locator('.shelf-empty').innerText();
@@ -771,7 +773,7 @@ await record('delete_active_pet_while_hidden_keeps_hidden',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   page.once('dialog',d=>d.accept());
-  await page.locator('.pet-card').filter({hasText:'测试甲'}).getByTitle('删除宠物').click();
+  await deleteCard(page.locator('.pet-card').filter({hasText:'测试甲'}));
   await page.waitForFunction(()=>window.__review.native.petId==='B');
   const state=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible,petId:window.__review.native.petId}));
   return {passed:state.mode==='hidden'&&state.visible===false&&state.petId==='B'&&errors.length===0,state,errors};
@@ -786,7 +788,7 @@ await record('delete_active_pet_while_snoozed_keeps_expiry',async()=>{
   const before=await page.evaluate(()=>({until:window.__review.native.snoozeUntilMs}));
   await page.getByRole('button',{name:/我的伙伴/}).click();
   page.once('dialog',d=>d.accept());
-  await page.locator('.pet-card').filter({hasText:'测试甲'}).getByTitle('删除宠物').click();
+  await deleteCard(page.locator('.pet-card').filter({hasText:'测试甲'}));
   await page.waitForFunction(()=>window.__review.native.petId==='B');
   const state=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,visible:window.__review.native.visible,petId:window.__review.native.petId}));
   return {passed:state.mode==='snoozed'&&state.until===before.until&&state.visible===false&&state.petId==='B'&&errors.length===0,before,state,errors};
@@ -871,7 +873,7 @@ await record('stale_window_after_first_finishes_joins_result',async()=>{
   const finishDebug=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
   if(finishDebug.dialog)return {passed:false,reason:'finish did not close',finishDebug};
   await page.locator('.onboarding-dialog').waitFor({state:'detached'});
-  await second.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await joinOrAdopt(second);
   await second.waitForTimeout(500);
   const secondDebug=await second.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,pets:await s.loadAllPets(),dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
   if(secondDebug.dialog)return {passed:false,reason:'second did not close',finishDebug,secondDebug};
@@ -1000,7 +1002,7 @@ await record('follow_window_leaves_waiting_when_native_confirms',async()=>{
   await page.evaluate(()=>{window.__review.failPreference=true;});
   await page.getByRole('button',{name:'领养并入住',exact:true}).click();
   await page.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
-  await second.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await joinOrAdopt(second);
   await second.getByRole('heading',{name:'资料已保存，等待显示',exact:true}).waitFor();
   const waiting=await second.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
   await page.evaluate(()=>{window.__review.failPreference=false;});
@@ -1053,7 +1055,7 @@ await record('shelf_deploy_show_failure_does_not_report_success',async()=>{
   await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
   const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,native:{petId:window.__review.native.petId,mode:window.__review.native.visibilityMode,visible:window.__review.native.visible},toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   await page.evaluate(()=>{window.__review.failPreference=false;});
-  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).click();
   await page.waitForFunction(()=>window.__review.native.visible===true);
   const retried=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
   return {passed:failed.active==='B'&&failed.native.petId==='B'&&failed.native.mode==='hidden'&&failed.native.visible===false&&!failed.toasts.some(text=>text?.includes('派往桌面'))&&failed.toasts.some(text=>text?.includes('暂时没能显示'))&&retried.mode==='shown'&&retried.visible===true&&errors.length===0,failed,retried,errors};
@@ -1126,7 +1128,7 @@ await record('display_retry_invalidated_by_newer_selection',async()=>{
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
-  await page.getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).waitFor();
   await page.evaluate(()=>{window.__review.failPreference=false;});
   const second=await context.newPage();
   await second.goto(base,{waitUntil:'domcontentloaded'});
@@ -1150,9 +1152,9 @@ await record('display_retry_rejected_by_native_target',async()=>{
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
-  await page.getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).waitFor();
   await page.evaluate(()=>{window.__review.failPreference=false;window.__review.native.petId='intruder';});
-  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).click();
   await page.waitForTimeout(400);
   const state=await page.evaluate(()=>({shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,displayRecovery:document.querySelector('.recovery-notice')?.textContent?.includes('还没有显示到桌面')??false,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
   return {passed:state.shows===2&&state.visible===false&&!state.displayRecovery&&state.toasts.some(text=>text?.includes('已失效'))&&errors.length===0,state,errors};
@@ -1165,7 +1167,7 @@ await record('display_retry_is_not_replayed_after_reload',async()=>{
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
-  await page.getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).waitFor();
   await page.reload({waitUntil:'domcontentloaded'});
   await page.locator('.companion-pet-button').waitFor();
   await page.waitForTimeout(500);
@@ -1253,6 +1255,110 @@ await record('compact_recovery_not_covered_by_sticky_bar',async()=>{
   await page.locator('.recovery-notice').waitFor();
   const state=await page.evaluate(()=>{const rect=(el)=>{const r=el.getBoundingClientRect();return {top:r.top,bottom:r.bottom};};return {recovery:rect(document.querySelector('.recovery-notice')),bar:rect(document.querySelector('.companion-core-controls')),scrollTop:document.querySelector('.app-content')?.scrollTop??0};});
   return {passed:state.recovery.top>=0&&state.recovery.bottom<=state.bar.top+1&&state.bar.bottom<=620.5&&state.scrollTop===0&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('shelf_current_card_actions_follow_state',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const read=()=>card.evaluate(el=>({status:el.querySelector('.pet-card-status')?.textContent?.trim()??null,primary:el.querySelector('.pet-card-action-row .btn-primary')?.textContent?.trim()??null,secondary:el.querySelector('.pet-card-action-row .btn-secondary')?.textContent?.trim()??null,buttons:[...el.querySelectorAll('.pet-card-action-row button')].map(button=>button.textContent?.trim())}));
+  const shown=await read();
+  await page.getByRole('button',{name:'回到陪伴',exact:true}).click();
+  const onStage=await page.locator('.companion-page').isVisible();
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const hidden=await read();
+  await page.getByRole('button',{name:'唤回伙伴',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='shown');
+  const recalled=await read();
+  await page.getByRole('button',{name:'回到陪伴',exact:true}).click();
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'休息一小时',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const snoozed=await read();
+  await page.screenshot({path:join(evidenceDir,'c02-shelf-actions.png')});
+  const untilBefore=await page.evaluate(()=>window.__review.native.snoozeUntilMs);
+  await card.getByRole('button',{name:'调整休息',exact:true}).click();
+  await page.waitForTimeout(300);
+  const adjusted=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
+  const noDuplicate=snoozed.buttons.filter(text=>text?.includes('唤回')).length===1&&!snoozed.buttons.includes('立即唤回');
+  return {passed:shown.status?.includes('显示中')&&shown.primary==='回到陪伴'&&onStage&&hidden.status?.includes('已收起')&&hidden.primary==='唤回伙伴'&&recalled.status?.includes('显示中')&&snoozed.status?.includes('休息中')&&snoozed.primary==='提前唤回'&&snoozed.secondary==='调整休息'&&noDuplicate&&adjusted.mode==='snoozed'&&adjusted.until>untilBefore&&adjusted.toasts.some(text=>text?.includes('重新计时'))&&errors.length===0,shown,hidden,recalled,snoozed,noDuplicate,untilBefore,adjusted,errors};
+ }finally{await context.close();}
+});
+await record('shelf_current_card_recall_and_retry_stay_on_shelf',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  await card.getByRole('button',{name:'唤回伙伴',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.pet-card.active-pet .pet-card-status')?.textContent?.includes('等待显示'));
+  const failed=await page.evaluate(()=>({shelf:Boolean(document.querySelector('.shelf-grid')),nav:document.querySelector('.nav-item.active')?.textContent,visible:window.__review.native.visible,status:document.querySelector('.pet-card.active-pet .pet-card-status')?.textContent?.trim(),primary:document.querySelector('.pet-card.active-pet .pet-card-action-row .btn-primary')?.textContent?.trim(),recovery:Boolean(document.querySelector('.recovery-notice'))}));
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await card.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visible===true);
+  const retried=await page.evaluate(()=>({shelf:Boolean(document.querySelector('.shelf-grid')),status:document.querySelector('.pet-card.active-pet .pet-card-status')?.textContent?.trim(),primary:document.querySelector('.pet-card.active-pet .pet-card-action-row .btn-primary')?.textContent?.trim()}));
+  return {passed:failed.shelf&&failed.nav?.includes('我的伙伴')&&failed.visible===false&&failed.status?.includes('等待显示')&&failed.primary==='重试显示'&&failed.recovery&&retried.shelf&&retried.status?.includes('显示中')&&retried.primary==='回到陪伴'&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('shelf_native_mismatch_does_not_borrow_other_pet_status',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.evaluate(()=>{Object.assign(window.__review.native,{petId:'B',petName:'测试乙',availability:'ready',visibilityMode:'shown',visible:true});window.__review.emitNative();});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const cardA=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const cardB=page.locator('.pet-card').filter({hasText:'测试乙'});
+  const read=(card)=>card.evaluate(el=>({status:el.querySelector('.pet-card-status')?.textContent?.trim()??null,primary:el.querySelector('.pet-card-action-row .btn-primary')?.textContent?.trim()??null}));
+  const mismatchA=await read(cardA);
+  const mismatchB=await read(cardB);
+  await cardA.getByRole('button',{name:'恢复伙伴',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.petId==='A'&&window.__review.native.visible===true);
+  const recovered=await read(cardA);
+  return {passed:mismatchA.status?.includes('需要恢复')&&mismatchA.primary==='恢复伙伴'&&mismatchB.status===null&&mismatchB.primary==='派去桌面'&&recovered.status?.includes('显示中')&&recovered.primary==='回到陪伴'&&errors.length===0,mismatchA,mismatchB,recovered,errors};
+ }finally{await context.close();}
+});
+await record('shelf_asset_recovery_preserves_hidden_intent',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,missing:true,nativeMode:'hidden'});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.recovery-notice').waitFor();
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const read=()=>card.evaluate(el=>({status:el.querySelector('.pet-card-status')?.textContent?.trim()??null,primary:el.querySelector('.pet-card-action-row .btn-primary')?.textContent?.trim()??null}));
+  const before=await read();
+  await page.evaluate(()=>{window.__review.missing=false;});
+  await card.getByRole('button',{name:'恢复素材',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.availability==='ready');
+  const after=await read();
+  const native=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
+  return {passed:before.status?.includes('素材需要恢复')&&before.primary==='恢复素材'&&native.mode==='hidden'&&native.visible===false&&after.status?.includes('已收起')&&after.primary==='唤回伙伴'&&errors.length===0,before,after,native,errors};
+ }finally{await context.close();}
+});
+await record('shelf_position_recovery_does_not_wake_hidden_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  await card.locator('.pet-card-more > summary').click();
+  const offered=await card.getByRole('button',{name:'找回位置',exact:true}).isVisible();
+  await card.getByRole('button',{name:'找回位置',exact:true}).click();
+  await page.waitForTimeout(300);
+  const after=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible,resetCalls:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='resetPosition').length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
+  await page.evaluate(()=>{window.__review.native.capabilities.resetPosition=false;window.__review.emitNative();});
+  await page.waitForTimeout(150);
+  await card.locator('.pet-card-more > summary').click();
+  const hiddenWhenUnsupported=await card.getByRole('button',{name:'找回位置',exact:true}).count()===0;
+  return {passed:offered&&after.mode==='hidden'&&after.visible===false&&after.resetCalls===1&&after.toasts.some(text=>text?.includes('显示或休息状态没有改变'))&&hiddenWhenUnsupported&&errors.length===0,offered,after,hiddenWhenUnsupported,errors};
  }finally{await context.close();}
 });
 }finally{

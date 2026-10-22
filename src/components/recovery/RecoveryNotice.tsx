@@ -43,7 +43,12 @@ export const RecoveryNotice: React.FC<RecoveryNoticeProps> = ({
   }
 
   return (
-    <section className="recovery-notice" role="alert" aria-labelledby="recovery-title">
+    <section
+      className="recovery-notice"
+      role="alert"
+      aria-labelledby="recovery-title"
+      tabIndex={-1}
+    >
       <div className="recovery-head">
         <div>
           <strong id="recovery-title">{title}</strong>
