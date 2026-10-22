@@ -16,8 +16,8 @@
         "title": "桌面贴贴宠物",
         "width": 1120,
         "height": 760,
-        "minWidth": 920,
-        "minHeight": 640,
+        "minWidth": 840,
+        "minHeight": 620,
         "resizable": true,
         "center": true
       }

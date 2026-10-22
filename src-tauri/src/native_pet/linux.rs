@@ -12,11 +12,18 @@ use tauri::AppHandle;
 
 use super::{
     persist_runtime_settings, runtime, runtime_action_scale, runtime_root, scaled_canvas_size,
-    set_action, take_reload_request, ACTIONS, CANVAS_SIZE, PET_SIZE,
+    take_reload_request, update_position, PetPosition, ACTIONS, CANVAS_SIZE, PET_SIZE,
 };
 
 thread_local! {
     static NATIVE_WINDOW: RefCell<Option<gtk::Window>> = const { RefCell::new(None) };
+    static DRAG_STATE: RefCell<Option<DragState>> = const { RefCell::new(None) };
+}
+
+struct DragState {
+    start_window: (i32, i32),
+    start_root: (f64, f64),
+    moved: bool,
 }
 
 pub fn spawn_window(app_handle: AppHandle) {
@@ -43,7 +50,11 @@ pub fn spawn_window(app_handle: AppHandle) {
     let drawing_area = gtk::DrawingArea::new();
     drawing_area.set_size_request(CANVAS_SIZE as i32, CANVAS_SIZE as i32);
     drawing_area.set_app_paintable(true);
-    drawing_area.add_events(gdk::EventMask::BUTTON_PRESS_MASK);
+    drawing_area.add_events(
+        gdk::EventMask::BUTTON_PRESS_MASK
+            | gdk::EventMask::BUTTON_RELEASE_MASK
+            | gdk::EventMask::POINTER_MOTION_MASK,
+    );
     window.add(&drawing_area);
 
     let frames = Rc::new(RefCell::new(if super::visible() {
@@ -126,13 +137,20 @@ fn setup_mouse_handler(
     drawing_area: &gtk::DrawingArea,
     app_handle: AppHandle,
 ) {
-    let window = window.clone();
     let menu = build_action_menu(drawing_area, app_handle);
 
+    let press_window = window.clone();
     drawing_area.connect_button_press_event(move |_, event| match event.button() {
         1 => {
-            let (root_x, root_y) = event.root();
-            window.begin_move_drag(1, root_x as i32, root_y as i32, event.time());
+            let (x, y) = press_window.position();
+            let start_root = event.root_coords().unwrap_or_else(|| event.position());
+            DRAG_STATE.with(|state| {
+                *state.borrow_mut() = Some(DragState {
+                    start_window: (x, y),
+                    start_root,
+                    moved: false,
+                });
+            });
             Propagation::Stop
         }
         3 => {
@@ -140,6 +158,59 @@ fn setup_mouse_handler(
             Propagation::Stop
         }
         _ => Propagation::Proceed,
+    });
+
+    let motion_window = window.clone();
+    drawing_area.connect_motion_notify_event(move |_, event| {
+        DRAG_STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(drag) = state.as_mut() else {
+                return;
+            };
+            let Some(current) = event.root_coords() else {
+                return;
+            };
+            let dx = current.0 - drag.start_root.0;
+            let dy = current.1 - drag.start_root.1;
+            if !drag.moved && (dx.abs() > 3.0 || dy.abs() > 3.0) {
+                drag.moved = true;
+            }
+            if drag.moved {
+                motion_window.move_(
+                    drag.start_window.0 + dx.round() as i32,
+                    drag.start_window.1 + dy.round() as i32,
+                );
+            }
+        });
+        Propagation::Stop
+    });
+
+    let release_window = window.clone();
+    drawing_area.connect_button_release_event(move |_, event| {
+        if event.button() != 1 {
+            return Propagation::Proceed;
+        }
+        let moved = DRAG_STATE.with(|state| {
+            state
+                .borrow_mut()
+                .take()
+                .map(|drag| drag.moved)
+                .unwrap_or(false)
+        });
+        if moved {
+            let (x, y) = release_window.position();
+            update_position(PetPosition {
+                x: x as f64,
+                y: y as f64,
+                screen: None,
+            });
+            if let Err(err) = persist_runtime_settings() {
+                eprintln!("failed to persist native pet position: {err}");
+            }
+        } else {
+            let _ = super::interact(super::InteractionKind::Pet, super::current_pet_id());
+        }
+        Propagation::Stop
     });
 }
 
@@ -150,13 +221,9 @@ fn build_action_menu(drawing_area: &gtk::DrawingArea, _app_handle: AppHandle) ->
         let item = gtk::MenuItem::with_label(label);
         let drawing_area = drawing_area.clone();
         item.connect_activate(move |_| {
-            if let Err(err) = set_action(action) {
+            if let Err(err) = super::apply_action(action) {
                 eprintln!("failed to set native pet action: {err}");
             }
-            if let Err(err) = persist_runtime_settings() {
-                eprintln!("failed to persist native pet settings: {err}");
-            }
-            super::emit_action_changed();
             drawing_area.queue_draw();
         });
         menu.append(&item);
@@ -181,8 +248,10 @@ fn setup_animation_timer(
     let mut applied_visible = super::visible();
 
     glib::timeout_add_local(Duration::from_millis(16), move || {
+        let _ = super::check_snooze_expiry(super::state::now_ms());
+        let _ = super::refresh_system_reduced_motion();
         if super::maybe_auto_advance(Instant::now()).is_some() {
-            super::emit_action_changed();
+            super::emit_state_changed();
         }
 
         let (next_action, next_scale, revision) = runtime_action_scale();
@@ -235,7 +304,7 @@ fn setup_animation_timer(
             reloaded || scale_changed || action_changed || previous_frame != state.frame_index;
         drop(state);
         if finished && super::return_to_idle().is_ok() {
-            super::emit_action_changed();
+            super::emit_state_changed();
         }
 
         if redraw {
@@ -311,4 +380,10 @@ fn paint_pixbuf_centered(context: &cairo::Context, pixbuf: &Pixbuf, scale: f64) 
     context.set_source_pixbuf(pixbuf, 0.0, 0.0);
     let _ = context.paint();
     let _ = context.restore();
+}
+
+/// Reads GTK's animation preference (GNOME exposes "Reduce motion" through it).
+pub fn system_reduced_motion() -> Option<bool> {
+    let settings = gtk::Settings::default()?;
+    Some(!settings.is_gtk_enable_animations())
 }

@@ -21,6 +21,9 @@ interface LiveStageProps {
   isMacOS: boolean;
   autonomous: boolean;
   onToggleAutonomous: (value: boolean) => void;
+  desktopPaused: boolean;
+  onToggleDesktopPaused: () => void;
+  autonomousBusy?: boolean;
   onRenamePet?: (id: string, newName: string) => void;
   onGoToWorkshop: () => void;
 }
@@ -35,6 +38,9 @@ export const LiveStage: React.FC<LiveStageProps> = ({
   isMacOS,
   autonomous,
   onToggleAutonomous,
+  desktopPaused,
+  onToggleDesktopPaused,
+  autonomousBusy = false,
   onRenamePet,
   onGoToWorkshop
 }) => {
@@ -264,20 +270,34 @@ export const LiveStage: React.FC<LiveStageProps> = ({
               </div>
             </div>
 
-            {!isTauri && (
+            {isTauri && (
               <div className="control-row" style={{ paddingTop: "6px" }}>
-                <span>自主活动</span>
+                <span>桌宠动画</span>
                 <button
                   type="button"
-                  className={`action-sub-btn ${autonomous ? "is-on" : ""}`}
-                  onClick={() => onToggleAutonomous(!autonomous)}
-                  aria-pressed={autonomous}
-                  title="开启后它会自己溜达、坐下、打盹，和桌面端一致"
+                  className={`action-sub-btn ${desktopPaused ? "" : "is-on"}`}
+                  onClick={onToggleDesktopPaused}
+                  aria-pressed={!desktopPaused}
+                  title={desktopPaused ? "恢复真实桌宠动画" : "暂停真实桌宠动画，伙伴仍留在桌面"}
                 >
-                  {autonomous ? "🧭 自己溜达" : "🧍 原地待命"}
+                  {desktopPaused ? "▶ 恢复动画" : "⏸ 暂停动画"}
                 </button>
               </div>
             )}
+
+            <div className="control-row" style={{ paddingTop: "6px" }}>
+              <span>自主活动</span>
+              <button
+                type="button"
+                className={`action-sub-btn ${autonomous ? "is-on" : ""}`}
+                onClick={() => onToggleAutonomous(!autonomous)}
+                aria-pressed={autonomous}
+                disabled={autonomousBusy}
+                title="开启后它会自动变换姿态，不移动桌面位置"
+              >
+                {autonomous ? "🧭 自动变换姿态" : "🧍 固定姿态"}
+              </button>
+            </div>
 
             {isTauri && isMacOS && onResetPosition && (
               <div className="control-row" style={{ paddingTop: "6px" }}>

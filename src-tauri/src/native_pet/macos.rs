@@ -11,7 +11,7 @@ use objc2::runtime::{AnyObject, Bool, ProtocolObject};
 use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventType, NSMenu, NSMenuItem, NSPanel,
-    NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_core_foundation::{
     kCFBooleanTrue, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFBoolean,
@@ -30,7 +30,7 @@ use tauri::AppHandle;
 
 use super::{
     current_settings, emit_error, mark_position_dirty, normalize_scale, persist_runtime_settings,
-    runtime_action_scale, runtime_root, scaled_canvas_size, scan_action_frames, set_action,
+    runtime_action_scale, runtime_root, scaled_canvas_size, scan_action_frames,
     take_position_dirty_request, take_position_reset_request, take_reload_request, update_position,
     PetPosition, ACTIONS, CANVAS_SIZE, MIN_FRAMES_PER_ACTION, PET_SIZE,
 };
@@ -215,7 +215,7 @@ define_class!(
             if dragging {
                 mark_position_dirty();
             } else {
-                handle_menu_action("happy");
+                let _ = super::interact(super::InteractionKind::Pet, super::current_pet_id());
             }
         }
     }
@@ -617,8 +617,10 @@ fn point_is_opaque(ui: &UiState, mouse: NSPoint, window_frame: NSRect) -> bool {
 }
 
 fn tick() {
+    let _ = super::check_snooze_expiry(super::state::now_ms());
+    let _ = super::refresh_system_reduced_motion();
     if super::maybe_auto_advance(Instant::now()).is_some() {
-        super::emit_action_changed();
+        super::emit_state_changed();
     }
     let (action, scale, revision) = runtime_action_scale();
     let reload_root = if super::visible() {
@@ -727,7 +729,7 @@ fn tick() {
 
     if finished.is_some() {
         if super::return_to_idle().is_ok() {
-            super::emit_action_changed();
+            super::emit_state_changed();
         }
     }
 }
@@ -874,12 +876,9 @@ fn apply_scale(ui: &mut UiState, scale: f64) {
 }
 
 fn handle_menu_action(action: &str) {
-    if let Err(err) = set_action(action) {
+    if let Err(err) = super::apply_action(action) {
         eprintln!("failed to set native pet action: {err}");
         return;
-    }
-    if let Err(err) = persist_runtime_settings() {
-        eprintln!("failed to persist native pet settings: {err}");
     }
     UI.with(|slot| {
         if let Ok(slot) = slot.try_borrow() {
@@ -888,8 +887,12 @@ fn handle_menu_action(action: &str) {
             }
         }
     });
-    super::emit_action_changed();
     tick();
+}
+
+/// Reads the macOS "Reduce motion" accessibility preference.
+pub fn system_reduced_motion() -> Option<bool> {
+    Some(NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion())
 }
 
 fn save_position(panel: &NSPanel) {

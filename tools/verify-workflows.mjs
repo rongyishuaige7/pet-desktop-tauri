@@ -17,6 +17,9 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
   if(!desktop)return;
   const callbacks=new Map(); const listeners=new Map(); let seq=1;
   const state=window.__review={calls:[],root:'/review/A',action:settingsAction,visible:true,delayB:0,emitOnSet:false,generations:0,saves:0};
+  state.native={sessionId:'mock-session',revision:1,petId:null,petName:null,availability:'absent',visibilityMode:'shown',snoozeUntilMs:null,visible:false,action:settingsAction,actionRevision:1,animationPaused:false,autonomous:true,motionPreference:'system',systemReducedMotion:false,effectivePaused:false,effectiveAutonomous:false,scale:1,clickThrough:true,pending:false,autostart:{enabled:false,pending:false},lastOperationError:null,capabilities:{nativeWindow:true,tapFeedback:true,clickThrough:true,resetPosition:true,autostart:true,systemReducedMotion:true}};
+  state.refreshNative=()=>{const n=state.native;n.effectivePaused=n.animationPaused||n.motionPreference==='reduce'||(n.motionPreference==='system'&&n.systemReducedMotion);n.visible=Boolean(n.petId)&&n.visibilityMode==='shown'&&n.availability==='ready';n.effectiveAutonomous=n.autonomous&&!n.effectivePaused&&n.visible&&n.availability==='ready';return n;};
+  state.emitNative=async()=>{const n=state.refreshNative();await Promise.all([...listeners.entries()].filter(([,v])=>v.event==='native-pet-state-changed').map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload:n})));return n;};
   state.makeImage=(sheet=false)=>{
    const canvas=document.createElement('canvas');canvas.width=sheet?900:300;canvas.height=sheet?600:300;
    const ctx=canvas.getContext('2d');ctx.fillStyle='#00ff00';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#71402a';
@@ -33,7 +36,8 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,action:args.action});
     if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);return id;}
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
-    if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction};
+    if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
+    if(cmd==='get_native_pet_state')return state.native;
     if(cmd==='load_preset_frame_pack'){
      const root=args.request.rootDir;
      if(root==='/review/generated'&&state.savedActions)return {sourceImage:state.savedActions.idle[0],actions:state.savedActions};
@@ -46,12 +50,38 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      if(args.rootDir==='/review/generated'&&state.delayGeneratedCommit){state.committing=true;await new Promise(r=>setTimeout(r,state.delayGeneratedCommit));}
      if (state.failB && args.rootDir==='/review/B') throw new Error('audit: invalid pack');
      state.root=args.rootDir;state.visible=true;
-     if(state.emitOnSet)setTimeout(()=>{state.action='walk';void state.emit('walk');},30);
-     return;
+     Object.assign(state.native,{petId:args.petId??null,petName:args.petName??null,availability:'ready',visibilityMode:'shown',snoozeUntilMs:null});
+     state.native.actionRevision++;
+     state.emitNative();
+     if(state.emitOnSet)setTimeout(()=>{state.action='walk';state.native.action='walk';state.native.actionRevision++;void state.emitNative();},30);
+     return state.native;
     }
-    if(cmd==='set_native_pet_action'){state.action=args.action;return;}
-    if(cmd==='set_native_pet_visible'){state.visible=args.visible;return;}
-    if(cmd==='set_native_pet_scale'||cmd==='reset_native_pet_position')return;
+    if(cmd==='detach_native_pet'){Object.assign(state.native,{petId:null,petName:null,availability:'absent',visible:false});state.visible=false;state.emitNative();return;}
+    if(cmd==='set_native_pet_name'){state.native.petName=args.name;state.emitNative();return;}
+    if(cmd==='set_native_pet_action'){state.action=args.action;state.native.action=args.action;state.native.actionRevision++;state.emitNative();return {action:args.action,petId:state.native.petId,revision:state.native.actionRevision};}
+    if(cmd==='set_native_pet_visible'){state.native.visibilityMode=args.visible?'shown':'hidden';state.visible=args.visible;state.emitNative();return state.native;}
+    if(cmd==='set_native_pet_scale'){state.native.scale=args.scale;return state.native;}
+    if(cmd==='reset_native_pet_position')return;
+    if(cmd==='update_native_pet_preferences'){
+     const r=args.request;const n=state.native;
+     if(r.kind==='show'){n.visibilityMode='shown';n.snoozeUntilMs=null;n.actionRevision++;}
+     if(r.kind==='hide'){n.visibilityMode='hidden';n.snoozeUntilMs=null;}
+     if(r.kind==='snooze'){n.visibilityMode='snoozed';n.snoozeUntilMs=Date.now()+3600000;}
+     if(r.kind==='setAnimationPaused')n.animationPaused=r.value;
+     if(r.kind==='setAutonomous')n.autonomous=r.value;
+     if(r.kind==='setScale')n.scale=r.value;
+     if(r.kind==='setClickThrough')n.clickThrough=r.value;
+     if(r.kind==='setMotionPreference')n.motionPreference=r.value;
+     if(r.kind==='setAutostart')n.autostart={...n.autostart,enabled:r.value};
+     await state.emitNative();
+     return state.native;
+    }
+    if(cmd==='interact_native_pet'){
+     const n=state.native;const reason=!n.petId||(args.petId&&args.petId!==n.petId)?'stalePet':!n.visible?'hidden':n.availability!=='ready'?'notReady':n.animationPaused?'paused':null;
+     if(reason)return {accepted:false,reason,state:n};
+     n.action=args.kind==='pet'?'happy':'jump';state.action=n.action;n.actionRevision++;await state.emitNative();
+     return {accepted:true,state:n};
+    }
     if(cmd==='upload_reference_image')return 'https://example.test/mock-reference.png';
     if(cmd==='generate_minimax_image'){
      state.generations++;
@@ -93,7 +123,7 @@ async function record(name,fn){
  catch(e){const result={name,harnessError:e.message};results.push(result);console.log(JSON.stringify(result));}
 }
 async function openAI(page){
- await page.getByRole('button',{name:/宠物工坊/}).click();
+ await page.getByRole('button',{name:/领养与制作/}).click();
  await page.getByRole('button',{name:/AI 照片转宠物/}).click();
  await page.locator('input[type=password]').fill('mock-key');
  await page.getByPlaceholder('https://your-domain.example/upload').fill('https://example.test/upload');
@@ -105,7 +135,7 @@ try{
  await record('manual_upload_errors_and_recovery',async()=>{
   const {context,page,errors}=await newCase();
   try{
-   await page.getByRole('button',{name:/宠物工坊/}).click();
+   await page.getByRole('button',{name:/领养与制作/}).click();
    await page.getByRole('button',{name:/动作帧装配台/}).click();
    const input=page.locator('input[type=file]');
    await input.setInputFiles({name:'wrong.pdf',mimeType:'application/pdf',buffer:Buffer.from('not a picture')});
@@ -182,11 +212,11 @@ try{
   const {context,page,errors}=await newCase();
   try{
    await seed(page,{active:'B'});
-   await page.getByRole('button',{name:/我的宠物架/}).click();
+   await page.getByRole('button',{name:/我的伙伴/}).click();
    page.once('dialog',d=>d.accept());
    await page.locator('.pet-card').filter({hasText:'测试甲'}).getByTitle('删除宠物').click();
    await page.locator('.pet-card').filter({hasText:'测试甲'}).waitFor({state:'detached'});
-   await page.getByRole('button',{name:/互动伴侣台/}).click();
+   await page.getByRole('button',{name:/陪伴/}).click();
    const stored=await page.evaluate(async()=>{const m=await import('/src/storage.ts');return (await m.loadPet())?.id;});
    const empty=await page.locator('.stage-empty-state').isVisible();
    await page.screenshot({path:join(evidenceDir,'delete-nonactive-fixed.png')});
@@ -219,7 +249,7 @@ try{
   try{
    await seed(page,{desktop:true,active:'A'});
    await page.evaluate(()=>{window.__review.delayB=500;window.__review.emitOnSet=true;});
-   await page.getByRole('button',{name:/我的宠物架/}).click();
+   await page.getByRole('button',{name:/我的伙伴/}).click();
    await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
    await sleep(800);
    const stored=await page.evaluate(async()=>{const m=await import('/src/storage.ts');return (await m.loadPet())?.id;});
@@ -266,7 +296,7 @@ try{
   const {context,page}=await newCase({desktop:true});
   try{
    await seed(page,{desktop:true});await page.evaluate(()=>window.__review.failB=true);
-   await page.getByRole('button',{name:/我的宠物架/}).click();
+   await page.getByRole('button',{name:/我的伙伴/}).click();
    await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
    await page.locator('.toast-message.error').waitFor();
    const state=await page.evaluate(async()=>({stored:(await (await import('/src/storage.ts')).loadPet())?.id,root:window.__review.root}));
@@ -278,11 +308,11 @@ try{
   const {context,page}=await newCase({desktop:true});
   try{
    await seed(page,{desktop:true});
-   await page.getByRole('button',{name:/我的宠物架/}).click();
+   await page.getByRole('button',{name:/我的伙伴/}).click();
    await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
    await page.waitForFunction(()=>document.querySelector('.widget-name')?.textContent==='测试乙');
    await page.evaluate(()=>window.__review.emit({action:'sleep',petId:'A',revision:100}));
-   await page.getByRole('button',{name:/互动伴侣台/}).click();
+   await page.getByRole('button',{name:/陪伴/}).click();
    const action=await page.locator('.action-pill-btn.active').innerText();
    return {passed:action.includes('待机'),action};
   }finally{await context.close();}
@@ -290,7 +320,7 @@ try{
  await record('last_desktop_pet_is_hidden',async()=>{
   const {context,page}=await newCase({desktop:true});
   try{
-   await seed(page,{desktop:true});await page.getByRole('button',{name:/我的宠物架/}).click();
+   await seed(page,{desktop:true});await page.getByRole('button',{name:/我的伙伴/}).click();
    for (const name of ['测试甲','测试乙']) {
     page.once('dialog',d=>d.accept());const card=page.locator('.pet-card').filter({hasText:name});
     await card.getByTitle('删除宠物').click();await card.waitFor({state:'detached'});
@@ -302,7 +332,7 @@ try{
  await record('empty_collection_stays_empty_after_reload',async()=>{
   const {context,page}=await newCase();
   try{
-   await seed(page);await page.getByRole('button',{name:/我的宠物架/}).click();
+   await seed(page);await page.getByRole('button',{name:/我的伙伴/}).click();
    for (const name of ['测试甲','测试乙']) {
     page.once('dialog',d=>d.accept());
     const card=page.locator('.pet-card').filter({hasText:name});

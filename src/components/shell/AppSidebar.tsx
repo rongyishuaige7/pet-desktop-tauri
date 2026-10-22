@@ -6,13 +6,17 @@ interface AppSidebarProps {
   onSelectTab: (tab: StudioTab) => void;
   activePet: PetProfile | null;
   petCount: number;
+  status: string;
+  webMode: boolean;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
   currentTab,
   onSelectTab,
   activePet,
-  petCount
+  petCount,
+  status,
+  webMode
 }) => {
   return (
     <aside className="app-sidebar">
@@ -31,7 +35,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           onClick={() => onSelectTab("stage")}
         >
           <span className="nav-icon">✨</span>
-          <span>互动伴侣台</span>
+          <span>陪伴</span>
         </button>
 
         <button
@@ -40,7 +44,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           onClick={() => onSelectTab("workshop")}
         >
           <span className="nav-icon">🎨</span>
-          <span>宠物工坊</span>
+          <span>领养与制作</span>
         </button>
 
         <button
@@ -49,7 +53,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           onClick={() => onSelectTab("shelf")}
         >
           <span className="nav-icon">🗃️</span>
-          <span>我的宠物架 ({petCount})</span>
+          <span>我的伙伴 ({petCount})</span>
         </button>
       </nav>
 
@@ -72,7 +76,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </div>
             <div className="widget-details">
               <span className="widget-name">{activePet.name}</span>
-              <span className="widget-status">桌面伴侣在线</span>
+              <span className="widget-status">{webMode ? `网页演示 · ${status}` : status}</span>
             </div>
           </div>
         ) : (
@@ -81,7 +85,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             <div className="widget-details">
               <span className="widget-name">等待入住</span>
               <span className="widget-status" style={{ color: "var(--text-tertiary)" }}>
-                暂无宠物
+                {webMode ? "网页演示" : status}
               </span>
             </div>
           </div>

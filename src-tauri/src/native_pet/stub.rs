@@ -5,3 +5,7 @@ pub fn spawn_window(_app: AppHandle) {
 }
 
 pub fn shutdown() {}
+
+pub fn system_reduced_motion() -> Option<bool> {
+    None
+}

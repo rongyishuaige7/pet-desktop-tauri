@@ -4,8 +4,9 @@ use ai_transport::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{
-    menu::{CheckMenuItem, MenuBuilder, MenuItem},
+    menu::{CheckMenuItem, MenuBuilder, MenuItem, SubmenuBuilder},
     tray::TrayIconBuilder,
     Manager, WindowEvent,
 };
@@ -20,32 +21,65 @@ fn ping() -> &'static str {
 }
 
 #[tauri::command]
+fn get_native_pet_state() -> native_pet::NativePetState {
+    native_pet::state_snapshot()
+}
+
+#[tauri::command]
+fn update_native_pet_preferences(
+    request: native_pet::PreferencesRequest,
+) -> Result<native_pet::NativePetState, String> {
+    native_pet::update_preferences(request)
+}
+
+#[tauri::command]
+fn interact_native_pet(
+    kind: native_pet::InteractionKind,
+    pet_id: Option<String>,
+) -> native_pet::InteractionResult {
+    native_pet::interact(kind, pet_id)
+}
+
+#[tauri::command]
 fn set_native_pet_action(action: String) -> Result<native_pet::NativeActionEvent, String> {
-    native_pet::set_action(&action)?;
-    native_pet::persist_runtime_settings()?;
+    native_pet::apply_action(&action)?;
     native_pet::action_event()
 }
 
 #[tauri::command]
-async fn set_native_pet_frame_root(root_dir: String, pet_id: Option<String>) -> Result<(), String> {
+async fn set_native_pet_frame_root(
+    root_dir: String,
+    pet_id: Option<String>,
+    pet_name: Option<String>,
+) -> Result<native_pet::NativePetState, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        native_pet::set_frame_root(&root_dir, pet_id)?;
-        native_pet::persist_runtime_settings()
+        native_pet::set_frame_root(&root_dir, pet_id, pet_name)
     })
     .await
-    .map_err(|err| format!("加载帧包任务失败：{err}"))?
+    .map_err(|err| format!("加载帧包任务失败：{err}"))??;
+    Ok(native_pet::state_snapshot())
 }
 
 #[tauri::command]
-fn set_native_pet_visible(visible: bool) -> Result<(), String> {
+fn set_native_pet_name(name: String) -> Result<(), String> {
+    native_pet::set_pet_name(&name)
+}
+
+#[tauri::command]
+fn detach_native_pet() -> Result<(), String> {
+    native_pet::detach_native_pet()
+}
+
+#[tauri::command]
+fn set_native_pet_visible(visible: bool) -> Result<native_pet::NativePetState, String> {
     native_pet::set_visible(visible)?;
-    native_pet::persist_runtime_settings()
+    Ok(native_pet::state_snapshot())
 }
 
 #[tauri::command]
-fn set_native_pet_scale(scale: f64) -> Result<(), String> {
+fn set_native_pet_scale(scale: f64) -> Result<native_pet::NativePetState, String> {
     native_pet::set_scale(scale)?;
-    native_pet::persist_runtime_settings()
+    Ok(native_pet::state_snapshot())
 }
 
 #[tauri::command]
@@ -55,8 +89,7 @@ fn get_native_pet_settings() -> native_pet::NativePetSettings {
 
 #[tauri::command]
 fn reset_native_pet_position() -> Result<(), String> {
-    native_pet::reset_position()?;
-    native_pet::persist_runtime_settings()
+    native_pet::update_preferences(native_pet::PreferencesRequest::ResetPosition).map(|_| ())
 }
 
 #[derive(Debug, Deserialize)]
@@ -387,11 +420,12 @@ pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             native_pet::set_bundled_frame_root(app.handle());
-            let settings = native_pet::load_settings(app.handle());
+            let (settings, issue) = native_pet::load_settings_with_issue(app.handle());
             let settings_path = native_pet::settings_file_path(app.handle()).ok();
-            native_pet::configure(&settings, settings_path);
+            native_pet::configure(&settings, settings_path, issue);
             native_pet::spawn_window(app.handle().clone());
             setup_tray(app)?;
+            sync_tray(app.handle());
             show_studio_window(app.handle());
             Ok(())
         })
@@ -405,8 +439,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ping,
+            get_native_pet_state,
+            update_native_pet_preferences,
+            interact_native_pet,
             set_native_pet_action,
             set_native_pet_frame_root,
+            set_native_pet_name,
+            detach_native_pet,
             set_native_pet_scale,
             set_native_pet_visible,
             get_native_pet_settings,
@@ -431,18 +470,28 @@ pub fn run() {
     });
 }
 
+#[derive(Clone)]
+struct TrayHandles {
+    status: MenuItem<tauri::Wry>,
+    visibility: MenuItem<tauri::Wry>,
+    snooze: MenuItem<tauri::Wry>,
+    animation: CheckMenuItem<tauri::Wry>,
+    autonomous: CheckMenuItem<tauri::Wry>,
+    reset: MenuItem<tauri::Wry>,
+    autostart: CheckMenuItem<tauri::Wry>,
+}
+
+static TRAY: Mutex<Option<TrayHandles>> = Mutex::new(None);
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let status_item = MenuItem::with_id(app, "status", "贴贴宠物 · 正在准备", false, None::<&str>)?;
     let show_item = MenuItem::with_id(app, "show_studio", "打开主界面", true, None::<&str>)?;
-    let idle_item = MenuItem::with_id(app, "action_idle", "待机", true, None::<&str>)?;
-    let sit_item = MenuItem::with_id(app, "action_sit", "坐下", true, None::<&str>)?;
-    let sleep_item = MenuItem::with_id(app, "action_sleep", "睡觉", true, None::<&str>)?;
-    let happy_item = MenuItem::with_id(app, "action_happy", "开心", true, None::<&str>)?;
-    let walk_item = MenuItem::with_id(app, "action_walk", "走路", true, None::<&str>)?;
-    let jump_item = MenuItem::with_id(app, "action_jump", "跳跃", true, None::<&str>)?;
+    let visibility_item = MenuItem::with_id(app, "toggle_visibility", "暂时收起", true, None::<&str>)?;
+    let snooze_item = MenuItem::with_id(app, "toggle_snooze", "休息一小时", true, None::<&str>)?;
     let autonomous_item = CheckMenuItem::with_id(
         app,
         "toggle_autonomous",
-        "自主行为",
+        "自主活动",
         true,
         native_pet::autonomous_enabled(),
         None::<&str>,
@@ -452,17 +501,15 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         "toggle_animation",
         "播放动画",
         true,
-        !native_pet::animation_paused(),
+        !native_pet::user_animation_paused(),
         None::<&str>,
     )?;
-    let click_through_item = CheckMenuItem::with_id(
-        app,
-        "toggle_click_through",
-        "透明区域穿透",
-        true,
-        native_pet::click_through_enabled(),
-        None::<&str>,
-    )?;
+    let idle_item = MenuItem::with_id(app, "action_idle", "待机", true, None::<&str>)?;
+    let sit_item = MenuItem::with_id(app, "action_sit", "坐下", true, None::<&str>)?;
+    let sleep_item = MenuItem::with_id(app, "action_sleep", "睡觉", true, None::<&str>)?;
+    let happy_item = MenuItem::with_id(app, "action_happy", "开心", true, None::<&str>)?;
+    let walk_item = MenuItem::with_id(app, "action_walk", "走路", true, None::<&str>)?;
+    let jump_item = MenuItem::with_id(app, "action_jump", "跳跃", true, None::<&str>)?;
     let reset_item = MenuItem::with_id(app, "reset_position", "重置位置", true, None::<&str>)?;
     let autostart_item = CheckMenuItem::with_id(
         app,
@@ -474,74 +521,48 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     )?;
     let quit_item = MenuItem::with_id(app, "quit_app", "退出应用", true, None::<&str>)?;
 
-    let menu = MenuBuilder::new(app)
-        .item(&show_item)
-        .separator()
+    let more_actions = SubmenuBuilder::new(app, "更多动作")
         .item(&idle_item)
         .item(&sit_item)
         .item(&sleep_item)
         .item(&happy_item)
         .item(&walk_item)
         .item(&jump_item)
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&status_item)
         .separator()
-        .item(&autonomous_item)
+        .item(&show_item)
+        .item(&visibility_item)
+        .item(&snooze_item)
+        .separator()
         .item(&animation_item)
-        .item(&click_through_item)
+        .item(&autonomous_item)
+        .item(&more_actions)
+        .separator()
         .item(&reset_item)
         .item(&autostart_item)
         .separator()
         .item(&quit_item)
         .build()?;
 
-    let autonomous_for_event = autonomous_item.clone();
-    let animation_for_event = animation_item.clone();
-    let click_through_for_event = click_through_item.clone();
-    let autostart_for_event = autostart_item.clone();
+    if let Ok(mut tray) = TRAY.lock() {
+        *tray = Some(TrayHandles {
+            status: status_item,
+            visibility: visibility_item,
+            snooze: snooze_item,
+            animation: animation_item,
+            autonomous: autonomous_item,
+            reset: reset_item,
+            autostart: autostart_item,
+        });
+    }
 
-    let mut tray = TrayIconBuilder::new()
+    let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("桌面贴贴宠物")
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "show_studio" => show_studio_window(app),
-            "action_idle" => switch_native_action(app, "idle"),
-            "action_sit" => switch_native_action(app, "sit"),
-            "action_sleep" => switch_native_action(app, "sleep"),
-            "action_happy" => switch_native_action(app, "happy"),
-            "action_walk" => switch_native_action(app, "walk"),
-            "action_jump" => switch_native_action(app, "jump"),
-            "toggle_autonomous" => {
-                let enabled = !native_pet::autonomous_enabled();
-                if native_pet::set_autonomous(enabled).is_ok() {
-                    let _ = native_pet::persist_runtime_settings();
-                    let _ = autonomous_for_event.set_checked(enabled);
-                }
-            }
-            "toggle_animation" => {
-                let paused = !native_pet::animation_paused();
-                if native_pet::set_animation_paused(paused).is_ok() {
-                    let _ = animation_for_event.set_checked(!paused);
-                }
-            }
-            "toggle_click_through" => {
-                let enabled = !native_pet::click_through_enabled();
-                if native_pet::set_click_through(enabled).is_ok() {
-                    let _ = native_pet::persist_runtime_settings();
-                    let _ = click_through_for_event.set_checked(enabled);
-                }
-            }
-            "reset_position" => reset_native_position(app),
-            "toggle_autostart" => {
-                let enabled = !autostart::is_enabled();
-                match autostart::set_enabled(enabled) {
-                    Ok(()) => {
-                        let _ = autostart_for_event.set_checked(enabled);
-                    }
-                    Err(err) => eprintln!("failed to toggle autostart: {err}"),
-                }
-            }
-            "quit_app" => app.exit(0),
-            _ => {}
-        });
+        .on_menu_event(move |app, event| handle_tray_event(app, event.id().as_ref()));
 
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
@@ -551,25 +572,136 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn switch_native_action(_app: &tauri::AppHandle, action: &str) {
-    if let Err(err) = native_pet::set_action(action) {
-        eprintln!("failed to set native pet action: {err}");
-        return;
+fn status_text(state: &native_pet::NativePetState) -> &'static str {
+    if state.pet_id.is_none() {
+        "等待领养"
+    } else if state.availability == native_pet::Availability::Error {
+        "需要帮助"
+    } else if state.visibility_mode == native_pet::VisibilityMode::Snoozed {
+        "休息中"
+    } else if state.visibility_mode == native_pet::VisibilityMode::Hidden {
+        "已收起"
+    } else if !state.visible {
+        "正在准备"
+    } else if state.animation_paused {
+        "动画已暂停"
+    } else if state.effective_paused {
+        "低动态"
+    } else if !state.autonomous {
+        "固定姿态"
+    } else {
+        "正在桌面陪着你"
     }
-    if let Err(err) = native_pet::persist_runtime_settings() {
-        eprintln!("failed to persist native pet settings: {err}");
-    }
-    native_pet::emit_action_changed();
 }
 
-fn reset_native_position(_app: &tauri::AppHandle) {
-    if let Err(err) = native_pet::reset_position() {
-        eprintln!("failed to reset native pet position: {err}");
+fn sync_tray(app: &tauri::AppHandle) {
+    let Some(handles) = TRAY.lock().ok().and_then(|tray| tray.clone()) else {
         return;
+    };
+    let state = native_pet::state_snapshot();
+    let name = state
+        .pet_name
+        .clone()
+        .unwrap_or_else(|| "贴贴宠物".to_string());
+    let status = status_text(&state);
+    let _ = handles.status.set_text(format!("{name} · {status}"));
+    let _ = handles.visibility.set_text(if state.visibility_mode
+        == native_pet::VisibilityMode::Shown
+    {
+        "暂时收起"
+    } else {
+        "立即唤回"
+    });
+    let _ = handles.snooze.set_text(if state.visibility_mode
+        == native_pet::VisibilityMode::Snoozed
+    {
+        "立即唤回"
+    } else {
+        "休息一小时"
+    });
+    let has_pet = state.pet_id.is_some();
+    let ready = state.availability == native_pet::Availability::Ready;
+    let _ = handles.animation.set_checked(!state.animation_paused);
+    let _ = handles.autonomous.set_checked(state.autonomous);
+    let _ = handles.autostart.set_checked(state.autostart.enabled);
+    let _ = handles.visibility.set_enabled(has_pet);
+    let _ = handles.snooze.set_enabled(has_pet && ready);
+    let _ = handles.animation.set_enabled(has_pet);
+    let _ = handles.autonomous.set_enabled(has_pet);
+    let _ = handles.autostart.set_enabled(state.capabilities.autostart);
+    let _ = handles.reset.set_enabled(state.capabilities.reset_position);
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(format!("{name} · {status}")));
     }
-    if let Err(err) = native_pet::persist_runtime_settings() {
-        eprintln!("failed to persist reset position: {err}");
+}
+
+pub(crate) fn refresh_tray() {
+    if let Some(app) = native_pet::app_handle() {
+        let handle = app.clone();
+        // Menu and tray updates must reach the platform main thread, including
+        // when a background task (frame-pack loading) emitted the new state.
+        let _ = app.run_on_main_thread(move || sync_tray(&handle));
     }
+}
+
+fn handle_tray_event(app: &tauri::AppHandle, id: &str) {
+    let state = native_pet::state_snapshot();
+    let result = match id {
+        "show_studio" => {
+            show_studio_window(app);
+            Ok(())
+        }
+        "toggle_visibility" => {
+            let request = if state.visibility_mode == native_pet::VisibilityMode::Shown {
+                native_pet::PreferencesRequest::Hide
+            } else {
+                native_pet::PreferencesRequest::Show
+            };
+            native_pet::update_preferences(request).map(|_| ())
+        }
+        "toggle_snooze" => {
+            let request = if state.visibility_mode == native_pet::VisibilityMode::Snoozed {
+                native_pet::PreferencesRequest::Show
+            } else {
+                native_pet::PreferencesRequest::Snooze
+            };
+            native_pet::update_preferences(request).map(|_| ())
+        }
+        "toggle_animation" => native_pet::update_preferences(
+            native_pet::PreferencesRequest::SetAnimationPaused {
+                value: !state.animation_paused,
+            },
+        )
+        .map(|_| ()),
+        "toggle_autonomous" => native_pet::update_preferences(
+            native_pet::PreferencesRequest::SetAutonomous {
+                value: !state.autonomous,
+            },
+        )
+        .map(|_| ()),
+        "reset_position" => {
+            native_pet::update_preferences(native_pet::PreferencesRequest::ResetPosition).map(|_| ())
+        }
+        "toggle_autostart" => native_pet::update_preferences(
+            native_pet::PreferencesRequest::SetAutostart {
+                value: !state.autostart.enabled,
+            },
+        )
+        .map(|_| ()),
+        "quit_app" => {
+            app.exit(0);
+            Ok(())
+        }
+        action if action.starts_with("action_") => {
+            native_pet::apply_action(action.trim_start_matches("action_"))
+        }
+        _ => Ok(()),
+    };
+
+    if let Err(err) = result {
+        native_pet::emit_error(&err);
+    }
+    sync_tray(app);
 }
 
 fn show_studio_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
