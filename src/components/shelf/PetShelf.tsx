@@ -1,21 +1,28 @@
 import React from "react";
 import type { PetProfile } from "../../types";
+import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
+import { statusText } from "../../native-pet-state";
+import type { NativePetState } from "../../native-pet-types";
 
 interface PetShelfProps {
   pets: PetProfile[];
   activePetId: string | null;
+  nativeState: NativePetState;
   onDeployPet: (pet: PetProfile) => void;
   onDeletePet: (id: string) => void;
   onRenamePet: (id: string, newName: string) => void;
+  onStartAdoption: () => void;
   onGoToWorkshop: () => void;
 }
 
 export const PetShelf: React.FC<PetShelfProps> = ({
   pets,
   activePetId,
+  nativeState,
   onDeployPet,
   onDeletePet,
   onRenamePet,
+  onStartAdoption,
   onGoToWorkshop
 }) => {
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -47,6 +54,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
 
       {pets.length === 0 ? (
         <div
+          className="shelf-empty"
           style={{
             padding: "60px 20px",
             textAlign: "center",
@@ -59,11 +67,19 @@ export const PetShelf: React.FC<PetShelfProps> = ({
             gap: "12px"
           }}
         >
-          <span style={{ fontSize: "40px" }}>🗃️</span>
-          <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>宠物架空空如也</p>
-          <button type="button" className="btn-primary" onClick={onGoToWorkshop}>
-            去工坊导入第一只小宠物
-          </button>
+          <span style={{ fontSize: "40px" }}>🌱</span>
+          <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>这里暂时没有伙伴</p>
+          <p style={{ color: "var(--text-tertiary)", fontSize: "12px" }}>
+            可以领养咕唧，也可以带回你已经制作好的伙伴。
+          </p>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}>
+            <button type="button" className="btn-primary" onClick={onStartAdoption}>
+              去领养
+            </button>
+            <button type="button" className="btn-secondary" onClick={onGoToWorkshop}>
+              导入已有伙伴
+            </button>
+          </div>
         </div>
       ) : (
         <div className="shelf-grid">
@@ -134,7 +150,11 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                       </button>
                     </div>
                     <span className="pet-card-species">
-                      {pet.species === "cat" ? "小猫" : "小狗"}
+                      {pet.frameRoot === DEFAULT_PRESET_FRAME_DIR && pet.species === "dog"
+                        ? "原创伙伴"
+                        : pet.species === "cat"
+                          ? "小猫"
+                          : "小狗"}
                     </span>
                   </div>
                 )}
@@ -147,7 +167,9 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                   }}
                 >
                   {isActive ? (
-                    <span className="active-badge">正在桌面活动</span>
+                    <span className="active-badge" title={statusText(nativeState)}>
+                      {statusText(nativeState)}
+                    </span>
                   ) : (
                     <button
                       type="button"

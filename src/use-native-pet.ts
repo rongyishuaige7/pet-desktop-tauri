@@ -145,7 +145,8 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
         setError(null);
         return next;
       } catch (err) {
-        setError(formatError(err));
+        // Command failures carry their own operation error in the refreshed
+        // snapshot; only connection-level failures set the global error.
         throw err;
       }
     },

@@ -9,6 +9,7 @@ interface CompanionControlsProps {
   onToggleVisibility: () => void;
   onSnooze: () => void;
   onOpenSettings?: () => void;
+  showStatus?: boolean;
 }
 
 /**
@@ -21,7 +22,8 @@ export const CompanionControls: React.FC<CompanionControlsProps> = ({
   busy = false,
   onToggleVisibility,
   onSnooze,
-  onOpenSettings
+  onOpenSettings,
+  showStatus = true
 }) => {
   const shown = state.visibilityMode === "shown";
   const snoozed = state.visibilityMode === "snoozed";
@@ -33,11 +35,13 @@ export const CompanionControls: React.FC<CompanionControlsProps> = ({
     <div className="section-card companion-controls" aria-label="陪伴控制">
       <div className="section-title">
         <span>陪伴控制</span>
-        <span className="companion-status" role="status">
-          <span className="status-dot" aria-hidden="true" />
-          {statusText(state)}
-          {webMode && <span className="web-demo-tag">网页演示</span>}
-        </span>
+        {showStatus && (
+          <span className="companion-status" role="status">
+            <span className="status-dot" aria-hidden="true" />
+            {statusText(state)}
+            {webMode && <span className="web-demo-tag">网页演示</span>}
+          </span>
+        )}
       </div>
 
       <div className="companion-control-buttons">

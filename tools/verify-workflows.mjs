@@ -9,6 +9,7 @@ if (!['localhost', '127.0.0.1'].includes(new URL(base).hostname)) throw new Erro
 const browser=await chromium.launch({executablePath:process.env.PET_CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
 const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+async function openCompanionDetails(page){const details=page.locator('.companion-details');if(await details.count()&&!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
 async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss'}={}) {
  const context=await browser.newContext({viewport:{width:1120,height:760}});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
@@ -18,7 +19,8 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
   const callbacks=new Map(); const listeners=new Map(); let seq=1;
   const state=window.__review={calls:[],root:'/review/A',action:settingsAction,visible:true,delayB:0,emitOnSet:false,generations:0,saves:0};
   state.native={sessionId:'mock-session',revision:1,petId:null,petName:null,availability:'absent',visibilityMode:'shown',snoozeUntilMs:null,visible:false,action:settingsAction,actionRevision:1,animationPaused:false,autonomous:true,motionPreference:'system',systemReducedMotion:false,effectivePaused:false,effectiveAutonomous:false,scale:1,clickThrough:true,pending:false,autostart:{enabled:false,pending:false},lastOperationError:null,capabilities:{nativeWindow:true,tapFeedback:true,clickThrough:true,resetPosition:true,autostart:true,systemReducedMotion:true}};
-  state.refreshNative=()=>{const n=state.native;n.effectivePaused=n.animationPaused||n.motionPreference==='reduce'||(n.motionPreference==='system'&&n.systemReducedMotion);n.visible=Boolean(n.petId)&&n.visibilityMode==='shown'&&n.availability==='ready';n.effectiveAutonomous=n.autonomous&&!n.effectivePaused&&n.visible&&n.availability==='ready';return n;};
+  state.missing=missing;state.failPreference=false;state.failAutostart=false;state.lastInteractionAt=0;
+  state.refreshNative=()=>{const n=state.native;n.revision++;n.effectivePaused=n.animationPaused||n.motionPreference==='reduce'||(n.motionPreference==='system'&&n.systemReducedMotion);n.visible=Boolean(n.petId)&&n.visibilityMode==='shown'&&n.availability==='ready';n.effectiveAutonomous=n.autonomous&&!n.effectivePaused&&n.visible&&n.availability==='ready';return n;};
   state.emitNative=async()=>{const n=state.refreshNative();await Promise.all([...listeners.entries()].filter(([,v])=>v.event==='native-pet-state-changed').map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload:n})));return n;};
   state.makeImage=(sheet=false)=>{
    const canvas=document.createElement('canvas');canvas.width=sheet?900:300;canvas.height=sheet?600:300;
@@ -42,7 +44,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      const root=args.request.rootDir;
      if(root==='/review/generated'&&state.savedActions)return {sourceImage:state.savedActions.idle[0],actions:state.savedActions};
      await new Promise(r=>setTimeout(r,root==='/review/B'?state.delayB:packDelay));
-     if(missing)throw new Error('audit: custom frame directory does not exist');
+     if(state.missing)throw new Error('audit: custom frame directory does not exist');
      const actions=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,[0,1,2,3,4].map(i=>`/frame-pack/${a}/${String(i).padStart(3,'0')}.png?review=${root}`)]));
      return {sourceImage:actions.idle[0],actions};
     }
@@ -64,6 +66,16 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='reset_native_pet_position')return;
     if(cmd==='update_native_pet_preferences'){
      const r=args.request;const n=state.native;
+     if(state.failPreference){
+      n.lastOperationError={id:'mock-pref-error',operation:r.kind,code:'SETTINGS_WRITE_FAILED',recoverable:true};
+      await state.emitNative();
+      throw new Error('mock settings write failed');
+     }
+     if(r.kind==='setAutostart'&&state.failAutostart){
+      n.lastOperationError={id:'mock-autostart-error',operation:r.kind,code:'AUTOSTART_FAILED',recoverable:true};
+      await state.emitNative();
+      throw new Error('mock autostart failed');
+     }
      if(r.kind==='show'){n.visibilityMode='shown';n.snoozeUntilMs=null;n.actionRevision++;}
      if(r.kind==='hide'){n.visibilityMode='hidden';n.snoozeUntilMs=null;}
      if(r.kind==='snooze'){n.visibilityMode='snoozed';n.snoozeUntilMs=Date.now()+3600000;}
@@ -73,13 +85,19 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      if(r.kind==='setClickThrough')n.clickThrough=r.value;
      if(r.kind==='setMotionPreference')n.motionPreference=r.value;
      if(r.kind==='setAutostart')n.autostart={...n.autostart,enabled:r.value};
+     n.lastOperationError=null;
      await state.emitNative();
      return state.native;
     }
     if(cmd==='interact_native_pet'){
      const n=state.native;const reason=!n.petId||(args.petId&&args.petId!==n.petId)?'stalePet':!n.visible?'hidden':n.availability!=='ready'?'notReady':n.animationPaused?'paused':null;
      if(reason)return {accepted:false,reason,state:n};
-     n.action=args.kind==='pet'?'happy':'jump';state.action=n.action;n.actionRevision++;await state.emitNative();
+     const now=Date.now();
+     if(now-state.lastInteractionAt<1500)return {accepted:false,reason:'cooldown',state:n};
+     state.lastInteractionAt=now;
+     const reduced=n.motionPreference==='reduce'||(n.motionPreference==='system'&&n.systemReducedMotion);
+     if(!reduced){n.action=args.kind==='pet'?'happy':'jump';state.action=n.action;n.actionRevision++;}
+     await state.emitNative();
      return {accepted:true,state:n};
     }
     if(cmd==='upload_reference_image')return 'https://example.test/mock-reference.png';
@@ -100,8 +118,9 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
  const page=await context.newPage();
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base,{waitUntil:'domcontentloaded'});
- await page.locator('.stage-pet-image, .onboarding-dialog, .stage-empty-state').first().waitFor();
+ await page.locator('.companion-pet-button, .onboarding-dialog, .companion-empty, .toast-message.error').first().waitFor();
  if(onboarding==='dismiss'){
+  await page.waitForTimeout(300);
   const dialog=page.locator('.onboarding-dialog');
   if(await dialog.count()){
    const browse=page.getByRole('button',{name:'先浏览'});
@@ -123,7 +142,7 @@ async function seed(page,{desktop=false,active='A',empty=true}={}){
   await storage.setActivePetId(active);
  },{desktop,active,empty});
  await page.reload({waitUntil:'domcontentloaded'});
- await page.locator('.stage-pet-image, .toast-message.error').first().waitFor();
+ await page.locator('.companion-pet-button, .toast-message.error').first().waitFor();
  await sleep(300);
 }
 async function record(name,fn){
@@ -175,7 +194,7 @@ try{
    await page.getByRole('button',{name:'继续上次生成',exact:true}).click();
    await page.waitForFunction(()=>window.__review.committing===true);
    const committingLocked=await page.getByRole('button',{name:'取消',exact:true}).count()===0&&await page.getByRole('button',{name:'完成入住中...',exact:true}).isDisabled();
-   await page.getByRole('heading',{name:'伴侣互动台',exact:true}).waitFor();
+   await page.locator('.companion-title').waitFor();
    const resumed=await page.evaluate(async()=>({active:(await (await import('/src/storage.ts')).loadPet())?.id,generations:window.__review.generations,saves:window.__review.saves}));
    return {passed:frozen&&committingLocked&&cancelled.active===previous&&cancelled.generations===7&&cancelled.saves===1&&resumed.active!==previous&&resumed.generations===7&&resumed.saves===1&&errors.length===0,frozen,committingLocked,cancelled,resumed,errors};
   }finally{await context.close();}
@@ -187,7 +206,7 @@ try{
    await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
    await page.getByRole('button',{name:'继续上次生成',exact:true}).waitFor();
    await page.getByRole('button',{name:'继续上次生成',exact:true}).click();
-   await page.getByRole('heading',{name:'伴侣互动台',exact:true}).waitFor();
+   await page.locator('.companion-title').waitFor();
    const resumed=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves}));
    await openAI(page);await page.evaluate(()=>{window.__review.failGenerationAt=window.__review.generations+2;});
    await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
@@ -226,7 +245,7 @@ try{
    await page.locator('.pet-card').filter({hasText:'测试甲'}).waitFor({state:'detached'});
    await page.getByRole('button',{name:/陪伴/}).click();
    const stored=await page.evaluate(async()=>{const m=await import('/src/storage.ts');return (await m.loadPet())?.id;});
-   const empty=await page.locator('.stage-empty-state').isVisible();
+   const empty=await page.locator('.companion-empty').isVisible();
    await page.screenshot({path:join(evidenceDir,'delete-nonactive-fixed.png')});
    return {passed:stored==='B'&&!empty,storedActive:stored,previewEmpty:empty,errors};
   }finally{await context.close();}
@@ -235,7 +254,8 @@ try{
   const {context,page}=await newCase();
   try{
    await seed(page);
-   const second=await context.newPage();await second.goto(base);await second.locator('.stage-pet-image').waitFor();
+   const second=await context.newPage();await second.goto(base);await second.locator('.companion-pet-button').waitFor();
+   await openCompanionDetails(page);await openCompanionDetails(second);
    await page.getByRole('button',{name:'🐾 走路',exact:true}).click();await sleep(150);
    const firstAction=await page.locator('.action-pill-btn.active').innerText();
    const secondAction=await second.locator('.action-pill-btn.active').innerText();
@@ -246,10 +266,10 @@ try{
   const {context,page}=await newCase({desktop:true,missing:true});
   try{
    await seed(page,{desktop:true});
-   const src=await page.locator('.stage-pet-image').count();
+   const src=await page.locator('.companion-pet-button img').count();
    const messages=await page.locator('.toast-message').allTextContents();
-   const emptyMessage=await page.locator('.stage-empty-state').innerText();
-   return {passed:src===0&&messages.some(m=>m.includes('加载宠物失败')),emptyMessage,src,messages};
+   const recoveryText=await page.locator('.recovery-notice').innerText();
+   return {passed:src===0&&messages.some(m=>m.includes('加载宠物失败'))&&recoveryText.includes('暂时找不到')&&recoveryText.includes('重试加载'),recoveryText,src,messages};
   }finally{await context.close();}
  });
  await record('native_event_during_pet_deployment',async()=>{
@@ -270,6 +290,7 @@ try{
   try{
    await seed(page,{desktop:true});
    await page.evaluate(()=>window.__review.calls=[]);
+   await openCompanionDetails(page);
    await page.getByRole('button',{name:'🚀 跳跃',exact:true}).click();await sleep(800);
    const actions=await page.evaluate(()=>window.__review.calls.filter(c=>c.cmd==='set_native_pet_action').map(c=>c.action));
    return {passed:actions.join(',')==='jump',outgoingNativeActions:actions};
@@ -279,6 +300,7 @@ try{
   const {context,page}=await newCase({desktop:true,settingsAction:'sleep',packDelay:50});
   try{
    await seed(page,{desktop:true,active:'A'});await sleep(400);
+   await openCompanionDetails(page);
    const visible=await page.locator('.action-pill-btn.active').innerText();
    const native=await page.evaluate(()=>window.__review.action);
    return {passed:native==='sleep'&&visible.includes('睡觉'),nativeAction:native,visibleAction:visible};
@@ -287,9 +309,9 @@ try{
  await record('rename_save_button_styles',async()=>{
   const {context,page}=await newCase();
   try{
-   await seed(page);await page.getByTitle('重命名当前宠物').click();
+   await seed(page);await page.getByTitle('重命名当前伙伴').click();
    const styles=await page.locator('.btn-icon-save').evaluate(el=>{const s=getComputedStyle(el);return {background:s.backgroundColor,color:s.color,accent:getComputedStyle(document.documentElement).getPropertyValue('--accent-amber')};});
-   return {passed:styles.background==='rgb(255, 159, 28)'&&styles.color==='rgb(255, 255, 255)',styles};
+   return {passed:styles.background==='rgb(127, 77, 34)'&&styles.color==='rgb(255, 255, 255)',styles};
   }finally{await context.close();}
  });
  await record('loads_only_selected_pack_once',async()=>{
@@ -321,6 +343,7 @@ try{
    await page.waitForFunction(()=>document.querySelector('.widget-name')?.textContent==='测试乙');
    await page.evaluate(()=>window.__review.emit({action:'sleep',petId:'A',revision:100}));
    await page.getByRole('button',{name:/陪伴/}).click();
+   await openCompanionDetails(page);
    const action=await page.locator('.action-pill-btn.active').innerText();
    return {passed:action.includes('待机'),action};
   }finally{await context.close();}
@@ -346,7 +369,7 @@ try{
     const card=page.locator('.pet-card').filter({hasText:name});
     await card.getByTitle('删除宠物').click();await card.waitFor({state:'detached'});
    }
-   await page.reload();await page.locator('.stage-empty-state').waitFor();
+   await page.reload();await page.locator('.companion-empty').waitFor();
    const stored=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadAllPets()).length);
    return {passed:stored===0,stored};
   }finally{await context.close();}
@@ -357,27 +380,26 @@ await record('visibility_snooze_and_pause_controls',async()=>{
   await seed(page,{desktop:true});
   const controls=page.locator('.companion-control-buttons');
   await controls.getByRole('button',{name:'暂时收起',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('已收起'));
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('已收起'));
   const hidden=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
   await controls.getByRole('button',{name:'立即唤回',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('正在桌面陪着你'));
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('正在桌面陪着你'));
   const shown=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
   await controls.getByRole('button',{name:'休息一小时',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('休息中'));
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('休息中'));
   const snoozed=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,visible:window.__review.native.visible}));
   await controls.getByRole('button',{name:'提前唤回',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('正在桌面陪着你'));
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('正在桌面陪着你'));
   const woken=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs}));
-  const quickBefore=await page.locator('.quick-controls').innerText();
-  await page.locator('.action-sub-btn').filter({hasText:'暂停动画'}).click();
-  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('动画已暂停'));
-  const quickAfter=await page.locator('.quick-controls').innerText();
+  const pausedBefore=await page.locator('#companion-paused').isChecked();
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('动画已暂停'));
   const paused=await page.evaluate(()=>window.__review.native.animationPaused);
-  const resumeCount=await page.locator('.action-sub-btn').filter({hasText:'恢复动画'}).count();
-  if(!resumeCount)return {passed:false,reason:'resume button missing',paused,quickBefore,quickAfter,status:await page.locator('.companion-status').innerText()};
-  await page.locator('.action-sub-btn').filter({hasText:'恢复动画'}).click();
-  await page.waitForFunction(()=>!document.querySelector('.companion-status')?.textContent.includes('动画已暂停'));
-  return {passed:hidden.mode==='hidden'&&hidden.visible===false&&shown.mode==='shown'&&shown.visible===true&&snoozed.mode==='snoozed'&&snoozed.visible===false&&snoozed.until>Date.now()&&woken.mode==='shown'&&woken.until===null&&paused===true&&errors.length===0,hidden,shown,snoozed,woken,paused,quickBefore,quickAfter,errors};
+  const pausedAfter=await page.locator('#companion-paused').isChecked();
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>!document.querySelector('.status-chip')?.textContent.includes('动画已暂停'));
+  const resumed=await page.evaluate(()=>window.__review.native.animationPaused);
+  return {passed:hidden.mode==='hidden'&&hidden.visible===false&&shown.mode==='shown'&&shown.visible===true&&snoozed.mode==='snoozed'&&snoozed.visible===false&&snoozed.until>Date.now()&&woken.mode==='shown'&&woken.until===null&&paused===true&&pausedBefore===false&&pausedAfter===true&&resumed===false&&errors.length===0,hidden,shown,snoozed,woken,paused,pausedBefore,pausedAfter,resumed,errors};
  }finally{await context.close();}
 });
 await record('onboarding_clean_install_adopts_once',async()=>{
@@ -430,6 +452,7 @@ await record('onboarding_double_click_creates_one_pet',async()=>{
   await page.locator('#onboarding-name').fill('咕唧');
   await page.evaluate(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.textContent?.includes('领养并入住'));button?.click();button?.click();});
   await page.getByRole('heading',{name:'咕唧，很高兴见到你',exact:true}).waitFor();
+  await page.waitForTimeout(600);
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:(await s.loadOnboardingRecord()).record};});
   return {passed:state.pets===1&&state.record?.phase==='committed'&&errors.length===0,state,errors};
  }finally{await context.close();}
@@ -446,7 +469,7 @@ await record('onboarding_empty_old_user_stays_empty',async()=>{
    await card.waitFor({state:'detached'});
   }
   await page.reload({waitUntil:'domcontentloaded'});
-  await page.locator('.stage-empty-state').waitFor();
+  await page.locator('.companion-empty').waitFor();
   const dialog=await page.locator('.onboarding-dialog').count();
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:(await s.loadOnboardingRecord()).record};});
   return {passed:dialog===0&&state.pets===0&&state.record?.state==='completed'&&errors.length===0,dialog,state,errors};
@@ -487,6 +510,183 @@ await record('onboarding_corrupt_record_is_not_a_clean_install',async()=>{
   const dialog=await page.locator('.onboarding-dialog').count();
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:await s.loadOnboardingRecord()};});
   return {passed:dialog===0&&state.record.corrupt===true&&state.pets===0&&errors.length===0,dialog,state,errors};
+ }finally{await context.close();}
+});
+await record('interactions_cooldown_and_low_motion',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.getByRole('button',{name:'摸摸头',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.companion-speech')?.textContent.includes('收到你的摸摸'));
+  const first=await page.evaluate(()=>({action:window.__review.native.action,rev:window.__review.native.actionRevision}));
+  await page.getByRole('button',{name:'打个招呼',exact:true}).click();
+  await page.waitForTimeout(120);
+  const cooldown=await page.evaluate(()=>({action:window.__review.native.action,rev:window.__review.native.actionRevision}));
+  await page.waitForTimeout(1600);
+  await page.getByRole('button',{name:'打个招呼',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.action==='jump');
+  const second=await page.evaluate(()=>({action:window.__review.native.action,rev:window.__review.native.actionRevision}));
+  const controls=page.locator('.companion-control-buttons');
+  await controls.getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('已收起'));
+  const hiddenDisabled=await page.getByRole('button',{name:'摸摸头',exact:true}).isDisabled();
+  const hiddenHelp=await page.locator('.companion-help').innerText();
+  await controls.getByRole('button',{name:'立即唤回',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('正在桌面陪着你'));
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('动画已暂停'));
+  const pausedDisabled=await page.getByRole('button',{name:'摸摸头',exact:true}).isDisabled();
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>!document.querySelector('.status-chip')?.textContent.includes('动画已暂停'));
+  await page.locator('.sidebar-settings').click();
+  await page.locator('#settings-motion').selectOption('reduce');
+  await page.waitForFunction(()=>window.__review.native.motionPreference==='reduce');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('低动态'));
+  await page.waitForTimeout(1600);
+  const revBefore=await page.evaluate(()=>window.__review.native.actionRevision);
+  await page.getByRole('button',{name:'摸摸头',exact:true}).click();
+  await page.waitForTimeout(350);
+  const lowMotion=await page.evaluate(()=>({rev:window.__review.native.actionRevision,action:window.__review.native.action,motion:window.__review.native.motionPreference,speech:document.querySelector('.companion-speech')?.textContent,last:window.__review.lastInteractionAt,now:Date.now(),disabled:document.querySelector('.companion-primary-actions button')?.disabled}));
+  if(!lowMotion.speech?.includes('收到你的摸摸'))return {passed:false,reason:'low motion interaction missing speech',revBefore,lowMotion,errors};
+  return {passed:first.action==='happy'&&cooldown.rev===first.rev&&cooldown.action==='happy'&&second.action==='jump'&&hiddenDisabled&&hiddenHelp.includes('先唤回')&&pausedDisabled&&lowMotion.rev===revBefore&&lowMotion.motion==='reduce'&&errors.length===0,first,cooldown,second,hiddenDisabled,hiddenHelp,pausedDisabled,revBefore,lowMotion,errors};
+ }finally{await context.close();}
+});
+await record('settings_drawer_capabilities_and_narrow_layout',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.locator('.sidebar-settings').click();
+  await page.locator('.settings-drawer').waitFor();
+  const capabilities=await page.locator('.capability-list').innerText();
+  await page.locator('#settings-autonomous').click();
+  await page.waitForFunction(()=>window.__review.native.autonomous===false);
+  const autonomousChecked=await page.locator('#settings-autonomous').isChecked();
+  await page.locator('#settings-paused').click();
+  await page.waitForFunction(()=>window.__review.native.animationPaused===true);
+  const pausedChecked=await page.locator('#settings-paused').isChecked();
+  await page.keyboard.press('Escape');
+  await page.locator('.settings-drawer').waitFor({state:'detached'});
+  const focusRestored=await page.evaluate(()=>document.activeElement?.classList.contains('sidebar-settings'));
+  await page.setViewportSize({width:840,height:620});
+  await page.waitForTimeout(250);
+  const overflow=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,body:document.body.scrollWidth,inner:window.innerWidth}));
+  await page.locator('.sidebar-settings').click();
+  await page.locator('.settings-drawer').waitFor();
+  const drawerBox=await page.locator('.settings-drawer').boundingBox();
+  const drawerOverflow=await page.locator('.settings-drawer').evaluate(el=>getComputedStyle(el).overflowY);
+  await page.keyboard.press('Escape');
+  return {passed:capabilities.includes('透明区域穿透')&&capabilities.includes('支持')&&autonomousChecked===false&&pausedChecked===true&&focusRestored&&overflow.scroll<=overflow.inner&&overflow.body<=overflow.inner&&drawerBox.width<=840&&drawerBox.height<=620&&drawerOverflow==='auto'&&errors.length===0,capabilities,autonomousChecked,pausedChecked,focusRestored,overflow,drawerBox,drawerOverflow,errors};
+ }finally{await context.close();}
+});
+await record('recovery_retry_dismiss_and_reopen',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,missing:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.locator('.recovery-notice').waitFor();
+  const title=await page.locator('#recovery-title').innerText();
+  await page.locator('.recovery-details summary').click();
+  const code=await page.locator('.recovery-code-row code').innerText();
+  await page.getByRole('button',{name:'关闭这条提示'}).click();
+  const reopened=await page.locator('.recovery-reopen').isVisible();
+  await page.locator('.recovery-reopen').click();
+  await page.locator('.recovery-notice').waitFor();
+  await page.evaluate(()=>{window.__review.missing=false;});
+  await page.getByRole('button',{name:'重试加载',exact:true}).click();
+  await page.locator('.recovery-notice').waitFor({state:'detached'});
+  const images=await page.locator('.companion-pet-button img').count();
+  return {passed:title.includes('暂时找不到')&&code.includes('ASSET_NOT_FOUND')&&reopened&&images===1&&errors.length===0,title,code,reopened,images,errors};
+ }finally{await context.close();}
+});
+await record('settings_save_failure_keeps_confirmed_value',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.locator('.sidebar-settings').click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.locator('#settings-autonomous').click();
+  await page.locator('.recovery-notice').waitFor();
+  const failed=await page.evaluate(()=>({autonomous:window.__review.native.autonomous,error:window.__review.native.lastOperationError}));
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试保存',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.autonomous===false);
+  await page.locator('.recovery-notice').waitFor({state:'detached'});
+  const retried=await page.evaluate(()=>({autonomous:window.__review.native.autonomous,error:window.__review.native.lastOperationError}));
+  return {passed:failed.autonomous===true&&failed.error?.code==='SETTINGS_WRITE_FAILED'&&retried.autonomous===false&&retried.error===null&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_skip_and_resume_after_reload',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('咕唧');
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'咕唧，很高兴见到你',exact:true}).waitFor();
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.onboarding-dialog').waitFor();
+  const resumed=await page.locator('#onboarding-title').innerText();
+  const count=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadAllPets()).length);
+  await page.getByRole('button',{name:'稍后熟悉',exact:true}).click();
+  await page.locator('.onboarding-dialog').waitFor({state:'detached'});
+  const record=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  return {passed:resumed.includes('很高兴见到你')&&count===1&&record?.state==='completed'&&errors.length===0,resumed,count,record,errors};
+ }finally{await context.close();}
+});
+await record('shelf_empty_and_reonboard_entry',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  for(const name of ['测试甲','测试乙']){
+   page.once('dialog',d=>d.accept());
+   const card=page.locator('.pet-card').filter({hasText:name});
+   await card.getByTitle('删除宠物').click();
+   await card.waitFor({state:'detached'});
+  }
+  const emptyText=await page.locator('.shelf-empty').innerText();
+  await page.getByRole('button',{name:'去领养',exact:true}).click();
+  await page.locator('.onboarding-dialog').waitFor();
+  const nameStep=await page.locator('#onboarding-name').count()===1;
+  await page.keyboard.press('Escape');
+  await page.locator('.onboarding-dialog').waitFor({state:'detached'});
+  return {passed:emptyText.includes('这里暂时没有伙伴')&&emptyText.includes('去领养')&&emptyText.includes('导入已有伙伴')&&nameStep&&errors.length===0,emptyText,nameStep,errors};
+ }finally{await context.close();}
+});
+await record('autostart_failure_keeps_value_and_retries',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.locator('.sidebar-settings').click();
+  await page.locator('.settings-drawer').waitFor();
+  const autostartCount=await page.locator('#settings-autostart').count();
+  if(!autostartCount)return {passed:false,reason:'autostart row missing',drawer:await page.locator('.settings-drawer').innerText(),capabilities:await page.evaluate(()=>window.__review.native.capabilities)};
+  await page.evaluate(()=>{window.__review.failAutostart=true;});
+  await page.locator('#settings-autostart').click();
+  await page.locator('.recovery-notice').waitFor();
+  const failed=await page.evaluate(()=>({enabled:window.__review.native.autostart.enabled,error:window.__review.native.lastOperationError}));
+  await page.locator('.sidebar-settings').click();
+  await page.locator('.settings-drawer').waitFor();
+  const checkedAfterFailure=await page.locator('#settings-autostart').isChecked();
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{window.__review.failAutostart=false;});
+  await page.getByRole('button',{name:'重试',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.autostart.enabled===true);
+  await page.locator('.recovery-notice').waitFor({state:'detached'});
+  return {passed:failed.enabled===false&&failed.error?.code==='AUTOSTART_FAILED'&&checkedAfterFailure===false&&errors.length===0,failed,checkedAfterFailure,errors};
+ }finally{await context.close();}
+});
+await record('web_mode_marks_demo_and_hides_system_settings',async()=>{
+ const {context,page,errors}=await newCase();
+ try{
+  await seed(page);
+  const status=await page.locator('.status-chip').innerText();
+  await page.locator('.sidebar-settings').click();
+  await page.locator('.settings-drawer').waitFor();
+  const hasClickThrough=await page.locator('#settings-click-through').count();
+  const hasAutostart=await page.locator('#settings-autostart').count();
+  const capabilities=await page.locator('.capability-list').innerText();
+  await page.keyboard.press('Escape');
+  return {passed:status.includes('网页演示')&&hasClickThrough===0&&hasAutostart===0&&capabilities.includes('暂不支持')&&errors.length===0,status,hasClickThrough,hasAutostart,capabilities,errors};
  }finally{await context.close();}
 });
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}

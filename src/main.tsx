@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -10,7 +10,7 @@ import {
   UPLOAD_URL_STORAGE
 } from "./config";
 import { createGenerationCheckpoint, generatePetFramePack, GenerationCancelled } from "./ai-generation";
-import { hasRenderableFrames, isPetAction, normalizeZoom, withCurrentAction } from "./pet-logic";
+import { hasRenderableFrames, normalizeZoom, withCurrentAction } from "./pet-logic";
 import { actionDurationMs, chooseNextAction } from "./pet-behavior";
 import { buildDefaultActionFrames, hydratePet, toPersistedPet as persistPet } from "./pet-resources";
 import {
@@ -37,10 +37,12 @@ import {
 } from "./types";
 import { ToastProvider, useToast } from "./components/ui/Toast";
 import { AppSidebar } from "./components/shell/AppSidebar";
-import { LiveStage } from "./components/stage/LiveStage";
+import { CompanionPage } from "./components/stage/CompanionPage";
 import { Workshop } from "./components/workshop/Workshop";
 import { PetShelf } from "./components/shelf/PetShelf";
 import { PresetGallery } from "./components/workshop/PresetGallery";
+import { PreferencesDrawer } from "./components/settings/PreferencesDrawer";
+import { RecoveryNotice } from "./components/recovery/RecoveryNotice";
 import { Onboarding } from "./components/onboarding/Onboarding";
 import {
   DEFAULT_PET_NAME,
@@ -55,10 +57,10 @@ import {
 import { findPreset } from "./presets";
 import { formatSnoozeTime, statusText } from "./native-pet-state";
 import { useNativePet } from "./use-native-pet";
+import type { InteractionKind, PreferenceRequest } from "./native-pet-types";
 import "./styles.css";
 
 const isTauri = typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ !== undefined;
-const isMacOS = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 
 interface NativeActionEvent { action: PetAction; petId: string | null; revision: number }
 
@@ -89,7 +91,22 @@ function StudioApp() {
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [onboardingSpeech, setOnboardingSpeech] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [companionSpeech, setCompanionSpeech] = useState("");
+  const [localError, setLocalError] = useState<{
+    id: string;
+    title: string;
+    body: string;
+    operation?: string;
+    code?: string;
+  } | null>(null);
+  const [dismissedRecovery, setDismissedRecovery] = useState<string | null>(null);
+  const lastPreferenceRef = useRef<PreferenceRequest | null>(null);
+  const speechTimerRef = useRef<number | null>(null);
+  const scaleTimerRef = useRef<number | null>(null);
   const onboardingBusyRef = useRef(false);
+  const adoptionCommittedRef = useRef(false);
   const activePetRef = useRef<PetProfile | null>(null);
   const native = useNativePet({ isTauri, pet: activePet });
   const lastNativeActionRevision = useRef(0);
@@ -238,6 +255,7 @@ function StudioApp() {
             activePetId: current?.id ?? null
           });
           setOnboarding(start.record);
+          adoptionCommittedRef.current = start.record.phase === "committed";
           setOnboardingOpen(start.kind === "show" || start.kind === "clean");
           if (start.record.confirmedPetId) {
             const confirmed = all.find((pet) => pet.id === start.record.confirmedPetId);
@@ -257,14 +275,39 @@ function StudioApp() {
           setZoom(normalizeZoom(settings.scale * 100));
         }
         if (current) {
-          const full = await ensurePetHydrated(current, settings?.currentAction);
+          let full: PetProfile;
+          try {
+            full = await ensurePetHydrated(current, settings?.currentAction);
+          } catch (err) {
+            setActivePet(current);
+            setLocalError({
+              id: `asset-${current.id}`,
+              title: `暂时找不到${current.name}的动作素材，资料仍在`,
+              body: "名字和选择都保留着。可以重试加载，或换一位已有伙伴。",
+              operation: "set_frame_root",
+              code: "ASSET_NOT_FOUND"
+            });
+            showToast(`加载宠物失败：${formatError(err)}`, "error");
+            return;
+          }
           if (cancelled) return;
+          setActivePet(full);
           // Loading material is not a display intent; hidden/snoozed stays hidden.
           if (isTauri && full.frameRoot) {
-            await native.attach(full.frameRoot, full.id, full.name);
-            full.currentAction = await syncNativeAction(full.currentAction);
+            try {
+              await native.attach(full.frameRoot, full.id, full.name);
+              full.currentAction = await syncNativeAction(full.currentAction);
+            } catch (err) {
+              setLocalError({
+                id: `native-${full.id}`,
+                title: "暂时没能把伙伴带到桌面，原来的伙伴已保留",
+                body: "名字、素材和选择都还在。可以重试连接，或先查看已有伙伴。",
+                operation: "set_frame_root",
+                code: "NATIVE_WINDOW_FAILED"
+              });
+              showToast(`原生桌宠失败：${formatError(err)}`, "error");
+            }
           }
-          setActivePet(full);
           await refreshList();
         } else if (isTauri) {
           await native.detach();
@@ -335,22 +378,43 @@ function StudioApp() {
     return () => window.clearTimeout(timer);
   }, [isTauri, autonomous, activePet?.id, activePet?.currentAction, activePet?.actionStartedAt]);
 
+  async function applyPreference(request: PreferenceRequest) {
+    lastPreferenceRef.current = request;
+    try {
+      const next = await native.update(request);
+      setDismissedRecovery(null);
+      return next;
+    } catch (err) {
+      showToast(`设置没有保存：${formatError(err)}`, "error");
+      throw err;
+    }
+  }
+
+  const handlePreference = useCallback(
+    (request: PreferenceRequest) => {
+      void applyPreference(request).catch(() => {
+        // The recovery panel lives in the page; do not leave it behind the drawer.
+        setSettingsOpen(false);
+      });
+    },
+    // `applyPreference` closes over the latest native controller and toast.
+    [native.update, showToast]
+  );
+
   function handleZoomChange(val: number) {
     const nextZoom = normalizeZoom(val);
     setZoom(nextZoom);
     localStorage.setItem(PET_ZOOM_STORAGE, String(nextZoom));
-    if (isTauri) {
-      void native.update({ kind: "setScale", value: nextZoom / 100 }).catch((err) => {
-        showToast(`调整大小失败：${formatError(err)}`, "error");
-      });
-    }
+    if (!isTauri) return;
+    if (scaleTimerRef.current !== null) window.clearTimeout(scaleTimerRef.current);
+    scaleTimerRef.current = window.setTimeout(() => {
+      void applyPreference({ kind: "setScale", value: nextZoom / 100 }).catch(() => undefined);
+    }, 250);
   }
 
   function handleToggleAutonomous(value: boolean) {
     if (isTauri) {
-      void native.update({ kind: "setAutonomous", value }).catch((err) => {
-        showToast(`切换自主活动失败：${formatError(err)}`, "error");
-      });
+      void applyPreference({ kind: "setAutonomous", value }).catch(() => undefined);
       return;
     }
     setAutonomous(value);
@@ -360,52 +424,125 @@ function StudioApp() {
   async function handleToggleVisibility() {
     const hiding = native.state.visibilityMode === "shown";
     try {
-      await native.update({ kind: hiding ? "hide" : "show" });
+      await applyPreference({ kind: hiding ? "hide" : "show" });
       showToast(hiding ? "伙伴已收起，随时可以叫回来。" : "伙伴回来了。", "success");
-    } catch (err) {
-      showToast(hiding ? `收起失败：${formatError(err)}` : `唤回失败：${formatError(err)}`, "error");
+    } catch {
+      // applyPreference already reported the failure; recovery keeps the retry.
     }
   }
 
   async function handleSnooze() {
     if (native.state.visibilityMode === "snoozed") {
       try {
-        await native.update({ kind: "show" });
+        await applyPreference({ kind: "show" });
         showToast("已提前唤回伙伴。", "success");
-      } catch (err) {
-        showToast(`唤回失败：${formatError(err)}`, "error");
+      } catch {
+        // Reported by applyPreference.
       }
       return;
     }
     try {
-      const next = await native.update({ kind: "snooze" });
+      const next = await applyPreference({ kind: "snooze" });
       const until = next?.snoozeUntilMs ?? Date.now() + 60 * 60 * 1000;
       showToast(`伙伴休息到 ${formatSnoozeTime(until)}，到时自动回来。`, "success");
-    } catch (err) {
-      showToast(`休息失败：${formatError(err)}`, "error");
+    } catch {
+      // Reported by applyPreference.
     }
   }
 
   async function handleToggleNativePaused() {
     try {
-      await native.update({
+      await applyPreference({
         kind: "setAnimationPaused",
         value: !native.state.animationPaused
       });
-    } catch (err) {
-      showToast(`切换桌宠动画失败：${formatError(err)}`, "error");
+    } catch {
+      // Reported by applyPreference.
     }
   }
 
   async function handleResetPosition() {
     if (!isTauri) return;
     try {
-      await native.update({ kind: "resetPosition" });
-      showToast("桌面宠物已唤回右下角 🎯", "success");
-    } catch (err) {
-      showToast(`唤回失败：${formatError(err)}`, "error");
+      await applyPreference({ kind: "resetPosition" });
+      showToast("桌面伙伴已唤回右下角 🎯", "success");
+    } catch {
+      // Reported by applyPreference.
     }
   }
+
+  async function handleInteract(kind: InteractionKind) {
+    const result = await native.interact(kind);
+    if (!result) return;
+    if (result.accepted) {
+      setCompanionSpeech(kind === "pet" ? "收到你的摸摸了。" : "我在这里！");
+      if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = window.setTimeout(() => setCompanionSpeech(""), 4000);
+      return;
+    }
+    if (result.reason === "cooldown") return;
+    if (result.reason === "hidden") setCompanionSpeech("先唤回伙伴，互动不会替你唤醒它。");
+    else if (result.reason === "paused") setCompanionSpeech("先恢复动画，再和伙伴互动。");
+    else if (result.reason === "notReady") setCompanionSpeech("伙伴还在准备中，稍等一下。");
+    else if (result.reason === "stalePet") setCompanionSpeech("伙伴已经切换，请再试一次。");
+  }
+
+  async function handleRetryAsset() {
+    const current = activePetRef.current;
+    if (!current?.frameRoot) {
+      setCurrentTab("shelf");
+      return;
+    }
+    try {
+      const full = await ensurePetHydrated(current);
+      if (isTauri) {
+        await native.attach(full.frameRoot!, full.id, full.name);
+        await native.update({ kind: "show" });
+      }
+      setActivePet(full);
+      setLocalError(null);
+      showToast("伙伴的动作素材已恢复。", "success");
+    } catch (err) {
+      setLocalError({
+        id: `asset-${current.id}-${Date.now()}`,
+        title: `暂时找不到${current.name}的动作素材，资料仍在`,
+        body: "名字和选择都保留着。可以重试加载，或换一位已有伙伴。",
+        operation: "set_frame_root",
+        code: "ASSET_NOT_FOUND"
+      });
+      showToast(`重试加载失败：${formatError(err)}`, "error");
+    }
+  }
+
+  function handleOpenSettings() {
+    setSettingsOpen(true);
+  }
+
+  function handleTutorial() {
+    setSettingsOpen(false);
+    setOnboardingSpeech("");
+    setTutorialOpen(true);
+  }
+
+  function handleRetryPreference() {
+    const request = lastPreferenceRef.current;
+    if (!request) {
+      setSettingsOpen(true);
+      return;
+    }
+    void applyPreference(request).catch(() => undefined);
+  }
+
+  useEffect(() => {
+    if (!isTauri || !native.connected) return;
+    const nextZoom = Math.round(native.state.scale * 100);
+    setZoom((previous) => (previous === nextZoom ? previous : nextZoom));
+  }, [isTauri, native.connected, native.state.scale]);
+
+  useEffect(() => () => {
+    if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current);
+    if (scaleTimerRef.current !== null) window.clearTimeout(scaleTimerRef.current);
+  }, []);
 
   async function rollbackAdoption(wasShown: boolean) {
     if (!isTauri) return;
@@ -446,7 +583,16 @@ function StudioApp() {
   }
 
   function handleOnboardingNameBlur() {
-    if (!onboarding || onboarding.step !== "name") return;
+    if (
+      !onboarding ||
+      onboarding.step !== "name" ||
+      onboardingBusyRef.current ||
+      adoptionCommittedRef.current ||
+      onboarding.phase === "prepared" ||
+      onboarding.phase === "committed"
+    ) {
+      return;
+    }
     void saveOnboardingRecord(onboarding).catch(() => undefined);
   }
 
@@ -487,13 +633,14 @@ function StudioApp() {
     setOnboardingOpen(true);
     setOnboardingError(null);
     setOnboardingSpeech("");
+    adoptionCommittedRef.current = false;
     void saveOnboardingRecord(next).catch((err) => {
       setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
     });
   }
 
   async function handleAdopt(nameOverride?: string, recordOverride?: OnboardingRecord) {
-    if (onboardingBusyRef.current) return;
+    if (onboardingBusyRef.current || adoptionCommittedRef.current) return;
     const base = recordOverride ?? onboarding;
     if (!base) return;
     const name = (nameOverride ?? base.draftName).trim();
@@ -588,7 +735,6 @@ function StudioApp() {
     try {
       await refreshList();
     } catch {
-      // The profile is committed; a failed list refresh only re-reads it.
       try {
         const saved = await loadPet();
         if (saved) setActivePet(await ensurePetHydrated(saved));
@@ -598,6 +744,7 @@ function StudioApp() {
     }
     setOnboarding(committed);
     setOnboardingSpeech("");
+    adoptionCommittedRef.current = true;
     onboardingBusyRef.current = false;
     setOnboardingBusy(false);
     showToast(`「${plan.name}」已经入住桌面。`, "success");
@@ -867,8 +1014,165 @@ function StudioApp() {
     } catch (err) { showToast(`重命名失败：${formatError(err)}`, "error"); }
   }
 
-  const displayZoom = isTauri && native.connected ? Math.round(native.state.scale * 100) : zoom;
   const companionStatus = isTauri ? statusText(native.state) : "网页演示";
+  const operationError = native.state.lastOperationError;
+
+  const assetRecovery = {
+    title: `暂时找不到${activePet?.name ?? "伙伴"}的动作素材，资料仍在`,
+    body: "名字和选择都保留着。可以重试加载，或换一位已有伙伴。",
+    operation: "set_frame_root",
+    code: "ASSET_NOT_FOUND",
+    actions: [
+      { label: "重试加载", primary: true, onClick: () => void handleRetryAsset() },
+      { label: "选择已有伙伴", onClick: () => setCurrentTab("shelf") },
+      { label: "打开制作", onClick: () => setCurrentTab("workshop") }
+    ]
+  };
+
+  const recovery = (() => {
+    if (localError) {
+      return {
+        id: localError.id,
+        title: localError.title,
+        body: localError.body,
+        operation: localError.operation,
+        code: localError.code,
+        actions: assetRecovery.actions
+      };
+    }
+    if (native.error) {
+      return {
+        id: "native-client",
+        title: "暂时没能连接桌面伙伴",
+        body: "原来的伙伴和资料都已保留。可以重试连接，或先查看已有伙伴。",
+        operation: "connect",
+        code: "NATIVE_CLIENT_UNAVAILABLE",
+        actions: [
+          { label: "重试连接", primary: true, onClick: () => void native.refresh() },
+          { label: "查看已有伙伴", onClick: () => setCurrentTab("shelf") }
+        ]
+      };
+    }
+    if (onboardingError && !onboardingOpen) {
+      return {
+        id: "onboarding-read",
+        title: "资料读取失败，请重试",
+        body: "伙伴资料没有改动。读取成功后再继续领养或使用已有伙伴。",
+        operation: "loadOnboarding",
+        code: "ONBOARDING_READ_FAILED",
+        actions: [
+          { label: "重试读取", primary: true, onClick: () => window.location.reload() }
+        ]
+      };
+    }
+    if (!operationError) return null;
+    const base = {
+      id: operationError.id,
+      operation: operationError.operation,
+      code: operationError.code
+    };
+    if (operationError.code === "ASSET_NOT_FOUND") {
+      return { ...base, ...assetRecovery };
+    }
+    if (operationError.code === "NATIVE_WINDOW_FAILED") {
+      return {
+        ...base,
+        title: "暂时没能把伙伴带到桌面，原来的伙伴已保留",
+        body: "名字、素材和选择都还在。可以重试连接，或先查看已有伙伴。",
+        actions: [
+          { label: "重试连接", primary: true, onClick: () => void handleRetryAsset() },
+          { label: "查看已有伙伴", onClick: () => setCurrentTab("shelf") },
+          { label: "打开制作", onClick: () => setCurrentTab("workshop") }
+        ]
+      };
+    }
+    if (operationError.code === "AUTOSTART_FAILED") {
+      return {
+        ...base,
+        title: "未能开启开机启动，其他功能可以继续使用",
+        body: "系统自启配置没有改变。可以重试，或稍后在偏好设置里再开启。",
+        actions: [
+          { label: "重试", primary: true, onClick: handleRetryPreference },
+          { label: "偏好设置", onClick: handleOpenSettings }
+        ]
+      };
+    }
+    if (
+      operationError.code === "SETTINGS_WRITE_FAILED" ||
+      operationError.code === "RESET_POSITION_FAILED"
+    ) {
+      return {
+        ...base,
+        title: "这次设置没有保存，请再试一次",
+        body: "已确认的值仍然保留。重试不会影响伙伴资料。",
+        actions: [
+          { label: "重试保存", primary: true, onClick: handleRetryPreference },
+          { label: "偏好设置", onClick: handleOpenSettings }
+        ]
+      };
+    }
+    if (
+      operationError.code === "SETTINGS_INVALID" ||
+      operationError.code === "SETTINGS_SNOOZE_INVALID"
+    ) {
+      return {
+        ...base,
+        title: "设置文件需要修复，伙伴暂时保持收起",
+        body: "没有自动补回伙伴。可以打开偏好设置重新确认显示和休息选项。",
+        actions: [
+          { label: "打开偏好设置", primary: true, onClick: handleOpenSettings },
+          { label: "重试读取", onClick: () => void native.refresh() }
+        ]
+      };
+    }
+    if (operationError.code === "UNSUPPORTED_CAPABILITY") {
+      return {
+        ...base,
+        title: "当前系统暂不支持这个设置",
+        body: "其他功能可以继续使用。支持情况已列在偏好设置中。",
+        actions: [{ label: "打开偏好设置", primary: true, onClick: handleOpenSettings }]
+      };
+    }
+    return {
+      ...base,
+      title: "这个操作没有完成，资料仍在",
+      body: "可以重试，或打开偏好设置检查当前状态。",
+      actions: [
+        { label: "重试", primary: true, onClick: handleRetryPreference },
+        { label: "偏好设置", onClick: handleOpenSettings }
+      ]
+    };
+  })();
+
+  const recoveryNode = recovery ? (
+    dismissedRecovery === recovery.id ? (
+      <button
+        type="button"
+        className="recovery-reopen"
+        onClick={() => setDismissedRecovery(null)}
+      >
+        需要帮助：{recovery.title}
+      </button>
+    ) : (
+      <RecoveryNotice
+        title={recovery.title}
+        body={recovery.body}
+        operation={recovery.operation}
+        code={recovery.code}
+        actions={recovery.actions}
+        onDismiss={() => setDismissedRecovery(recovery.id)}
+      />
+    )
+  ) : null;
+
+  const tutorialRecord: OnboardingRecord | null = tutorialOpen
+    ? {
+        ...(onboarding ?? createOnboardingRecord()),
+        state: "in_progress",
+        step: "meet",
+        confirmedPetId: activePet?.id ?? null
+      }
+    : null;
 
   return (
     <div className="app-shell">
@@ -879,46 +1183,48 @@ function StudioApp() {
         petCount={pets.length}
         status={companionStatus}
         webMode={!isTauri}
+        onOpenSettings={handleOpenSettings}
       />
 
       <main className="app-content">
-        <header className="content-header">
-          <div className="header-title-group">
-            <h1 className="header-title">
-              {currentTab === "stage" && "伴侣互动台"}
-              {currentTab === "workshop" && "宠物工坊"}
-              {currentTab === "shelf" && "我的宠物架"}
-            </h1>
-            <span className="header-subtitle">
-              {currentTab === "stage" && "在桌面上陪伴你的毛孩子，随心换姿态与调控"}
-              {currentTab === "workshop" && "导入本地帧包、装配动作帧或由 AI 自动生成"}
-              {currentTab === "shelf" && "所有收藏的小宠物，一键随心换上桌面"}
-            </span>
-          </div>
-        </header>
+        {currentTab !== "stage" && (
+          <>
+            <header className="content-header">
+              <div className="header-title-group">
+                <h1 className="header-title">
+                  {currentTab === "workshop" && "领养与制作"}
+                  {currentTab === "shelf" && "我的伙伴"}
+                </h1>
+                <span className="header-subtitle">
+                  {currentTab === "workshop" && "选一位现成伙伴，或者慢慢制作自己的那一只"}
+                  {currentTab === "shelf" && "收起桌宠不会移除资料，这里始终保留你的收藏"}
+                </span>
+              </div>
+            </header>
+            {recoveryNode}
+          </>
+        )}
 
         {currentTab === "stage" && (
-          <LiveStage
+          <CompanionPage
             pet={activePet}
-            onSwitchAction={handleSwitchAction}
-            zoom={displayZoom}
-            onChangeZoom={handleZoomChange}
-            onResetPosition={handleResetPosition}
-            isTauri={isTauri}
-            isMacOS={isMacOS}
-            autonomous={isTauri ? native.state.autonomous : autonomous}
-            onToggleAutonomous={handleToggleAutonomous}
-            desktopPaused={native.state.animationPaused}
-            onToggleDesktopPaused={handleToggleNativePaused}
-            autonomousBusy={isTauri && !native.connected}
-            nativeState={native.state}
+            state={native.state}
             webMode={!isTauri}
-            visibilityBusy={isTauri && !native.connected}
-            onToggleVisibility={handleToggleVisibility}
-            onSnooze={handleSnooze}
+            busy={isTauri && !native.connected}
+            zoom={zoom}
+            speech={companionSpeech}
+            recovery={recoveryNode}
+            onInteract={(kind) => void handleInteract(kind)}
+            onSwitchAction={handleSwitchAction}
+            onChangeZoom={handleZoomChange}
+            onToggleVisibility={() => void handleToggleVisibility()}
+            onSnooze={() => void handleSnooze()}
+            onTogglePaused={() => void handleToggleNativePaused()}
+            onToggleAutonomous={() => handleToggleAutonomous(!native.state.autonomous)}
+            onOpenSettings={handleOpenSettings}
             onStartAdoption={handleStartAdoption}
-            onRenamePet={handleRenamePet}
             onGoToWorkshop={() => setCurrentTab("workshop")}
+            onRenamePet={handleRenamePet}
           />
         )}
 
@@ -1002,12 +1308,45 @@ function StudioApp() {
           <PetShelf
             pets={pets}
             activePetId={activePet?.id ?? null}
+            nativeState={native.state}
             onDeployPet={handleDeployPet}
             onDeletePet={handleDeletePet}
             onRenamePet={handleRenamePet}
+            onStartAdoption={handleStartAdoption}
             onGoToWorkshop={() => setCurrentTab("workshop")}
           />
         )}
+
+        {tutorialOpen && tutorialRecord && (
+          <Onboarding
+            record={tutorialRecord}
+            pet={activePet}
+            isTauri={isTauri}
+            busy={false}
+            error={null}
+            speech={onboardingSpeech}
+            onChangeName={() => undefined}
+            onNameBlur={() => undefined}
+            onNext={() => undefined}
+            onBrowse={() => setTutorialOpen(false)}
+            onAdopt={() => undefined}
+            onUseDefault={() => undefined}
+            onFinish={() => setTutorialOpen(false)}
+            onMeetPet={() => void handleMeetPet()}
+            onRetry={() => undefined}
+          />
+        )}
+
+        <PreferencesDrawer
+          open={settingsOpen}
+          state={native.state}
+          webMode={!isTauri}
+          busy={isTauri && !native.connected}
+          onClose={() => setSettingsOpen(false)}
+          onUpdate={handlePreference}
+          onResetPosition={() => void handleResetPosition()}
+          onTutorial={handleTutorial}
+        />
       </main>
     </div>
   );
