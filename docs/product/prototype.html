@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>贴贴宠物 · 首版交互方案</title>
+  <style>
+    :root{color-scheme:light;--bg:#f5f2eb;--panel:#fffcf7;--ink:#382e24;--muted:#72675b;--line:#e5ddcf;--accent:#855326;--soft:#efe1c7;--green:#52654b;--red:#974b3d;--radius:22px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:var(--ink);background:var(--bg);font-size:14px}
+    *{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button,summary{cursor:pointer}button{color:inherit}button:disabled{cursor:default;opacity:.5}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,[role=button]:focus-visible{outline:3px solid #a2632f;outline-offset:4px}button{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:11px 15px;font-weight:600}button:hover:not(:disabled){background:#f2eadd}button.primary{background:var(--accent);border-color:var(--accent);color:white}button.primary:hover:not(:disabled){background:#6e431c}button.quiet{background:transparent}button.danger{color:var(--red)}a{color:var(--accent)}h1,h2,h3,p{margin:0}h1{font-size:26px;line-height:1.4;letter-spacing:-.8px}h2{font-size:19px}h3{font-size:15px}p{line-height:1.8}.muted{color:var(--muted)}.small{font-size:12px}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--muted);margin-bottom:7px}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.stack{display:grid;gap:17px}.spacer{flex:1}.chip{padding:5px 10px;border-radius:100px;background:#e8eddf;color:#405338;font-size:12px;display:inline-flex;align-items:center;gap:6px}.chip.dim{background:#eee9e0;color:#695e51}.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+    .lab{min-height:55px;background:#3d4539;color:#fffdf6;padding:10px 23px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px}.lab label{display:flex;align-items:center;gap:7px}.lab select{max-width:150px;background:#fffaf0;color:#382e24;padding:5px 8px;border:0;border-radius:7px}.lab button{padding:5px 9px;font-size:12px;border:1px solid #78816e;color:#fffdf6;background:transparent}.lab .note{color:#e7e8dd}.shell{display:flex;min-height:calc(100vh - 55px)}.sidebar{width:200px;flex-shrink:0;padding:27px 17px;background:#eeeadf;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:30px}.brand{display:flex;gap:11px;align-items:center;padding:0 7px}.brand-mark{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;background:#d5dcbf;font-size:22px}.brand strong{font-size:16px;display:block}.brand .small{margin-top:4px}.nav{display:grid;gap:8px}.nav button{text-align:left;border-color:transparent;background:transparent;display:flex;align-items:center;gap:12px;padding:13px}.nav button.active{background:var(--panel);box-shadow:0 3px 15px #3c331908}.nav-icon{font-size:18px;width:22px;text-align:center}.sidebar-bottom{margin-top:auto;display:grid;gap:18px}.sidebar-pet{padding:12px 7px;border-top:1px solid #ded7c9}.sidebar-pet img{width:43px;height:43px;object-fit:contain}.sidebar-pet strong{display:block;max-width:113px;overflow:hidden;text-overflow:ellipsis}.sidebar-pet .small{margin-top:4px}.sidebar-bottom>button{text-align:left;background:transparent}.content{flex:1;padding:35px 38px 110px;min-width:0;max-width:1450px}.page-head{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:26px}.page-head p{margin-top:6px}.companion-grid{display:grid;grid-template-columns:minmax(280px,1fr) 276px;gap:23px;align-items:start}.card{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.hero{overflow:hidden;min-height:446px}.hero-top{padding:20px 22px;display:flex;align-items:center;gap:10px}.hero-top .small{margin-left:auto}.pet-space{height:285px;display:grid;place-items:center;position:relative;overflow:hidden}.pet-space:before{content:"";position:absolute;width:260px;height:260px;border-radius:50%;background:#f4e7c7;opacity:.5;bottom:0}.pet-button{position:relative;width:280px;height:280px;display:grid;place-items:center;border:0;padding:0;background:transparent!important}.pet-button img{width:100%;height:100%;object-fit:contain;pointer-events:none;filter:drop-shadow(0 13px 12px #b8a57a20)}.pet-button.resting{opacity:.5}.speech{text-align:center;margin:10px 22px 22px;color:var(--muted);min-height:25px}.interaction-bar{border-top:1px solid var(--line);padding:17px 19px;display:flex;justify-content:center;gap:12px}.interaction-bar button{min-width:118px}.controls{padding:21px;display:grid;gap:17px}.controls h2{font-size:17px}.controls button{width:100%}.control-line{height:1px;background:var(--line);margin:2px 0}.controls p{font-size:12px;color:var(--muted)}.controls .status-note{padding:12px;background:#f1eddf;border-radius:12px}.details{margin-top:18px;padding:16px 20px}.details summary{font-weight:600}.details .row{margin-top:16px}.details p{margin-top:12px}.notice{border:1px solid #d7ada0;background:#fff4ed;padding:19px 20px;border-radius:17px;margin-bottom:21px}.notice p{margin:7px 0 14px}.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,360px));gap:22px}.pet-card{padding:24px}.pet-card .portrait{height:200px;display:grid;place-items:center;background:#f6eedc;border-radius:17px;margin-bottom:20px}.portrait img{width:200px;height:200px;object-fit:contain}.pet-card p{margin:9px 0 18px}.pet-card .row{margin-top:16px}.empty{padding:65px 25px;text-align:center}.empty h2{margin:15px 0 9px}.empty .row{justify-content:center;margin-top:25px}.empty-icon{width:68px;height:68px;border-radius:24px;background:var(--soft);margin:auto;display:grid;place-items:center;font-size:30px}.future-note{padding:24px;border:1px dashed #cbbfa9;border-radius:20px;color:var(--muted);display:flex;flex-direction:column;justify-content:center;gap:10px;min-height:300px;max-width:300px}.maker-options{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}.maker-options article{padding:16px;background:#f4efe6;border-radius:13px}.maker-options p{font-size:12px;margin:8px 0 0}.form-label{display:block;font-weight:600;margin-bottom:8px}input[type=text]{width:100%;padding:12px 14px;border:1px solid #c8bdaa;border-radius:11px;background:#fffdf8;color:var(--ink)}input[type=range]{accent-color:var(--accent);width:160px}input[type=checkbox]{accent-color:var(--accent);width:18px;height:18px}.setting-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:17px 0;border-bottom:1px solid var(--line)}.setting-row label{line-height:1.8}.setting-row label strong{display:block}.setting-row label span{font-size:12px;color:var(--muted)}.setting-row select{padding:8px;border:1px solid var(--line);border-radius:9px;background:white;max-width:160px}.setting-row button{white-space:nowrap}.hint{padding:13px 15px;background:#f2edde;border-radius:13px;color:var(--muted);font-size:12px;line-height:1.8}
+    dialog{border:1px solid var(--line);border-radius:25px;padding:0;color:var(--ink);background:var(--panel);width:min(540px,calc(100vw - 32px));max-height:calc(100vh - 50px);box-shadow:0 20px 100px #29201625}dialog::backdrop{background:#342e2355;backdrop-filter:blur(5px)}.dialog-head{display:flex;justify-content:space-between;align-items:center;padding:23px 26px 0}.dialog-head button{padding:5px 10px;background:transparent;border:0;font-size:22px}.dialog-body{padding:25px 30px 30px}.dialog-body h2{font-size:25px;margin-bottom:10px}.dialog-body>.muted{margin-bottom:21px}.dialog-pet{width:190px;height:190px;display:block;object-fit:contain;margin:4px auto 18px;background:#f4ead3;border-radius:50%}.dialog-actions{margin-top:25px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}.step-indicator{display:flex;gap:7px;margin-bottom:23px}.step-indicator span{height:4px;background:#e6dece;flex:1;border-radius:4px}.step-indicator span.current{background:var(--accent)}.walkthrough{padding:17px;background:#f4efe3;border-radius:15px;line-height:1.9}.walkthrough strong{display:block}.preview-check{background:#edf0e5;color:#46583b;padding:12px;border-radius:12px;margin-top:15px}.settings-dialog{margin:0 0 0 auto;max-height:100vh;height:100vh;border-radius:24px 0 0 24px;width:min(455px,100vw)}.settings-dialog .dialog-body{padding-top:14px}.tray-wrap{position:fixed;left:16px;bottom:16px;z-index:5}.tray-button{background:#384332!important;color:#fffaf1;border-color:#384332;box-shadow:0 5px 20px #23351b25;padding:10px 14px;font-size:12px}.tray-menu{position:absolute;bottom:49px;left:0;width:245px;background:var(--panel);border:1px solid var(--line);border-radius:15px;box-shadow:0 15px 45px #32271620;padding:10px}.tray-menu .tray-title{padding:9px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);margin-bottom:5px}.tray-menu button{width:100%;text-align:left;border:0;background:transparent;padding:10px;font-size:13px}.desktop-pet{position:fixed;width:105px;height:105px;z-index:4;cursor:grab;touch-action:none;user-select:none}.desktop-pet:active{cursor:grabbing}.desktop-pet img{height:100%;width:100%;object-fit:contain;pointer-events:none}.desktop-caption{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap;color:#63523e;background:#fffaf0dd;padding:3px 7px;border-radius:8px}.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);padding:13px 22px;border-radius:13px;background:#3b4435;color:#fffdf5;z-index:20;box-shadow:0 5px 25px #2f382529;max-width:calc(100vw - 35px);text-align:center}.version-note{font-size:12px;color:var(--muted);margin-top:26px}
+    @media(max-width:999px){.sidebar{width:72px;padding:23px 10px}.brand{padding:0;justify-content:center}.brand-info,.nav-label,.sidebar-pet,.sidebar-bottom .settings-label{display:none}.nav button{justify-content:center;padding:13px 0}.nav-icon{width:26px}.sidebar-bottom>button{text-align:center;padding:10px}.companion-grid{grid-template-columns:minmax(0,1fr)}.controls{grid-template-columns:1fr 1fr;gap:12px}.controls h2,.controls .status-note,.controls .control-line,.controls>p{grid-column:1/-1}.content{padding:27px 25px 110px}.hero{min-height:410px}.pet-space{height:250px}.pet-button{width:245px;height:245px}}
+    @media(max-width:620px){.content{padding:22px 16px 110px}.page-head{align-items:flex-start}.page-head h1{font-size:22px}.page-head .chip{display:none}.lab{padding:10px 13px;gap:9px}.lab .note{display:none}.hero-top{padding:17px}.hero-top .small{display:none}.controls{grid-template-columns:1fr}.maker-options{grid-template-columns:1fr}.dialog-body{padding:20px}.interaction-bar button{min-width:0}.desktop-pet{width:84px;height:84px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body>
+  <div class="lab" aria-label="原型演示工具">
+    <strong>交互方案 v0.2</strong><span class="note">演示数据 · 不控制真实桌宠</span>
+    <span class="spacer"></span>
+    <label for="scenario">场景<select id="scenario"><option value="first">首次领养</option><option value="daily">日常陪伴</option><option value="hidden">已收起</option><option value="snoozed">休息一小时</option><option value="paused">动画暂停</option><option value="error">素材缺失</option><option value="empty">空宠物架</option></select></label>
+    <label for="platform">系统<select id="platform"><option value="mac">macOS</option><option value="linux">Linux</option></select></label>
+    <button id="expire" type="button" hidden>模拟休息到期</button>
+  </div>
+  <div id="app"></div><div id="announcer" role="status" aria-live="polite"></div>
+  <script>
+    'use strict';
+    const assetRoot=location.protocol==='file:'?'../../public/frame-pack':'/frame-pack';
+    const app=document.getElementById('app');
+    const systemMotion=matchMedia('(prefers-reduced-motion: reduce)');
+    const state={screen:'companion',name:'咕唧',draftName:'咕唧',adopted:false,mode:'shown',until:null,paused:false,autonomous:true,motion:'system',zoom:100,clickThrough:true,autostart:false,ready:true,action:'idle',speech:'你忙你的，我在这里。',dialog:'onboarding',step:1,platform:'mac',tray:false,position:null,makerOpen:false};
+    let actionRemainingMs=0,toastTimer,lastInteraction=-Infinity,frame=0,drag=null,returnFocus='settings-open';
+    const escapeHTML=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const reduced=()=>state.motion==='reduce'||(state.motion==='system'&&systemMotion.matches);
+    const visible=()=>state.adopted&&state.ready&&state.mode==='shown';
+    const clock=value=>new Date(value).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+    const petImage=(extra='')=>`<img data-pet src="${assetRoot}/${state.action}/000.png" alt="${escapeHTML(state.name)}" draggable="false" ${extra}>`;
+    function statusText(){
+      if(!state.adopted)return '等待领养';
+      if(!state.ready)return '需要帮助';
+      if(state.mode==='snoozed')return `休息中，${clock(state.until)}回来`;
+      if(state.mode==='hidden')return '已收起，随时可以叫回来';
+      if(state.paused)return '安静陪着你 · 动画已暂停';
+      if(reduced())return '安静陪着你 · 低动态';
+      return state.autonomous?'正在桌面陪着你':'在桌面陪着你 · 固定姿态';
+    }
+    function toast(message){
+      clearTimeout(toastTimer);const announcer=document.getElementById('announcer');
+      announcer.innerHTML=`<div class="toast">${escapeHTML(message)}</div>`;
+      toastTimer=setTimeout(()=>announcer.replaceChildren(),3000);
+    }
+    function controls(){
+      const inactive=!state.adopted||!state.ready;
+      return `<aside class="card controls"><h2>按你的节奏陪伴</h2><div class="status-note">${escapeHTML(statusText())}</div>
+        <button id="control-visibility" data-act="${state.mode==='shown'?'hide':'show'}" ${inactive?'disabled':''}>${state.mode==='shown'?'暂时收起':'立即唤回'}</button>
+        <button id="control-snooze" data-act="snooze" ${inactive||state.mode==='snoozed'?'disabled':''}>休息一小时</button>
+        <div class="control-line"></div><button id="control-pause" data-act="pause" ${inactive?'disabled':''}>${state.paused?'恢复桌宠动画':'暂停桌宠动画'}</button>
+        <button id="settings-inline" data-act="settings">偏好设置</button><p>收起不会移除伙伴。你随时可以从菜单栏 / 托盘找回它。</p></aside>`;
+    }
+    function recovery(){
+      if(!state.adopted||state.ready)return '';
+      return `<section class="notice" role="alert"><strong>暂时找不到${escapeHTML(state.name)}的动作素材</strong><p>名字和资料仍在。你可以重试加载，或前往制作页面检查素材。</p><div class="row"><button data-act="retry">重试加载</button><button data-act="shelf">查看已有伙伴</button><button data-act="maker">打开制作</button></div><details><summary>查看详情</summary><p class="small">素材来源暂不可用。错误代码：ASSET_NOT_FOUND。此场景为页面演示。</p></details></section>`;
+    }
+    function companion(){
+      if(!state.adopted)return `<header class="page-head"><div><div class="eyebrow">一点点陪伴，刚刚好</div><h1>这里暂时没有伙伴</h1></div></header>${empty()}`;
+      const unavailable=!visible()||state.paused;
+      const help=!state.ready?'先恢复素材':state.mode!=='shown'?'先唤回伙伴':state.paused?'先恢复动画':reduced()?'低动态已开启，互动会用文字回应':'点击伙伴，或试着向它打个招呼';
+      return `<header class="page-head"><div><div class="eyebrow">一点点陪伴，刚刚好</div><h1>今天，${escapeHTML(state.name)}陪着你</h1><p class="muted">留一点空间，给一位小伙伴。</p></div><span class="chip"><span class="dot"></span>本地伙伴</span></header>${recovery()}
+        <div class="companion-grid"><section><div class="card hero"><div class="hero-top"><span class="chip ${!visible()?'dim':''}"><span class="dot"></span>${escapeHTML(statusText())}</span><span class="small muted">伙伴预览</span></div><div class="pet-space"><button id="pet-preview" class="pet-button ${!visible()?'resting':''}" data-act="pet" aria-label="摸摸${escapeHTML(state.name)}" ${unavailable?'disabled':''}>${petImage()}</button></div><p class="speech" role="status">${escapeHTML(state.speech)}</p><div class="interaction-bar"><button id="interaction-pet" class="primary" data-act="pet" ${unavailable?'disabled':''}>摸摸头</button><button id="interaction-greet" data-act="greet" ${unavailable?'disabled':''}>打个招呼</button></div></div><p class="small muted" style="margin:12px 3px">${help}</p>
+        <details class="card details"><summary>更多动作与预览工具</summary><p class="muted small">正式应用在这里保留六个动作和“仅预览”逐帧工具。本原型聚焦日常控制与互动。</p></details></section>${controls()}</div><p class="version-note">原型中的右下角小伙伴模拟桌面窗口，可点击或拖动；左下角模拟菜单栏恢复入口。</p>`;
+    }
+    function empty(){return `<section class="card empty"><div class="empty-icon">♧</div><h2>为今天添一位小伙伴</h2><p class="muted">可以领养咕唧，也可以带回你已经制作好的伙伴。</p><div class="row"><button class="primary" data-act="adopt">去领养</button><button data-act="maker">导入已有伙伴</button></div></section>`;}
+    function adopt(){return `<header class="page-head"><div><div class="eyebrow">从一次见面开始</div><h1>领养与制作</h1><p class="muted">选一位现成伙伴，或者慢慢制作自己的那一只。</p></div></header><div class="gallery"><article class="card pet-card"><div class="portrait">${petImage()}</div><div class="row"><h2>咕唧</h2><span class="chip dim">原创伙伴</span></div><p class="muted">圆圆的肚子，有一点好奇。会安静陪着你，也喜欢收到摸摸。</p><button class="primary" data-act="${state.adopted?'companion':'start-adoption'}">${state.adopted?'去看看我的伙伴':'领养咕唧'}</button></article><aside class="future-note"><h3>先从一位伙伴开始</h3><p>首版沿用现有完整素材。后续角色会在动作和体验准备好后加入。</p></aside></div>
+      <details id="maker-details" class="card details" ${state.makerOpen?'open':''}><summary>高级制作</summary><p class="muted">这三个入口在正式应用中复用现有制作能力，原型仅展示位置。</p><div class="maker-options"><article><h3>导入本地帧包</h3><p>带回已有角色与动作。</p></article><article><h3>动作帧装配</h3><p>逐个动作检查和替换帧。</p></article><article><h3>照片定制</h3><p>保留现有 AI 生成与继续功能。</p></article></div></details>`;}
+    function shelf(){return `<header class="page-head"><div><div class="eyebrow">属于你的伙伴</div><h1>我的伙伴</h1><p class="muted">这里保留你的收藏，收起桌宠也不会移除资料。</p></div><button data-act="adopt">领养伙伴</button></header>${state.adopted?`<div class="gallery"><article class="card pet-card"><div class="portrait">${petImage()}</div><h2>${escapeHTML(state.name)}</h2><p class="muted">${escapeHTML(statusText())}</p><div class="row"><button data-act="rename">改个名字</button><button class="primary" data-act="${state.ready?'deploy':'retry'}">${state.ready?'派去桌面':'重试加载'}</button></div><div class="row"><button class="quiet danger" data-act="remove">从我的伙伴移除</button></div></article></div>`:empty()}`;}
+    function settings(){return `<dialog id="modal" class="settings-dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">偏好设置</h2><button data-act="close" aria-label="关闭偏好设置">×</button></div><div class="dialog-body"><p class="muted small">这里的设置与菜单栏 / 托盘保持一致。</p>
+      <div class="setting-row"><label for="paused"><strong>暂停桌宠动画</strong><span>伙伴留在原处，画面停下来</span></label><input id="paused" data-setting="paused" type="checkbox" ${state.paused?'checked':''}></div>
+      <div class="setting-row"><label for="autonomous"><strong>自主活动</strong><span>自动变换姿态，不移动桌面位置</span></label><input id="autonomous" data-setting="autonomous" type="checkbox" ${state.autonomous?'checked':''}></div>
+      <div class="setting-row"><label for="zoom"><strong>伙伴大小 · ${state.zoom}%</strong><span>按你的屏幕选择舒适的比例</span></label><input id="zoom" data-setting="zoom" type="range" min="50" max="150" step="5" value="${state.zoom}"></div>
+      ${state.platform==='mac'?`<div class="setting-row"><label for="clickThrough"><strong>透明区域穿透</strong><span>伙伴周围的空白不挡住鼠标</span></label><input id="clickThrough" data-setting="clickThrough" type="checkbox" ${state.clickThrough?'checked':''}></div><div class="setting-row"><label><strong>屏幕位置</strong><span>把伙伴叫回屏幕右下角</span></label><button data-act="reset-position">重置位置</button></div>`:`<p class="hint" style="margin-top:16px">Linux 首版尚未提供透明区域穿透和位置重置；其余支持能力按实际运行结果显示。</p>`}
+      <div class="setting-row"><label for="autostart"><strong>开机启动</strong><span>由你决定是否随系统启动</span></label><input id="autostart" data-setting="autostart" type="checkbox" ${state.autostart?'checked':''}></div>
+      <div class="setting-row"><label for="motion"><strong>减少动态效果</strong><span>静态画面，互动用文字回应</span></label><select id="motion" data-setting="motion"><option value="system" ${state.motion==='system'?'selected':''}>跟随系统</option><option value="reduce" ${state.motion==='reduce'?'selected':''}>始终减少</option></select></div>
+      ${reduced()?'<p class="hint" style="margin-top:16px">低动态已开启。原来的播放和自主活动偏好仍为你保留。</p>':''}<div class="setting-row"><label><strong>重新认识彼此</strong><span>查看点击、拖动和托盘教学</span></label><button data-act="tutorial">查看教学</button></div><p class="small muted" style="margin-top:20px">此处所有开关仅模拟页面状态，不修改系统配置。</p></div></dialog>`;}
+    function onboarding(){
+      const steps=`<div class="step-indicator" aria-label="第 ${state.step} 步，共 3 步">${[1,2,3].map(i=>`<span class="${i<=state.step?'current':''}"></span>`).join('')}</div>`;
+      let body='';
+      if(state.step===1)body=`${steps}<h2>给今天添一点陪伴</h2><p class="muted">咕唧已经准备好了。选个名字，就可以把它带到桌面。</p><img class="dialog-pet" src="${assetRoot}/idle/000.png" alt="原创伙伴咕唧"><div class="hint">使用内置伙伴，无需照片和在线生成服务。</div><div class="dialog-actions"><button data-act="browse">先浏览</button><button class="primary" data-act="name-step">下一步</button></div>`;
+      if(state.step===2)body=`${steps}<h2>想怎么称呼它？</h2><p class="muted">熟悉的名字，会让每一次见面更亲切。</p><label class="form-label" for="pet-name">伙伴名字</label><input id="pet-name" type="text" maxlength="20" value="${escapeHTML(state.draftName)}" autocomplete="off"><p id="name-help" class="small muted" style="margin-top:9px">最多 20 个字符，可以以后再改。</p><div class="dialog-actions"><button data-act="use-default">直接使用咕唧</button><button id="confirm-name" class="primary" data-act="confirm-name" ${!state.draftName.trim()?'disabled':''}>领养并入住</button></div>`;
+      if(state.step===3)body=`${steps}<h2>${escapeHTML(state.name)}，很高兴见到你</h2><p class="muted">现在，它会在桌面安静陪着你。</p><button id="meet-pet" class="pet-button" data-act="pet" aria-label="试着摸摸${escapeHTML(state.name)}" style="margin:auto;display:block;width:180px;height:180px">${petImage()}</button><div class="walkthrough"><strong>摸摸它，看看回应</strong>拖动可以换位置，右键可以找到更多动作。<br>关闭主窗口后，伙伴仍在桌面。需要时从菜单栏 / 托盘找回。</div><div class="dialog-actions"><button data-act="finish">稍后熟悉</button><button class="primary" data-act="finish">完成见面</button></div>`;
+      return `<dialog id="modal" aria-label="领养与见面教学"><div class="dialog-body">${body}</div></dialog>`;
+    }
+    function renameDialog(){return `<dialog id="modal" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">改个名字</h2><button data-act="close" aria-label="关闭重命名">×</button></div><div class="dialog-body"><label class="form-label" for="pet-name">伙伴名字</label><input id="pet-name" maxlength="20" value="${escapeHTML(state.draftName)}"><div class="dialog-actions"><button data-act="close">取消</button><button class="primary" id="confirm-name" data-act="save-name" ${!state.draftName.trim()?'disabled':''}>保存名字</button></div></div></dialog>`;}
+    function render(){
+      const focused=document.activeElement?.id;
+      const navigation=[['companion','♧','陪伴'],['adopt','✧','领养与制作'],['shelf','▤','我的伙伴']];
+      app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">♧</span><div class="brand-info"><strong>贴贴宠物</strong><div class="small muted">一点点陪伴</div></div></div><nav class="nav" aria-label="主导航">${navigation.map(([key,icon,label])=>`<button id="nav-${key}" data-act="${key}" class="${state.screen===key?'active':''}" title="${label}" aria-label="${label}" ${state.screen===key?'aria-current="page"':''}><span class="nav-icon" aria-hidden="true">${icon}</span><span class="nav-label">${label}</span></button>`).join('')}</nav><div class="sidebar-bottom"><button id="settings-open" data-act="settings" title="偏好设置"><span aria-hidden="true">⚙</span> <span class="settings-label">偏好设置</span></button><div class="sidebar-pet row">${state.adopted?`${petImage()}<div><strong>${escapeHTML(state.name)}</strong><p class="small muted">${escapeHTML(statusText())}</p></div>`:'<p class="small muted">等待一位小伙伴</p>'}</div></div></aside><main class="content" id="main">${state.screen==='companion'?companion():state.screen==='adopt'?adopt():shelf()}</main></div>
+      <div class="tray-wrap">${state.tray?`<div class="tray-menu" aria-label="托盘演示菜单"><div class="tray-title">${escapeHTML(state.adopted?state.name:'贴贴宠物')} · ${escapeHTML(statusText())}</div><button data-act="companion">打开主界面</button><button data-act="${state.mode==='shown'?'hide':'show'}" ${!state.adopted?'disabled':''}>${state.mode==='shown'?'暂时收起':'立即唤回'}</button><button data-act="snooze" ${!state.adopted?'disabled':''}>休息一小时</button><button data-act="pause" ${!state.adopted?'disabled':''}>${state.paused?'✓ 动画已暂停 · 恢复':'暂停桌宠动画'}</button><button data-act="autonomous">${state.autonomous?'✓ ':''}自主活动</button><button data-act="settings">偏好设置</button></div>`:''}<button class="tray-button" id="tray-button" data-act="tray" aria-expanded="${state.tray}">♧ 菜单栏 / 托盘演示</button></div>
+      ${visible()?`<div class="desktop-pet" id="floating-pet" data-drag-pet role="button" tabindex="0" aria-label="摸摸桌面演示中的${escapeHTML(state.name)}，拖动可移动" style="left:${state.position?.x??Math.max(80,innerWidth-142)}px;top:${state.position?.y??innerHeight-165}px;transform:scale(${state.zoom/100});transform-origin:center">${petImage()}<span class="desktop-caption">桌面演示</span></div>`:''}
+      ${state.dialog==='settings'?settings():state.dialog==='onboarding'?onboarding():state.dialog==='rename'?renameDialog():''}`;
+      document.getElementById('expire').hidden=state.mode!=='snoozed';
+      const modal=document.getElementById('modal');
+      if(modal){modal.showModal();modal.addEventListener('cancel',event=>{event.preventDefault();closeDialog();});}
+      if(focused&&document.getElementById(focused))document.getElementById(focused).focus({preventScroll:true});
+      if(state.dialog==='onboarding'&&state.step===2&&!focused)document.getElementById('pet-name')?.focus();
+    }
+    function closeDialog(){state.dialog=null;render();document.getElementById(returnFocus)?.focus();}
+    function interact(kind){
+      if(!visible()||state.paused)return;
+      if(performance.now()-lastInteraction<1500)return;
+      lastInteraction=performance.now();
+      state.speech=kind==='greet'?'我在这里！':'收到你的摸摸了。';
+      if(!reduced()){state.action=kind==='greet'?'jump':'happy';frame=0;actionRemainingMs=kind==='greet'?550:650;}
+      render();toast(state.speech);
+    }
+    function act(action,source){
+      if(['companion','adopt','shelf'].includes(action)){state.screen=action;state.tray=false;render();return;}
+      if(action==='settings'){returnFocus=source?.id||'settings-open';state.dialog='settings';state.tray=false;render();return;}
+      if(action==='close'){closeDialog();return;}
+      if(action==='tray'){state.tray=!state.tray;render();return;}
+      if(action==='pet'||action==='greet'){interact(action);return;}
+      if(action==='start-adoption'){state.draftName='咕唧';state.step=2;state.dialog='onboarding';render();document.getElementById('pet-name')?.focus();return;}
+      if(action==='name-step'){state.step=2;render();document.getElementById('pet-name')?.focus();return;}
+      if(action==='browse'){state.dialog=null;state.screen='adopt';render();return;}
+      if(action==='use-default')state.draftName='咕唧';
+      if(action==='confirm-name'||action==='use-default'){
+        if(!state.draftName.trim())return;
+        state.name=state.draftName.trim();state.adopted=true;state.ready=true;state.mode='shown';state.until=null;state.step=3;state.action='idle';actionRemainingMs=0;state.screen='companion';render();return;
+      }
+      if(action==='finish'){state.dialog=null;state.screen='companion';render();return;}
+      if(action==='rename'){returnFocus='nav-shelf';state.draftName=state.name;state.dialog='rename';render();document.getElementById('pet-name')?.focus();return;}
+      if(action==='save-name'){if(!state.draftName.trim())return;state.name=state.draftName.trim();closeDialog();toast('新的名字，已经记住了。');return;}
+      if(action==='tutorial'){state.dialog='onboarding';state.step=3;render();return;}
+      if(action==='maker'){state.screen='adopt';state.makerOpen=true;render();document.getElementById('maker-details').scrollIntoView({block:'center'});return;}
+      if(action==='retry'){state.ready=true;render();toast('演示素材已恢复，名字和资料都在。');return;}
+      if(action==='remove'){if(!confirm(`从我的伙伴移除${state.name}？原始素材不受影响。`))return;state.adopted=false;state.mode='shown';state.until=null;state.tray=false;render();return;}
+      if(action==='pause'){state.paused=!state.paused;render();return;}
+      if(action==='autonomous'){state.autonomous=!state.autonomous;render();return;}
+      if(action==='reset-position'){state.position=null;render();toast('演示中的伙伴已回到右下角。');return;}
+      if(action==='hide'||action==='show'||action==='snooze'||action==='deploy'){
+        if(!state.adopted||!state.ready)return;
+        state.mode=action==='hide'?'hidden':action==='snooze'?'snoozed':'shown';state.until=action==='snooze'?Date.now()+3600000:null;state.tray=false;frame=0;
+        if(action==='deploy')state.screen='companion';
+        render();return;
+      }
+    }
+    app.addEventListener('click',event=>{const button=event.target.closest('[data-act]');if(button&&!button.disabled)act(button.dataset.act,button);});
+    app.addEventListener('input',event=>{if(event.target.id==='pet-name'){state.draftName=event.target.value;const button=document.getElementById('confirm-name');if(button)button.disabled=!state.draftName.trim();}});
+    app.addEventListener('change',event=>{const key=event.target.dataset.setting;if(!key)return;state[key]=event.target.type==='checkbox'?event.target.checked:key==='zoom'?Number(event.target.value):event.target.value;render();});
+    app.addEventListener('keydown',event=>{
+      if(event.target.id==='pet-name'&&event.key==='Enter'&&!event.isComposing){event.preventDefault();act(state.dialog==='rename'?'save-name':'confirm-name');}
+      if(event.target.id==='floating-pet'&&['Enter',' '].includes(event.key)){event.preventDefault();interact('pet');}
+    });
+    app.addEventListener('pointerdown',event=>{const target=event.target.closest('[data-drag-pet]');if(!target||event.button!==0)return;const rect=target.getBoundingClientRect();drag={startX:event.clientX,startY:event.clientY,x:rect.left,y:rect.top,moved:false,target};target.setPointerCapture(event.pointerId);});
+    app.addEventListener('pointermove',event=>{if(!drag)return;const dx=event.clientX-drag.startX,dy=event.clientY-drag.startY;if(Math.abs(dx)>3||Math.abs(dy)>3)drag.moved=true;if(drag.moved){state.position={x:Math.max(0,Math.min(innerWidth-105,drag.x+dx)),y:Math.max(55,Math.min(innerHeight-125,drag.y+dy))};drag.target.style.left=state.position.x+'px';drag.target.style.top=state.position.y+'px';}});
+    app.addEventListener('pointerup',()=>{if(!drag)return;const moved=drag.moved;drag=null;if(moved){render();toast('就在这里陪你。');}else interact('pet');});
+    app.addEventListener('pointercancel',()=>{drag=null;});
+    document.getElementById('scenario').addEventListener('change',event=>{
+      actionRemainingMs=0;lastInteraction=-Infinity;frame=0;
+      Object.assign(state,{screen:'companion',name:'咕唧',draftName:'咕唧',adopted:true,mode:'shown',until:null,paused:false,ready:true,action:'idle',speech:'你忙你的，我在这里。',dialog:null,step:1,tray:false,position:null,motion:'system',autonomous:true,zoom:100});
+      const value=event.target.value;
+      if(value==='first'){state.adopted=false;state.dialog='onboarding';}
+      if(value==='empty'){state.adopted=false;state.screen='shelf';}
+      if(value==='hidden'||value==='snoozed'){state.mode=value;if(value==='snoozed')state.until=Date.now()+3600000;}
+      if(value==='paused')state.paused=true;
+      if(value==='error')state.ready=false;
+      render();
+    });
+    document.getElementById('platform').addEventListener('change',event=>{state.platform=event.target.value;render();});
+    document.getElementById('expire').addEventListener('click',()=>{if(state.mode==='snoozed'){state.mode='shown';state.until=null;frame=0;render();toast('休息到期，当前伙伴回来了。');}});
+    setInterval(()=>{
+      if(state.mode==='snoozed'&&Date.now()>=state.until){state.mode='shown';state.until=null;frame=0;render();}
+      if(!visible()||state.paused||reduced()||document.hidden)return;
+      frame=(frame+1)%5;
+      if(actionRemainingMs>0){actionRemainingMs=Math.max(0,actionRemainingMs-150);if(actionRemainingMs===0){state.action='idle';frame=0;}}
+      document.querySelectorAll('[data-pet]').forEach(image=>{image.src=`${assetRoot}/${state.action}/${String(frame).padStart(3,'0')}.png`;});
+    },150);
+    systemMotion.addEventListener('change',()=>render());
+    render();
+  </script>
+</body>
+</html>
