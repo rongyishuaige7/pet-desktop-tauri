@@ -102,6 +102,8 @@ pub struct Runtime {
     pub error_seq: u64,
     pub last_interaction: Option<Instant>,
     pub last_motion_check: Option<Instant>,
+    /// Discards a slow frame-pack load that a newer attach/detach superseded.
+    pub attach_seq: u64,
 }
 
 impl Default for Runtime {
@@ -140,6 +142,7 @@ impl Default for Runtime {
             error_seq: 0,
             last_interaction: None,
             last_motion_check: None,
+            attach_seq: 0,
         }
     }
 }
@@ -214,6 +217,7 @@ pub fn configure(
             recoverable: true,
         });
         runtime.error_seq = 0;
+        runtime.attach_seq = 0;
         runtime.next_behavior_at = Some(Instant::now() + Duration::from_secs(5));
         runtime.revision += 1;
     }
@@ -432,14 +436,24 @@ pub fn set_frame_root(
 
     let source = normalize_frame_root(Some(root.to_string()));
     let resolved = resolve_frame_root(&source);
+    let operation = {
+        let mut runtime = runtime()
+            .lock()
+            .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+        runtime.attach_seq += 1;
+        runtime.attach_seq
+    };
     // Validate before committing the runtime path. Invalid packs leave the old
     // pet intact and only surface an operation-level error.
     if let Err(error) = scan_pack(&resolved) {
-        let healthy = runtime()
+        let current = runtime()
             .lock()
-            .map(|runtime| runtime.frames_ready && runtime.availability == Availability::Ready)
-            .unwrap_or(false);
-        if !healthy {
+            .map(|runtime| (runtime.attach_seq == operation, runtime.frames_ready && runtime.availability == Availability::Ready))
+            .unwrap_or((false, false));
+        if !current.0 {
+            return Err(error);
+        }
+        if !current.1 {
             if let Ok(mut runtime) = runtime().lock() {
                 runtime.availability = Availability::Error;
                 runtime.frames_ready = false;
@@ -459,6 +473,9 @@ pub fn set_frame_root(
         let mut runtime = runtime()
             .lock()
             .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+        if runtime.attach_seq != operation {
+            return Err("宠物选择已更新，已忽略旧请求".to_string());
+        }
         runtime.root_dir = resolved;
         runtime.frame_source = source;
         runtime.pet_id = pet_id;
@@ -509,6 +526,7 @@ pub fn detach_native_pet() -> Result<(), String> {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+        runtime.attach_seq += 1;
         runtime.pet_id = None;
         runtime.pet_name = None;
         runtime.frames_ready = false;

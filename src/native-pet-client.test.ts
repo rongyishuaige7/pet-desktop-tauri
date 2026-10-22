@@ -66,7 +66,7 @@ describe("native pet client", () => {
     snapshot.resolve(baseState({ revision: 5, action: "idle" }));
     await started;
 
-    expect(received.at(-1)).toBe(newer);
+    expect(received.at(-1)).toStrictEqual(newer);
     expect(received.at(-1)?.action).toBe("sleep");
   });
 
@@ -89,7 +89,7 @@ describe("native pet client", () => {
     await client.start((state) => received.push(state));
     const next = await client.update({ kind: "hide" });
     expect(next.visibilityMode).toBe("hidden");
-    expect(received.at(-1)).toBe(next);
+    expect(received.at(-1)).toStrictEqual(next);
   });
 
   it("refreshes the authoritative state when a command fails", async () => {
@@ -116,7 +116,7 @@ describe("native pet client", () => {
     await client.start((state) => received.push(state));
     await expect(client.update({ kind: "setScale", value: 1.2 })).rejects.toThrow("disk full");
     expect(reads).toBe(2);
-    expect(received.at(-1)).toBe(refreshed);
+    expect(received.at(-1)).toStrictEqual(refreshed);
   });
 
   it("accepts a restarted process session", async () => {
@@ -135,7 +135,7 @@ describe("native pet client", () => {
     await client.start((state) => received.push(state));
     const restarted = baseState({ revision: 1, sessionId: "new", petId: null });
     handler!(restarted);
-    expect(received.at(-1)).toBe(restarted);
+    expect(received.at(-1)).toStrictEqual(restarted);
     client.dispose();
   });
 });

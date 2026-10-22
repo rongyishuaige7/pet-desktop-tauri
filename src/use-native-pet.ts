@@ -141,7 +141,7 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
       if (!client) throw new Error("原生桌宠尚未连接");
       try {
         const next = await client.update(request);
-        setState(next);
+        setState({ ...next });
         setError(null);
         return next;
       } catch (err) {
@@ -172,7 +172,7 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
       if (!client) return null;
       try {
         const result = await client.interact(kind, petRef.current?.id ?? null);
-        setState(result.state);
+        setState({ ...result.state });
         return result;
       } catch (err) {
         setError(formatError(err));
@@ -188,7 +188,7 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
       const client = clientRef.current;
       if (!client) throw new Error("原生桌宠尚未连接");
       const next = await client.attach(rootDir, petId, petName);
-      setState(next);
+      setState({ ...next });
       return next;
     },
     [isTauri]

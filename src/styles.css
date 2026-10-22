@@ -1131,3 +1131,53 @@ button {
   outline: none;
   width: 140px;
 }
+
+/* Companion visibility controls */
+.companion-controls {
+  gap: 12px;
+}
+
+.companion-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-mint);
+  flex: none;
+}
+
+.web-demo-tag {
+  margin-left: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: rgba(45, 35, 25, 0.06);
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.companion-control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.companion-control-buttons .btn-secondary {
+  height: 36px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.companion-control-note {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+}

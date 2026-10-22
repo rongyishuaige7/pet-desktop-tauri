@@ -40,8 +40,16 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
   let onChange: ((state: NativePetState) => void) | null = null;
 
   function apply(next: NativePetState) {
-    const merged = mergeStateEvent(current, next);
-    if (merged === current) return;
+    // Copy snapshots: callers and test doubles may reuse one mutable object.
+    const candidate = { ...next };
+    const merged = mergeStateEvent(current, candidate);
+    if (
+      current &&
+      merged.sessionId === current.sessionId &&
+      merged.revision === current.revision
+    ) {
+      return;
+    }
     current = merged;
     onChange?.(merged);
   }
@@ -59,7 +67,7 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
     const snapshot = await deps.invoke<NativePetState>("get_native_pet_state");
     if (disposed) return;
     ready = true;
-    current = pickNewestState(snapshot, buffered);
+    current = { ...pickNewestState(snapshot, buffered) };
     buffered = [];
     onChange?.(current);
   }

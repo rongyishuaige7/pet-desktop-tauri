@@ -37,7 +37,7 @@ import { AppSidebar } from "./components/shell/AppSidebar";
 import { LiveStage } from "./components/stage/LiveStage";
 import { Workshop } from "./components/workshop/Workshop";
 import { PetShelf } from "./components/shelf/PetShelf";
-import { statusText } from "./native-pet-state";
+import { formatSnoozeTime, statusText } from "./native-pet-state";
 import { useNativePet } from "./use-native-pet";
 import "./styles.css";
 
@@ -311,6 +311,35 @@ function StudioApp() {
     }
     setAutonomous(value);
     localStorage.setItem(AUTONOMOUS_STORAGE, value ? "on" : "off");
+  }
+
+  async function handleToggleVisibility() {
+    const hiding = native.state.visibilityMode === "shown";
+    try {
+      await native.update({ kind: hiding ? "hide" : "show" });
+      showToast(hiding ? "伙伴已收起，随时可以叫回来。" : "伙伴回来了。", "success");
+    } catch (err) {
+      showToast(hiding ? `收起失败：${formatError(err)}` : `唤回失败：${formatError(err)}`, "error");
+    }
+  }
+
+  async function handleSnooze() {
+    if (native.state.visibilityMode === "snoozed") {
+      try {
+        await native.update({ kind: "show" });
+        showToast("已提前唤回伙伴。", "success");
+      } catch (err) {
+        showToast(`唤回失败：${formatError(err)}`, "error");
+      }
+      return;
+    }
+    try {
+      const next = await native.update({ kind: "snooze" });
+      const until = next?.snoozeUntilMs ?? Date.now() + 60 * 60 * 1000;
+      showToast(`伙伴休息到 ${formatSnoozeTime(until)}，到时自动回来。`, "success");
+    } catch (err) {
+      showToast(`休息失败：${formatError(err)}`, "error");
+    }
   }
 
   async function handleToggleNativePaused() {
@@ -600,6 +629,11 @@ function StudioApp() {
             desktopPaused={native.state.animationPaused}
             onToggleDesktopPaused={handleToggleNativePaused}
             autonomousBusy={isTauri && !native.connected}
+            nativeState={native.state}
+            webMode={!isTauri}
+            visibilityBusy={isTauri && !native.connected}
+            onToggleVisibility={handleToggleVisibility}
+            onSnooze={handleSnooze}
             onRenamePet={handleRenamePet}
             onGoToWorkshop={() => setCurrentTab("workshop")}
           />

@@ -343,4 +343,33 @@ try{
    return {passed:stored===0,stored};
   }finally{await context.close();}
  });
+await record('visibility_snooze_and_pause_controls',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  const controls=page.locator('.companion-control-buttons');
+  await controls.getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('已收起'));
+  const hidden=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
+  await controls.getByRole('button',{name:'立即唤回',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('正在桌面陪着你'));
+  const shown=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
+  await controls.getByRole('button',{name:'休息一小时',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('休息中'));
+  const snoozed=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,visible:window.__review.native.visible}));
+  await controls.getByRole('button',{name:'提前唤回',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('正在桌面陪着你'));
+  const woken=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs}));
+  const quickBefore=await page.locator('.quick-controls').innerText();
+  await page.locator('.action-sub-btn').filter({hasText:'暂停动画'}).click();
+  await page.waitForFunction(()=>document.querySelector('.companion-status')?.textContent.includes('动画已暂停'));
+  const quickAfter=await page.locator('.quick-controls').innerText();
+  const paused=await page.evaluate(()=>window.__review.native.animationPaused);
+  const resumeCount=await page.locator('.action-sub-btn').filter({hasText:'恢复动画'}).count();
+  if(!resumeCount)return {passed:false,reason:'resume button missing',paused,quickBefore,quickAfter,status:await page.locator('.companion-status').innerText()};
+  await page.locator('.action-sub-btn').filter({hasText:'恢复动画'}).click();
+  await page.waitForFunction(()=>!document.querySelector('.companion-status')?.textContent.includes('动画已暂停'));
+  return {passed:hidden.mode==='hidden'&&hidden.visible===false&&shown.mode==='shown'&&shown.visible===true&&snoozed.mode==='snoozed'&&snoozed.visible===false&&snoozed.until>Date.now()&&woken.mode==='shown'&&woken.until===null&&paused===true&&errors.length===0,hidden,shown,snoozed,woken,paused,quickBefore,quickAfter,errors};
+ }finally{await context.close();}
+});
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}

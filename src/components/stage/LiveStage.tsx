@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ACTION_TIMING } from "../../config";
 import { PET_ACTIONS, type PetAction, type PetProfile } from "../../types";
+import type { NativePetState } from "../../native-pet-types";
+import { CompanionControls } from "./CompanionControls";
 
 const ACTION_EMOJIS: Record<PetAction, string> = {
   idle: "😺",
@@ -24,6 +26,12 @@ interface LiveStageProps {
   desktopPaused: boolean;
   onToggleDesktopPaused: () => void;
   autonomousBusy?: boolean;
+  nativeState: NativePetState;
+  webMode: boolean;
+  visibilityBusy?: boolean;
+  onToggleVisibility: () => void;
+  onSnooze: () => void;
+  onOpenSettings?: () => void;
   onRenamePet?: (id: string, newName: string) => void;
   onGoToWorkshop: () => void;
 }
@@ -41,6 +49,12 @@ export const LiveStage: React.FC<LiveStageProps> = ({
   desktopPaused,
   onToggleDesktopPaused,
   autonomousBusy = false,
+  nativeState,
+  webMode,
+  visibilityBusy = false,
+  onToggleVisibility,
+  onSnooze,
+  onOpenSettings,
   onRenamePet,
   onGoToWorkshop
 }) => {
@@ -222,6 +236,15 @@ export const LiveStage: React.FC<LiveStageProps> = ({
       </div>
 
       <div className="actions-panel">
+        <CompanionControls
+          state={nativeState}
+          webMode={webMode}
+          busy={visibilityBusy}
+          onToggleVisibility={onToggleVisibility}
+          onSnooze={onSnooze}
+          onOpenSettings={onOpenSettings}
+        />
+
         <div className="section-card">
           <div className="section-title">
             <span>动作自由点选</span>
