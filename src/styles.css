@@ -1181,3 +1181,350 @@ button {
   line-height: 1.6;
   color: var(--text-tertiary);
 }
+
+/* Onboarding */
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(52, 46, 35, 0.34);
+  backdrop-filter: blur(6px);
+}
+
+.onboarding-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+
+.onboarding-body {
+  padding: 30px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.onboarding-body h2 {
+  font-size: 25px;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-lead {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.onboarding-steps {
+  display: flex;
+  gap: 7px;
+}
+
+.onboarding-steps span {
+  height: 4px;
+  flex: 1;
+  border-radius: 4px;
+  background: #e8e1d5;
+}
+
+.onboarding-steps span.current {
+  background: var(--accent-amber);
+}
+
+.onboarding-portrait {
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+  margin: 4px auto;
+  border-radius: 50%;
+  background: var(--accent-amber-light);
+}
+
+.onboarding-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.onboarding-field-error {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a33a2b;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.onboarding-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1.5px solid var(--border-hover);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.onboarding-input:focus {
+  border-color: var(--accent-amber);
+  box-shadow: 0 0 0 3px var(--accent-amber-glow);
+}
+
+.onboarding-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.onboarding-actions .btn-primary,
+.onboarding-actions .btn-secondary {
+  height: 40px;
+  padding: 0 18px;
+}
+
+.onboarding-pet {
+  width: 180px;
+  height: 180px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: var(--accent-amber-light);
+  display: grid;
+  place-items: center;
+}
+
+.onboarding-pet img {
+  width: 150px;
+  height: 150px;
+  object-fit: contain;
+}
+
+.onboarding-pet:focus-visible {
+  outline: 3px solid var(--accent-amber);
+  outline-offset: 4px;
+}
+
+.onboarding-speech {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-height: 20px;
+}
+
+.walkthrough {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: #f5f0e5;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.walkthrough strong {
+  display: block;
+  color: var(--text-primary);
+}
+
+.onboarding-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: #fbeceb;
+  color: #7f2f24;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.onboarding-error .btn-secondary {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.onboarding-busy {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Preset gallery and advanced maker */
+.preset-gallery {
+  background: var(--bg-glass-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.preset-gallery-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.preset-gallery-head h2 {
+  font-size: 20px;
+}
+
+.preset-gallery-head p {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.preset-card {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card-solid);
+}
+
+.preset-portrait {
+  flex: none;
+  width: 104px;
+  height: 104px;
+  border-radius: var(--radius-md);
+  background: var(--accent-amber-light);
+  display: grid;
+  place-items: center;
+}
+
+.preset-portrait img {
+  width: 92px;
+  height: 92px;
+  object-fit: contain;
+}
+
+.preset-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preset-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-title-row h3 {
+  font-size: 17px;
+}
+
+.chip-dim {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(45, 35, 25, 0.06);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.preset-copy p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.preset-actions .btn-primary,
+.preset-actions .btn-secondary {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.preset-note {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.advanced-maker {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--bg-glass-card);
+  padding: 4px 20px 20px;
+}
+
+.advanced-maker > summary {
+  cursor: pointer;
+  padding: 14px 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.advanced-maker[open] > summary {
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 16px;
+}
+
+.stage-empty-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.stage-empty-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.stage-empty-actions .btn-primary,
+.stage-empty-actions .btn-secondary {
+  height: 38px;
+  padding: 0 16px;
+}
+
+@media (max-width: 999px) {
+  .preset-card {
+    flex-direction: column;
+  }
+  .preset-gallery-head {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}

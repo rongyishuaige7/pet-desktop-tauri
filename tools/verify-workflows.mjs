@@ -9,7 +9,7 @@ if (!['localhost', '127.0.0.1'].includes(new URL(base).hostname)) throw new Erro
 const browser=await chromium.launch({executablePath:process.env.PET_CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
 const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
-async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0}={}) {
+async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss'}={}) {
  const context=await browser.newContext({viewport:{width:1120,height:760}});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
  await context.addInitScript(({desktop,settingsAction,missing,packDelay})=>{
@@ -100,7 +100,15 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
  const page=await context.newPage();
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base,{waitUntil:'domcontentloaded'});
- await page.locator('.stage-pet-image').waitFor();
+ await page.locator('.stage-pet-image, .onboarding-dialog, .stage-empty-state').first().waitFor();
+ if(onboarding==='dismiss'){
+  const dialog=page.locator('.onboarding-dialog');
+  if(await dialog.count()){
+   const browse=page.getByRole('button',{name:'先浏览'});
+   if(await browse.count())await browse.click();
+   await dialog.waitFor({state:'detached'}).catch(()=>{});
+  }
+ }
  return {context,page,errors};
 }
 async function seed(page,{desktop=false,active='A',empty=true}={}){
@@ -370,6 +378,115 @@ await record('visibility_snooze_and_pause_controls',async()=>{
   await page.locator('.action-sub-btn').filter({hasText:'恢复动画'}).click();
   await page.waitForFunction(()=>!document.querySelector('.companion-status')?.textContent.includes('动画已暂停'));
   return {passed:hidden.mode==='hidden'&&hidden.visible===false&&shown.mode==='shown'&&shown.visible===true&&snoozed.mode==='snoozed'&&snoozed.visible===false&&snoozed.until>Date.now()&&woken.mode==='shown'&&woken.until===null&&paused===true&&errors.length===0,hidden,shown,snoozed,woken,paused,quickBefore,quickAfter,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_clean_install_adopts_once',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  const dialog=page.locator('.onboarding-dialog');
+  await page.waitForTimeout(400);
+  if(!await dialog.count()){
+   const debug=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {body:document.body.innerText,onboarding:await s.loadOnboardingRecord(),initialized:await s.isCollectionInitialized(),pets:(await s.loadAllPets()).length,native:window.__review.native};});
+   return {passed:false,reason:'no onboarding dialog',debug};
+  }
+  const firstHeading=await dialog.getByRole('heading').first().innerText();
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('团子');
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'团子，很高兴见到你',exact:true}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pets=await s.loadAllPets();const active=await s.loadPet();const record=(await s.loadOnboardingRecord()).record;return {count:pets.length,name:active?.name,activeId:active?.id,record,native:window.__review.native};});
+  await page.getByRole('button',{name:'完成见面',exact:true}).click();
+  await dialog.waitFor({state:'detached'});
+  const done=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  return {passed:firstHeading.includes('给今天添一点陪伴')&&state.count===1&&state.name==='团子'&&state.record?.confirmedPetId===state.activeId&&state.native.petId===state.activeId&&done?.state==='completed'&&errors.length===0,firstHeading,state,done,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_old_user_is_not_forced',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  const dialog=await page.locator('.onboarding-dialog').count();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:dialog===0&&state.pets===2&&state.active==='A'&&state.record?.state==='completed'&&state.record?.confirmedPetId==='A'&&errors.length===0,dialog,state,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_resumes_prepared_adoption',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const o=await import('/src/onboarding.ts');await s.saveOnboardingRecord(o.createOnboardingRecord({state:'in_progress',step:'name',draftName:'团子',adoptionId:'adoption-a',pendingPetId:'pending-a',phase:'prepared'}));});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.onboarding-dialog').waitFor();
+  const draft=await page.locator('#onboarding-name').inputValue();
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'团子，很高兴见到你',exact:true}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),active:(await s.loadPet())?.id,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:draft==='团子'&&state.pets.length===1&&state.pets[0].id==='pending-a'&&state.active==='pending-a'&&state.record?.adoptionId==='adoption-a'&&errors.length===0,draft,state,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_double_click_creates_one_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('咕唧');
+  await page.evaluate(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.textContent?.includes('领养并入住'));button?.click();button?.click();});
+  await page.getByRole('heading',{name:'咕唧，很高兴见到你',exact:true}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:state.pets===1&&state.record?.phase==='committed'&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_empty_old_user_stays_empty',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  for(const name of ['测试甲','测试乙']){
+   page.once('dialog',d=>d.accept());
+   const card=page.locator('.pet-card').filter({hasText:name});
+   await card.getByTitle('删除宠物').click();
+   await card.waitFor({state:'detached'});
+  }
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.stage-empty-state').waitFor();
+  const dialog=await page.locator('.onboarding-dialog').count();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:dialog===0&&state.pets===0&&state.record?.state==='completed'&&errors.length===0,dialog,state,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_commit_failure_rolls_back_and_retries',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  await page.getByRole('button',{name:'再领养一只',exact:true}).click();
+  await page.locator('#onboarding-name').fill('团子');
+  await page.evaluate(()=>{
+   window.__origPut=IDBObjectStore.prototype.put;
+   window.__failCommit=true;
+   IDBObjectStore.prototype.put=function(value,key){
+    const req=window.__origPut.apply(this,arguments);
+    if(window.__failCommit&&this.name==='metadata'&&key==='onboarding_v1'&&value&&value.phase==='committed')queueMicrotask(()=>this.transaction.abort());
+    return req;
+   };
+  });
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.locator('.onboarding-error').waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,native:window.__review.native.petId,record:(await s.loadOnboardingRecord()).record};});
+  await page.evaluate(()=>{window.__failCommit=false;});
+  await page.getByRole('button',{name:'重试',exact:true}).click();
+  await page.getByRole('heading',{name:'团子，很高兴见到你',exact:true}).waitFor();
+  const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.name,native:window.__review.native.petId,record:(await s.loadOnboardingRecord()).record};});
+  return {passed:failed.pets===2&&failed.active==='A'&&failed.native==='A'&&failed.record?.phase==='prepared'&&retried.pets===3&&retried.active==='团子'&&retried.native===retried.record?.confirmedPetId&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('onboarding_corrupt_record_is_not_a_clean_install',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');await s.saveOnboardingRecord({});});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.toast-message.error').filter({hasText:'资料读取失败'}).waitFor();
+  const dialog=await page.locator('.onboarding-dialog').count();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,record:await s.loadOnboardingRecord()};});
+  return {passed:dialog===0&&state.record.corrupt===true&&state.pets===0&&errors.length===0,dialog,state,errors};
  }finally{await context.close();}
 });
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}

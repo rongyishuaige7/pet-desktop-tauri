@@ -32,6 +32,7 @@ interface LiveStageProps {
   onToggleVisibility: () => void;
   onSnooze: () => void;
   onOpenSettings?: () => void;
+  onStartAdoption?: () => void;
   onRenamePet?: (id: string, newName: string) => void;
   onGoToWorkshop: () => void;
 }
@@ -55,6 +56,7 @@ export const LiveStage: React.FC<LiveStageProps> = ({
   onToggleVisibility,
   onSnooze,
   onOpenSettings,
+  onStartAdoption,
   onRenamePet,
   onGoToWorkshop
 }) => {
@@ -186,16 +188,21 @@ export const LiveStage: React.FC<LiveStageProps> = ({
             </div>
           ) : (
             <div className="stage-empty-state">
-              <span className="stage-empty-icon">🐱</span>
-              <p>还没有挑选入住的桌面宠物</p>
-              <button
-                type="button"
-                className="btn-primary"
-                style={{ marginTop: "8px", height: "38px" }}
-                onClick={onGoToWorkshop}
-              >
-                前往工坊制作或导入
-              </button>
+              <span className="stage-empty-icon">🌱</span>
+              <p>这里暂时没有伙伴</p>
+              <p className="stage-empty-hint">可以领养咕唧，也可以带回你已经制作好的伙伴。</p>
+              <div className="stage-empty-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={onStartAdoption ?? onGoToWorkshop}
+                >
+                  去领养
+                </button>
+                <button type="button" className="btn-secondary" onClick={onGoToWorkshop}>
+                  导入已有伙伴
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -22,7 +22,10 @@ import {
   renamePet,
   updatePetAction,
   subscribePetChanges,
-  isCollectionInitialized
+  isCollectionInitialized,
+  loadOnboardingRecord,
+  saveOnboardingRecord,
+  commitAdoptedPet
 } from "./storage";
 import {
   PET_ACTIONS,
@@ -37,6 +40,19 @@ import { AppSidebar } from "./components/shell/AppSidebar";
 import { LiveStage } from "./components/stage/LiveStage";
 import { Workshop } from "./components/workshop/Workshop";
 import { PetShelf } from "./components/shelf/PetShelf";
+import { PresetGallery } from "./components/workshop/PresetGallery";
+import { Onboarding } from "./components/onboarding/Onboarding";
+import {
+  DEFAULT_PET_NAME,
+  MAX_PET_NAME_LENGTH,
+  completeOnboarding,
+  createOnboardingRecord,
+  decideOnboardingStart,
+  markAdoptionCommitted,
+  prepareAdoption,
+  type OnboardingRecord
+} from "./onboarding";
+import { findPreset } from "./presets";
 import { formatSnoozeTime, statusText } from "./native-pet-state";
 import { useNativePet } from "./use-native-pet";
 import "./styles.css";
@@ -68,6 +84,12 @@ function StudioApp() {
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [activePet, setActivePetState] = useState<PetProfile | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingRecord | null>(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [onboardingSpeech, setOnboardingSpeech] = useState("");
+  const onboardingBusyRef = useRef(false);
   const activePetRef = useRef<PetProfile | null>(null);
   const native = useNativePet({ isTauri, pet: activePet });
   const lastNativeActionRevision = useRef(0);
@@ -194,20 +216,42 @@ function StudioApp() {
     const init = serial(async () => {
       transitioning.current = true;
       try {
-        const [all, stored, settings] = await Promise.all([
+        const [all, stored, settings, onboardingLoad, collectionInitialized] = await Promise.all([
           loadAllPets(), loadPet(),
-          isTauri ? invoke<NativePetSettings>("get_native_pet_settings") : Promise.resolve(null)
+          isTauri ? invoke<NativePetSettings>("get_native_pet_settings") : Promise.resolve(null),
+          loadOnboardingRecord().catch(() => ({ record: null, corrupt: true })),
+          isCollectionInitialized().catch(() => null)
         ]);
         if (cancelled) return;
         setPets(all);
         let current = stored ?? all[0] ?? null;
-        if (!current && !await isCollectionInitialized()) {
-          const actions = buildDefaultActionFrames();
-          current = createManualPet({ name: "咕唧 (萌宠小怪兽)", species: "dog",
-            sourceImage: actions.idle[0], manualFrames: actions,
-            frameRoot: DEFAULT_PRESET_FRAME_DIR, storageMode: "preset-root" });
-          await savePet(toPersistedPet(current));
+
+        if (onboardingLoad.corrupt || collectionInitialized === null) {
+          // A failed read must never be mistaken for a clean install.
+          setOnboardingError("资料读取失败，请重试。伙伴资料没有改动。");
+          showToast("资料读取失败，请重试", "error");
+        } else {
+          const start = decideOnboardingStart({
+            record: onboardingLoad.record,
+            initialized: collectionInitialized,
+            pets: all,
+            activePetId: current?.id ?? null
+          });
+          setOnboarding(start.record);
+          setOnboardingOpen(start.kind === "show" || start.kind === "clean");
+          if (start.record.confirmedPetId) {
+            const confirmed = all.find((pet) => pet.id === start.record.confirmedPetId);
+            if (confirmed) current = confirmed;
+          }
+          if (start.kind === "clean" || start.record !== onboardingLoad.record) {
+            try {
+              await saveOnboardingRecord(start.record);
+            } catch (err) {
+              setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+            }
+          }
         }
+
         if (settings) {
           setPresetFrameDir(current?.frameRoot || DEFAULT_PRESET_FRAME_DIR);
           setZoom(normalizeZoom(settings.scale * 100));
@@ -361,6 +405,244 @@ function StudioApp() {
     } catch (err) {
       showToast(`唤回失败：${formatError(err)}`, "error");
     }
+  }
+
+  async function rollbackAdoption(wasShown: boolean) {
+    if (!isTauri) return;
+    const previous = activePetRef.current;
+    try {
+      if (previous?.frameRoot) {
+        await native.attach(previous.frameRoot, previous.id, previous.name);
+        if (wasShown) await native.update({ kind: "show" });
+      } else {
+        await native.detach();
+      }
+    } catch (err) {
+      showToast(`恢复原桌宠失败：${formatError(err)}`, "error");
+    }
+  }
+
+  async function handleOnboardingNext() {
+    if (!onboarding || onboardingBusyRef.current) return;
+    const next: OnboardingRecord = {
+      ...onboarding,
+      step: "name",
+      draftName: onboarding.draftName.trim() || DEFAULT_PET_NAME,
+      updatedAt: new Date().toISOString()
+    };
+    setOnboarding(next);
+    setOnboardingError(null);
+    try {
+      await saveOnboardingRecord(next);
+    } catch (err) {
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+    }
+  }
+
+  function handleOnboardingName(name: string) {
+    if (!onboarding) return;
+    setOnboarding({ ...onboarding, draftName: name.slice(0, MAX_PET_NAME_LENGTH) });
+    setOnboardingError(null);
+  }
+
+  function handleOnboardingNameBlur() {
+    if (!onboarding || onboarding.step !== "name") return;
+    void saveOnboardingRecord(onboarding).catch(() => undefined);
+  }
+
+  async function handleOnboardingBrowse() {
+    if (onboardingBusyRef.current) return;
+    const base = onboarding ?? createOnboardingRecord();
+    const next: OnboardingRecord = {
+      ...base,
+      state: "dismissed",
+      step: "choose",
+      updatedAt: new Date().toISOString()
+    };
+    setOnboarding(next);
+    setOnboardingOpen(false);
+    setOnboardingError(null);
+    setCurrentTab("workshop");
+    try {
+      await saveOnboardingRecord(next);
+    } catch (err) {
+      setOnboardingError(`还没保存成功，可以稍后继续：${formatError(err)}`);
+    }
+  }
+
+  function handleStartAdoption() {
+    const base = onboarding ?? createOnboardingRecord();
+    const next: OnboardingRecord = {
+      ...base,
+      state: "in_progress",
+      step: "name",
+      draftName: base.draftName.trim() || DEFAULT_PET_NAME,
+      adoptionId: null,
+      pendingPetId: null,
+      previousActivePetId: null,
+      phase: "draft",
+      updatedAt: new Date().toISOString()
+    };
+    setOnboarding(next);
+    setOnboardingOpen(true);
+    setOnboardingError(null);
+    setOnboardingSpeech("");
+    void saveOnboardingRecord(next).catch((err) => {
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+    });
+  }
+
+  async function handleAdopt(nameOverride?: string, recordOverride?: OnboardingRecord) {
+    if (onboardingBusyRef.current) return;
+    const base = recordOverride ?? onboarding;
+    if (!base) return;
+    const name = (nameOverride ?? base.draftName).trim();
+    if (!name) {
+      setOnboardingError("给伙伴起个名字，或直接使用咕唧");
+      return;
+    }
+
+    onboardingBusyRef.current = true;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+
+    let plan;
+    try {
+      plan = prepareAdoption(base, name, activePetRef.current?.id ?? null);
+    } catch (err) {
+      setOnboardingError(formatError(err));
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
+
+    const preset = findPreset(plan.record.presetId);
+    const actions = buildDefaultActionFrames();
+    let fullPet: PetProfile;
+    try {
+      fullPet = createManualPet({
+        id: plan.pendingPetId,
+        name: plan.name,
+        species: preset.species,
+        sourceImage: actions.idle[0],
+        manualFrames: actions,
+        frameRoot: preset.frameRoot,
+        storageMode: "preset-root"
+      });
+    } catch (err) {
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
+
+    try {
+      await saveOnboardingRecord(plan.record);
+      setOnboarding(plan.record);
+    } catch (err) {
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
+
+    const wasShown = native.state.visibilityMode === "shown";
+    if (isTauri) {
+      try {
+        await native.attach(preset.frameRoot, plan.pendingPetId, plan.name);
+      } catch (err) {
+        setOnboardingError(
+          `暂时没能把伙伴带到桌面，原来的伙伴已保留。${formatError(err)}`
+        );
+        onboardingBusyRef.current = false;
+        setOnboardingBusy(false);
+        return;
+      }
+    }
+
+    const committed = markAdoptionCommitted(plan.record, plan.pendingPetId);
+    try {
+      await commitAdoptedPet(toPersistedPet(fullPet), committed);
+    } catch (err) {
+      await rollbackAdoption(wasShown);
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
+
+    if (isTauri) {
+      try {
+        await native.update({ kind: "show" });
+      } catch (err) {
+        setOnboardingError(`伙伴资料已保存，但暂时没能显示到桌面：${formatError(err)}`);
+      }
+    }
+
+    setActivePet(fullPet);
+    setPets((prev) =>
+      prev.some((pet) => pet.id === fullPet.id)
+        ? prev.map((pet) => (pet.id === fullPet.id ? fullPet : pet))
+        : [...prev, fullPet]
+    );
+    try {
+      await refreshList();
+    } catch {
+      // The profile is committed; a failed list refresh only re-reads it.
+      try {
+        const saved = await loadPet();
+        if (saved) setActivePet(await ensurePetHydrated(saved));
+      } catch {
+        // Keep the in-memory profile; a later refresh can recover.
+      }
+    }
+    setOnboarding(committed);
+    setOnboardingSpeech("");
+    onboardingBusyRef.current = false;
+    setOnboardingBusy(false);
+    showToast(`「${plan.name}」已经入住桌面。`, "success");
+  }
+
+  async function handleOnboardingFinish() {
+    if (!onboarding) return;
+    const completed = completeOnboarding(
+      onboarding,
+      activePetRef.current?.id ?? onboarding.confirmedPetId
+    );
+    try {
+      await saveOnboardingRecord(completed);
+      setOnboarding(completed);
+      setOnboardingOpen(false);
+      setOnboardingError(null);
+      setOnboardingSpeech("");
+      showToast("已经记住你们第一次见面。", "success");
+    } catch (err) {
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+    }
+  }
+
+  async function handleOnboardingRetry() {
+    if (!onboarding) {
+      window.location.reload();
+      return;
+    }
+    if (onboarding.step === "meet") await handleOnboardingFinish();
+    else if (onboarding.step === "name") await handleAdopt();
+    else await handleOnboardingNext();
+  }
+
+  function handleUseDefault() {
+    if (!onboarding) return;
+    const next = { ...onboarding, draftName: DEFAULT_PET_NAME };
+    setOnboarding(next);
+    void handleAdopt(DEFAULT_PET_NAME, next);
+  }
+
+  async function handleMeetPet() {
+    const result = await native.interact("pet");
+    if (result?.accepted) setOnboardingSpeech("收到你的摸摸了。");
+    else if (result?.reason === "cooldown") setOnboardingSpeech("刚刚已经收到你的摸摸了。");
+    else setOnboardingSpeech("伙伴暂时没有回应，可以先完成见面。");
   }
 
   // Workshop - Import Preset
@@ -634,13 +916,22 @@ function StudioApp() {
             visibilityBusy={isTauri && !native.connected}
             onToggleVisibility={handleToggleVisibility}
             onSnooze={handleSnooze}
+            onStartAdoption={handleStartAdoption}
             onRenamePet={handleRenamePet}
             onGoToWorkshop={() => setCurrentTab("workshop")}
           />
         )}
 
         {currentTab === "workshop" && (
-          <Workshop
+          <>
+            <PresetGallery
+              activePet={activePet}
+              onAdopt={handleStartAdoption}
+              onViewCompanion={() => setCurrentTab("stage")}
+            />
+            <details className="advanced-maker" open>
+              <summary>高级制作：本地导入、动作装配与照片定制</summary>
+              <Workshop
             name={name}
             onChangeName={setName}
             species={species}
@@ -680,8 +971,30 @@ function StudioApp() {
             aiCommitting={aiCommitting}
             canResumeAI={canResumeAI}
             aiLog={aiLog}
-            onGenerateAI={handleGenerateAI}
-            onCancelAI={handleCancelAI}
+                onGenerateAI={handleGenerateAI}
+                onCancelAI={handleCancelAI}
+              />
+            </details>
+          </>
+        )}
+
+        {onboardingOpen && onboarding && (
+          <Onboarding
+            record={onboarding}
+            pet={activePet}
+            isTauri={isTauri}
+            busy={onboardingBusy}
+            error={onboardingError}
+            speech={onboardingSpeech}
+            onChangeName={handleOnboardingName}
+            onNameBlur={handleOnboardingNameBlur}
+            onNext={handleOnboardingNext}
+            onBrowse={handleOnboardingBrowse}
+            onAdopt={() => void handleAdopt()}
+            onUseDefault={handleUseDefault}
+            onFinish={() => void handleOnboardingFinish()}
+            onMeetPet={() => void handleMeetPet()}
+            onRetry={() => void handleOnboardingRetry()}
           />
         )}
 
@@ -704,6 +1017,7 @@ function toPersistedPet(pet: PetProfile) { return persistPet(pet, isTauri); }
 function ensurePetHydrated(pet: PetProfile, action?: PetAction) { return hydratePet(pet, isTauri, action); }
 
 function createManualPet({
+  id,
   name,
   species,
   sourceImage,
@@ -711,6 +1025,7 @@ function createManualPet({
   frameRoot,
   storageMode = "embedded"
 }: {
+  id?: string;
   name: string;
   species: PetSpecies;
   sourceImage: string;
@@ -733,7 +1048,7 @@ function createManualPet({
   ) as ActionFrameSet;
 
   return {
-    id: crypto.randomUUID(),
+    id: id ?? crypto.randomUUID(),
     name: name.trim() || (species === "cat" ? "小猫" : "小狗"),
     species,
     style: "q-sticker",

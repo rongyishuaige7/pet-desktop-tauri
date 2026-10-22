@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { deletePet, isCollectionInitialized, loadAllPets, loadPet, renamePet, savePet, setActivePetId, updatePetAction } from "./storage";
+import { commitAdoptedPet, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingRecord, savePet, setActivePetId, updatePetAction } from "./storage";
+import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -56,5 +57,60 @@ describe("pet collection transactions", () => {
     try { await expect(setActivePetId("A")).rejects.toBeTruthy(); }
     finally { spy.mockRestore(); }
     expect((await loadPet())?.id).toBe("B");
+  });
+});
+
+
+describe("adoption commit", () => {
+  it("writes the profile, active pointer and onboarding record together", async () => {
+    const record = createOnboardingRecord({
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "A"
+    });
+    await commitAdoptedPet(pet("A"), record);
+
+    expect((await loadPet())?.id).toBe("A");
+    expect(await isCollectionInitialized()).toBe(true);
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.corrupt).toBe(false);
+    expect(loaded.record?.confirmedPetId).toBe("A");
+    expect(loaded.record?.phase).toBe("committed");
+  });
+
+  it("is idempotent when a retry reuses the pending pet id", async () => {
+    const record = createOnboardingRecord({ phase: "committed", confirmedPetId: "A" });
+    await commitAdoptedPet(pet("A"), record);
+    await commitAdoptedPet(pet("A"), record);
+    expect(await loadAllPets()).toHaveLength(1);
+    expect((await loadPet())?.id).toBe("A");
+  });
+
+  it("leaves no half-adopted profile when the transaction aborts", async () => {
+    const put = IDBObjectStore.prototype.put;
+    const spy = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+      this: IDBObjectStore,
+      ...args: Parameters<typeof put>
+    ) {
+      const req = put.apply(this, args);
+      if (this.name === "pets_collection") queueMicrotask(() => this.transaction.abort());
+      return req;
+    });
+    try {
+      await expect(
+        commitAdoptedPet(pet("A"), createOnboardingRecord({ phase: "committed" }))
+      ).rejects.toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await loadAllPets()).toEqual([]);
+    expect((await loadOnboardingRecord()).record).toBeNull();
+  });
+
+  it("reports a corrupt onboarding record instead of treating it as absent", async () => {
+    await saveOnboardingRecord({} as never);
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record).toBeNull();
+    expect(loaded.corrupt).toBe(true);
   });
 });

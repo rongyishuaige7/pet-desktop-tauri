@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { withCurrentAction, withRenamedPet } from "./pet-logic";
 import { PET_CHANNEL, STORAGE_KEY, type PetAction, type PetProfile } from "./types";
+import { ONBOARDING_KEY, normalizeOnboardingRecord, type OnboardingRecord } from "./onboarding";
 
 const DB_NAME = "desktop-sticker-pet-db";
 const STORES = ["pet", "pets_collection", "metadata"];
@@ -188,4 +189,47 @@ export function subscribePetChanges(callback: () => void) {
     if (event.data?.type === "pet-updated") callback();
   };
   return () => channel.close();
+}
+
+
+export interface OnboardingLoadResult {
+  record: OnboardingRecord | null;
+  corrupt: boolean;
+}
+
+/** A present but unreadable record is reported separately; it is not a clean install. */
+export function loadOnboardingRecord(): Promise<OnboardingLoadResult> {
+  return transaction<OnboardingLoadResult>("readonly", (tx, done) => {
+    const req = tx.objectStore("metadata").get(ONBOARDING_KEY);
+    req.onsuccess = () => {
+      if (req.result === undefined) return done({ record: null, corrupt: false });
+      const record = normalizeOnboardingRecord(req.result);
+      done({ record, corrupt: record === null });
+    };
+  });
+}
+
+export async function saveOnboardingRecord(record: OnboardingRecord): Promise<void> {
+  await transaction<void>("readwrite", (tx, done) => {
+    tx.objectStore("metadata").put(record, ONBOARDING_KEY);
+    done();
+  });
+}
+
+/**
+ * One transaction commits the profile, the active pointer and the onboarding
+ * record. A failure leaves no half-adopted profile behind.
+ */
+export async function commitAdoptedPet(
+  pet: PetProfile,
+  record: OnboardingRecord
+): Promise<void> {
+  await transaction<void>("readwrite", (tx, done) => {
+    tx.objectStore("pets_collection").put(pet);
+    activate(tx, pet);
+    tx.objectStore("metadata").put(record, ONBOARDING_KEY);
+    done();
+  });
+  localStorage.removeItem(STORAGE_KEY);
+  notifyPetChanged();
 }
