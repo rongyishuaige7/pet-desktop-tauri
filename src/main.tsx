@@ -25,6 +25,7 @@ import {
   isCollectionInitialized,
   loadOnboardingRecord,
   saveOnboardingRecord,
+  claimAdoptionRecord,
   commitAdoptedPet
 } from "./storage";
 import {
@@ -51,7 +52,6 @@ import {
   createOnboardingRecord,
   decideOnboardingStart,
   markAdoptionCommitted,
-  prepareAdoption,
   type OnboardingRecord
 } from "./onboarding";
 import { findPreset } from "./presets";
@@ -91,6 +91,7 @@ function StudioApp() {
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [onboardingSpeech, setOnboardingSpeech] = useState("");
+  const [adoptionDisplayPending, setAdoptionDisplayPending] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [companionSpeech, setCompanionSpeech] = useState("");
@@ -108,7 +109,11 @@ function StudioApp() {
   const onboardingBusyRef = useRef(false);
   const adoptionCommittedRef = useRef(false);
   const activePetRef = useRef<PetProfile | null>(null);
-  const native = useNativePet({ isTauri, pet: activePet });
+  const native = useNativePet({
+    isTauri,
+    pet: activePet,
+    initialAutonomous: localStorage.getItem(AUTONOMOUS_STORAGE) !== "off"
+  });
   const lastNativeActionRevision = useRef(0);
 
   // Workshop Form State
@@ -146,10 +151,6 @@ function StudioApp() {
   });
 
   // Autonomous wandering (browser preview only; the desktop app drives its own).
-  const [autonomous, setAutonomous] = useState(
-    () => localStorage.getItem(AUTONOMOUS_STORAGE) !== "off"
-  );
-
   const mutations = useRef<Promise<unknown>>(Promise.resolve());
   const transitioning = useRef(false);
   const nativeRevision = useRef(0);
@@ -177,6 +178,7 @@ function StudioApp() {
       transitioning.current = true;
       const previous = activePetRef.current;
       let nativeChanged = false;
+      let persisted = false;
       try {
         const selected = create ? pet : (await loadAllPets()).find((p) => p.id === pet.id);
         if (!selected) throw new Error("该宠物已被移除");
@@ -185,19 +187,31 @@ function StudioApp() {
           nativeChanged = true;
           await native.attach(full.frameRoot, full.id, full.name);
           full.currentAction = await syncNativeAction(full.currentAction);
-          if (explicitShow) await native.update({ kind: "show" });
         }
         if (create) await savePet(toPersistedPet(full));
         else if (!await setActivePetId(full.id)) throw new Error("该宠物已被移除");
+        persisted = true;
         setActivePet(full);
-        await refreshList();
+        if (isTauri && explicitShow) {
+          try {
+            await native.update({ kind: "show" });
+          } catch (err) {
+            // The profile is already saved and active; keep it and leave the
+            // display retry to the recovery entry instead of rolling back.
+            showToast(`伙伴已切换，但暂时没能显示到桌面：${formatError(err)}`, "error");
+          }
+        }
+        try {
+          await refreshList();
+        } catch {
+          // A list refresh failure only needs a later re-read.
+        }
         return full;
       } catch (error) {
-        if (nativeChanged && previous?.frameRoot) {
+        if (!persisted && nativeChanged && previous?.frameRoot) {
           try {
             await native.attach(previous.frameRoot, previous.id, previous.name);
             await syncNativeAction(previous.currentAction);
-            await native.update({ kind: "show" });
           } catch (rollbackError) {
             showToast(`恢复原桌宠失败：${formatError(rollbackError)}`, "error");
           }
@@ -254,20 +268,26 @@ function StudioApp() {
             pets: all,
             activePetId: current?.id ?? null
           });
-          setOnboarding(start.record);
-          adoptionCommittedRef.current = start.record.phase === "committed";
-          setOnboardingOpen(start.kind === "show" || start.kind === "clean");
           if (start.record.confirmedPetId) {
             const confirmed = all.find((pet) => pet.id === start.record.confirmedPetId);
             if (confirmed) current = confirmed;
           }
+          if (cancelled) return;
+          let saveError: string | null = null;
           if (start.kind === "clean" || start.record !== onboardingLoad.record) {
             try {
+              // Persist before opening the dialog so a first-run record cannot
+              // race a test reset or a second window that is clearing storage.
               await saveOnboardingRecord(start.record);
             } catch (err) {
-              setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+              saveError = `还没保存成功，名字和选择都保留着：${formatError(err)}`;
             }
           }
+          setOnboarding(start.record);
+          setAdoptionDisplayPending(false);
+          adoptionCommittedRef.current = start.record.phase === "committed";
+          setOnboardingOpen(start.kind === "show" || start.kind === "clean");
+          if (saveError) setOnboardingError(saveError);
         }
 
         if (settings) {
@@ -367,7 +387,7 @@ function StudioApp() {
   // Browser preview wanders on its own, mirroring the native runtime. In the
   // desktop app the Rust side owns this and pushes actions through events.
   useEffect(() => {
-    if (isTauri || !autonomous) return;
+    if (isTauri || !native.state.autonomous) return;
     const pet = activePetRef.current;
     if (!pet || !hasRenderableFrames(pet)) return;
 
@@ -376,7 +396,13 @@ function StudioApp() {
     }, actionDurationMs(pet.currentAction));
 
     return () => window.clearTimeout(timer);
-  }, [isTauri, autonomous, activePet?.id, activePet?.currentAction, activePet?.actionStartedAt]);
+  }, [
+    isTauri,
+    native.state.autonomous,
+    activePet?.id,
+    activePet?.currentAction,
+    activePet?.actionStartedAt
+  ]);
 
   async function applyPreference(request: PreferenceRequest) {
     lastPreferenceRef.current = request;
@@ -417,8 +443,10 @@ function StudioApp() {
       void applyPreference({ kind: "setAutonomous", value }).catch(() => undefined);
       return;
     }
-    setAutonomous(value);
     localStorage.setItem(AUTONOMOUS_STORAGE, value ? "on" : "off");
+    void native.update({ kind: "setAutonomous", value }).catch((err) => {
+      showToast(`切换自主活动失败：${formatError(err)}`, "error");
+    });
   }
 
   async function handleToggleVisibility() {
@@ -524,6 +552,15 @@ function StudioApp() {
     setTutorialOpen(true);
   }
 
+  async function handleRetryConnection() {
+    try {
+      await native.refresh();
+      showToast("已重新连接桌面伙伴。", "success");
+    } catch (err) {
+      showToast(`重新连接失败：${formatError(err)}`, "error");
+    }
+  }
+
   function handleRetryPreference() {
     const request = lastPreferenceRef.current;
     if (!request) {
@@ -544,13 +581,14 @@ function StudioApp() {
     if (scaleTimerRef.current !== null) window.clearTimeout(scaleTimerRef.current);
   }, []);
 
-  async function rollbackAdoption(wasShown: boolean) {
+  async function rollbackAdoption() {
     if (!isTauri) return;
     const previous = activePetRef.current;
     try {
       if (previous?.frameRoot) {
+        // Attach preserves the current hidden/snoozed intent; a failed
+        // adoption must not wake the previous companion.
         await native.attach(previous.frameRoot, previous.id, previous.name);
-        if (wasShown) await native.update({ kind: "show" });
       } else {
         await native.detach();
       }
@@ -597,7 +635,7 @@ function StudioApp() {
   }
 
   async function handleOnboardingBrowse() {
-    if (onboardingBusyRef.current) return;
+    if (onboardingBusyRef.current || adoptionDisplayPending) return;
     const base = onboarding ?? createOnboardingRecord();
     const next: OnboardingRecord = {
       ...base,
@@ -625,7 +663,8 @@ function StudioApp() {
       draftName: base.draftName.trim() || DEFAULT_PET_NAME,
       adoptionId: null,
       pendingPetId: null,
-      previousActivePetId: null,
+      previousActivePetId: activePetRef.current?.id ?? null,
+      confirmedPetId: null,
       phase: "draft",
       updatedAt: new Date().toISOString()
     };
@@ -633,6 +672,7 @@ function StudioApp() {
     setOnboardingOpen(true);
     setOnboardingError(null);
     setOnboardingSpeech("");
+    setAdoptionDisplayPending(false);
     adoptionCommittedRef.current = false;
     void saveOnboardingRecord(next).catch((err) => {
       setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
@@ -653,15 +693,52 @@ function StudioApp() {
     setOnboardingBusy(true);
     setOnboardingError(null);
 
-    let plan;
+    const previousActivePetId = activePetRef.current?.id ?? null;
+    let claim;
     try {
-      plan = prepareAdoption(base, name, activePetRef.current?.id ?? null);
+      claim = await claimAdoptionRecord(base, name, previousActivePetId);
     } catch (err) {
-      setOnboardingError(formatError(err));
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
       onboardingBusyRef.current = false;
       setOnboardingBusy(false);
       return;
     }
+
+    if (claim.alreadyCommitted) {
+      // Another window finished this adoption first. Open the same meet step
+      // instead of creating a second profile.
+      setOnboarding(claim.record);
+      setAdoptionDisplayPending(false);
+      const confirmedId = claim.record.confirmedPetId;
+      if (confirmedId) {
+        try {
+          const stored = (await loadAllPets()).find((pet) => pet.id === confirmedId);
+          if (stored) setActivePet(await ensurePetHydrated(stored));
+        } catch {
+          // The record still points at the committed profile; a later read can recover.
+        }
+      }
+      setOnboardingSpeech("");
+      adoptionCommittedRef.current = true;
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      showToast("这次领养已在另一个窗口完成，已为你打开见面。", "info");
+      return;
+    }
+
+    const plan = {
+      record: claim.record,
+      pendingPetId: claim.record.pendingPetId,
+      name: claim.record.draftName.trim() || name,
+      previousActivePetId: claim.record.previousActivePetId
+    };
+    if (!plan.pendingPetId) {
+      setOnboardingError("还没保存成功，名字和选择都保留着：领养编号缺失，请重试");
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+      return;
+    }
+    setOnboarding(plan.record);
 
     const preset = findPreset(plan.record.presetId);
     const actions = buildDefaultActionFrames();
@@ -683,17 +760,6 @@ function StudioApp() {
       return;
     }
 
-    try {
-      await saveOnboardingRecord(plan.record);
-      setOnboarding(plan.record);
-    } catch (err) {
-      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
-      onboardingBusyRef.current = false;
-      setOnboardingBusy(false);
-      return;
-    }
-
-    const wasShown = native.state.visibilityMode === "shown";
     if (isTauri) {
       try {
         await native.attach(preset.frameRoot, plan.pendingPetId, plan.name);
@@ -709,21 +775,41 @@ function StudioApp() {
 
     const committed = markAdoptionCommitted(plan.record, plan.pendingPetId);
     try {
-      await commitAdoptedPet(toPersistedPet(fullPet), committed);
+      await commitAdoptedPet(
+        toPersistedPet(fullPet),
+        committed,
+        plan.previousActivePetId
+      );
     } catch (err) {
-      await rollbackAdoption(wasShown);
-      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+      const message = formatError(err);
+      const superseded =
+        message.includes("其他窗口") || message.includes("当前伙伴已更新");
+      if (superseded) {
+        // Respect the newer window's result instead of rolling it back.
+        const latest = await loadOnboardingRecord().catch(() => null);
+        if (latest?.record?.phase === "committed" && latest.record.confirmedPetId) {
+          try {
+            const stored = (await loadAllPets()).find(
+              (pet) => pet.id === latest.record!.confirmedPetId
+            );
+            if (stored) setActivePet(await ensurePetHydrated(stored));
+          } catch {
+            // Keep the record; the list can be re-read later.
+          }
+          setOnboarding(latest.record);
+          setAdoptionDisplayPending(false);
+          adoptionCommittedRef.current = true;
+          onboardingBusyRef.current = false;
+          setOnboardingBusy(false);
+          showToast("这次领养已在另一个窗口完成，已为你打开见面。", "info");
+          return;
+        }
+      }
+      await rollbackAdoption();
+      setOnboardingError(`还没保存成功，名字和选择都保留着：${message}`);
       onboardingBusyRef.current = false;
       setOnboardingBusy(false);
       return;
-    }
-
-    if (isTauri) {
-      try {
-        await native.update({ kind: "show" });
-      } catch (err) {
-        setOnboardingError(`伙伴资料已保存，但暂时没能显示到桌面：${formatError(err)}`);
-      }
     }
 
     setActivePet(fullPet);
@@ -742,16 +828,62 @@ function StudioApp() {
         // Keep the in-memory profile; a later refresh can recover.
       }
     }
+
+    adoptionCommittedRef.current = true;
     setOnboarding(committed);
     setOnboardingSpeech("");
-    adoptionCommittedRef.current = true;
+
+    if (isTauri) {
+      try {
+        lastPreferenceRef.current = { kind: "show" };
+        await native.update({ kind: "show" });
+      } catch {
+        // The profile is committed; stay in a waiting state and retry the
+        // display command, not the tutorial.
+        setAdoptionDisplayPending(true);
+        setOnboardingError("伙伴资料已经保存，但桌面还没有确认显示。请重试显示。");
+        onboardingBusyRef.current = false;
+        setOnboardingBusy(false);
+        return;
+      }
+    }
+
+    setAdoptionDisplayPending(false);
     onboardingBusyRef.current = false;
     setOnboardingBusy(false);
     showToast(`「${plan.name}」已经入住桌面。`, "success");
   }
 
+  async function retryAdoptionDisplay() {
+    if (!onboarding?.confirmedPetId) {
+      setOnboardingError("还没有可显示的伙伴，请重新领养");
+      return;
+    }
+    onboardingBusyRef.current = true;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    try {
+      lastPreferenceRef.current = { kind: "show" };
+      await native.update({ kind: "show" });
+      setAdoptionDisplayPending(false);
+      setOnboarding({ ...onboarding, step: "meet" });
+      setOnboardingSpeech("");
+      showToast("伙伴已经显示到桌面。", "success");
+    } catch {
+      setAdoptionDisplayPending(true);
+      setOnboardingError("还没显示到桌面，资料已经保存。请重试显示。");
+    } finally {
+      onboardingBusyRef.current = false;
+      setOnboardingBusy(false);
+    }
+  }
+
   async function handleOnboardingFinish() {
     if (!onboarding) return;
+    if (adoptionDisplayPending) {
+      setOnboardingError("伙伴还没有显示到桌面，请先重试显示。");
+      return;
+    }
     const completed = completeOnboarding(
       onboarding,
       activePetRef.current?.id ?? onboarding.confirmedPetId
@@ -771,6 +903,10 @@ function StudioApp() {
   async function handleOnboardingRetry() {
     if (!onboarding) {
       window.location.reload();
+      return;
+    }
+    if (adoptionDisplayPending) {
+      await retryAdoptionDisplay();
       return;
     }
     if (onboarding.step === "meet") await handleOnboardingFinish();
@@ -976,9 +1112,10 @@ function StudioApp() {
           const candidate = current?.id === id ? remaining[0] ?? null : current;
           const full = candidate ? await ensurePetHydrated(candidate) : null;
           if (isTauri && current?.id === id && full?.frameRoot) {
+            // Replacing the active profile is not a display intent: keep the
+            // current hidden/snoozed mode and its expiry.
             await native.attach(full.frameRoot, full.id, full.name);
             full.currentAction = await syncNativeAction(full.currentAction);
-            await native.update({ kind: "show" });
           }
           if (isTauri && remaining.length === 0) await native.detach();
           const next = await deletePet(id);
@@ -989,7 +1126,6 @@ function StudioApp() {
           if (isTauri && previous?.frameRoot) {
             await native.attach(previous.frameRoot, previous.id, previous.name);
             await syncNativeAction(previous.currentAction);
-            await native.update({ kind: "show" });
           }
           throw error;
         } finally { transitioning.current = false; }
@@ -1048,7 +1184,7 @@ function StudioApp() {
         operation: "connect",
         code: "NATIVE_CLIENT_UNAVAILABLE",
         actions: [
-          { label: "重试连接", primary: true, onClick: () => void native.refresh() },
+          { label: "重试连接", primary: true, onClick: () => void handleRetryConnection() },
           { label: "查看已有伙伴", onClick: () => setCurrentTab("shelf") }
         ]
       };
@@ -1121,7 +1257,7 @@ function StudioApp() {
         body: "没有自动补回伙伴。可以打开偏好设置重新确认显示和休息选项。",
         actions: [
           { label: "打开偏好设置", primary: true, onClick: handleOpenSettings },
-          { label: "重试读取", onClick: () => void native.refresh() }
+          { label: "重试读取", onClick: () => void handleRetryConnection() }
         ]
       };
     }
@@ -1291,6 +1427,7 @@ function StudioApp() {
             isTauri={isTauri}
             busy={onboardingBusy}
             error={onboardingError}
+            displayPending={adoptionDisplayPending}
             speech={onboardingSpeech}
             onChangeName={handleOnboardingName}
             onNameBlur={handleOnboardingNameBlur}

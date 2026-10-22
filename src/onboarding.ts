@@ -110,9 +110,13 @@ export function decideOnboardingStart({
       return { kind: "complete", record, step: "meet" };
     }
 
+    // While an adoption is prepared or committed, the pending profile is the
+    // draft. A previous confirmed pet must not turn a new draft into its meet
+    // screen (for example after starting a second adoption and refreshing).
     const pending =
-      record.confirmedPetId ??
-      (record.phase === "prepared" || record.phase === "committed" ? record.pendingPetId : null);
+      record.phase === "prepared" || record.phase === "committed"
+        ? record.pendingPetId ?? record.confirmedPetId
+        : record.confirmedPetId;
     if (pending && pets.some((pet) => pet.id === pending)) {
       return {
         kind: "show",

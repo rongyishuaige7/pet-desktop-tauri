@@ -46,6 +46,7 @@ function formatError(error: unknown): string {
 interface UseNativePetOptions {
   isTauri: boolean;
   pet: PetProfile | null;
+  initialAutonomous?: boolean;
 }
 
 export interface NativePetController {
@@ -70,10 +71,14 @@ export interface NativePetController {
  * One control surface for the real native service and the browser demo. The
  * desktop branch never invents state: every value comes from a native snapshot.
  */
-export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetController {
+export function useNativePet({
+  isTauri,
+  pet,
+  initialAutonomous = true
+}: UseNativePetOptions): NativePetController {
   const systemReduced = useSystemReducedMotion();
   const [state, setState] = useState<NativePetState>(() => {
-    const initial = createWebState(pet, systemReduced);
+    const initial = createWebState(pet, systemReduced, initialAutonomous);
     if (!isTauri) return initial;
     return {
       ...initial,
@@ -140,10 +145,7 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
       const client = clientRef.current;
       if (!client) throw new Error("原生桌宠尚未连接");
       try {
-        const next = await client.update(request);
-        setState({ ...next });
-        setError(null);
-        return next;
+        return await client.update(request);
       } catch (err) {
         // Command failures carry their own operation error in the refreshed
         // snapshot; only connection-level failures set the global error.
@@ -172,9 +174,7 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
       const client = clientRef.current;
       if (!client) return null;
       try {
-        const result = await client.interact(kind, petRef.current?.id ?? null);
-        setState({ ...result.state });
-        return result;
+        return await client.interact(kind, petRef.current?.id ?? null);
       } catch (err) {
         setError(formatError(err));
         return null;
@@ -188,9 +188,7 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
       if (!isTauri) return null;
       const client = clientRef.current;
       if (!client) throw new Error("原生桌宠尚未连接");
-      const next = await client.attach(rootDir, petId, petName);
-      setState({ ...next });
-      return next;
+      return await client.attach(rootDir, petId, petName);
     },
     [isTauri]
   );
@@ -221,7 +219,16 @@ export function useNativePet({ isTauri, pet }: UseNativePetOptions): NativePetCo
 
   const refresh = useCallback(async () => {
     if (!isTauri) return;
-    await clientRef.current?.refresh();
+    const client = clientRef.current;
+    if (!client) throw new Error("原生桌宠尚未连接");
+    try {
+      await client.refresh();
+      setError(null);
+      setConnected(true);
+    } catch (err) {
+      setError(formatError(err));
+      throw err;
+    }
   }, [isTauri]);
 
   const clearError = useCallback(() => setError(null), []);

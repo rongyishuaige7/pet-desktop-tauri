@@ -66,7 +66,8 @@ export interface WebCapabilities {
 
 export function createWebState(
   pet: PetProfile | null,
-  systemReducedMotion = false
+  systemReducedMotion = false,
+  autonomous = true
 ): NativePetState {
   const state: NativePetState = {
     sessionId: WEB_SESSION_ID,
@@ -80,7 +81,7 @@ export function createWebState(
     action: pet?.currentAction ?? "idle",
     actionRevision: 0,
     animationPaused: false,
-    autonomous: true,
+    autonomous,
     motionPreference: "system",
     systemReducedMotion,
     effectivePaused: false,

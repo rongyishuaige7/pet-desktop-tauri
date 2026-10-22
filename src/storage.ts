@@ -1,7 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { withCurrentAction, withRenamedPet } from "./pet-logic";
 import { PET_CHANNEL, STORAGE_KEY, type PetAction, type PetProfile } from "./types";
-import { ONBOARDING_KEY, normalizeOnboardingRecord, type OnboardingRecord } from "./onboarding";
+import {
+  ONBOARDING_KEY,
+  normalizeOnboardingRecord,
+  prepareAdoption,
+  type OnboardingRecord
+} from "./onboarding";
 
 const DB_NAME = "desktop-sticker-pet-db";
 const STORES = ["pet", "pets_collection", "metadata"];
@@ -32,16 +37,29 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-async function transaction<T>(mode: IDBTransactionMode, run: (tx: IDBTransaction, result: (value: T) => void) => void): Promise<T> {
+async function transaction<T>(
+  mode: IDBTransactionMode,
+  run: (tx: IDBTransaction, result: (value: T) => void, fail: (error: Error) => void) => void
+): Promise<T> {
   const db = await openDatabase();
   try {
     return await new Promise<T>((resolve, reject) => {
       const tx = db.transaction(STORES, mode);
       let value: T;
+      let failure: Error | null = null;
       tx.oncomplete = () => resolve(value);
-      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("宠物数据库事务已中止，请重试"));
+      tx.onerror = tx.onabort = () =>
+        reject(failure ?? tx.error ?? new Error("宠物数据库事务已中止，请重试"));
+      const fail = (error: Error) => {
+        failure = error;
+        try {
+          tx.abort();
+        } catch {
+          reject(error);
+        }
+      };
       try {
-        run(tx, (next) => { value = next; });
+        run(tx, (next) => { value = next; }, fail);
       } catch (error) {
         tx.abort();
         reject(error);
@@ -227,19 +245,98 @@ export async function saveOnboardingRecord(record: OnboardingRecord): Promise<vo
   });
 }
 
+export interface AdoptionClaim {
+  record: OnboardingRecord;
+  alreadyCommitted: boolean;
+}
+
+/**
+ * Claims one adoption inside a single readwrite transaction. Two windows that
+ * start together reuse the same adoption/pending ids; the second window sees
+ * the first prepared or committed record instead of minting new ids.
+ */
+export async function claimAdoptionRecord(
+  fallback: OnboardingRecord,
+  name: string,
+  previousActivePetId: string | null,
+  idFactory: () => string = () => crypto.randomUUID()
+): Promise<AdoptionClaim> {
+  return transaction<AdoptionClaim>("readwrite", (tx, done, fail) => {
+    const store = tx.objectStore("metadata");
+    const current = store.get(ONBOARDING_KEY);
+    current.onsuccess = () => {
+      const existing = normalizeOnboardingRecord(current.result);
+      const base = existing?.state === "in_progress" ? existing : fallback;
+      if (base.phase === "committed" && base.confirmedPetId) {
+        done({ record: base, alreadyCommitted: true });
+        return;
+      }
+      const canonicalName =
+        base.phase === "prepared" && base.draftName.trim()
+          ? base.draftName.trim()
+          : name;
+      let prepared: OnboardingRecord;
+      try {
+        prepared = prepareAdoption(
+          base,
+          canonicalName,
+          previousActivePetId,
+          idFactory
+        ).record;
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      store.put(prepared, ONBOARDING_KEY);
+      done({ record: prepared, alreadyCommitted: false });
+    };
+  });
+}
+
 /**
  * One transaction commits the profile, the active pointer and the onboarding
- * record. A failure leaves no half-adopted profile behind.
+ * record after re-checking the claim. A superseded window cannot commit a
+ * second profile or replace a newer active selection.
  */
 export async function commitAdoptedPet(
   pet: PetProfile,
-  record: OnboardingRecord
+  record: OnboardingRecord,
+  expectedPreviousActiveId?: string | null
 ): Promise<void> {
-  await transaction<void>("readwrite", (tx, done) => {
-    tx.objectStore("pets_collection").put(pet);
-    activate(tx, pet);
-    tx.objectStore("metadata").put(record, ONBOARDING_KEY);
-    done();
+  await transaction<void>("readwrite", (tx, done, fail) => {
+    const metadata = tx.objectStore("metadata");
+    const current = metadata.get(ONBOARDING_KEY);
+    current.onsuccess = () => {
+      const existing = normalizeOnboardingRecord(current.result);
+      if (existing?.pendingPetId && existing.pendingPetId !== pet.id) {
+        fail(new Error("领养已在其他窗口更新，请重新读取"));
+        return;
+      }
+      if (
+        existing?.phase === "committed" &&
+        existing.confirmedPetId &&
+        existing.confirmedPetId !== pet.id
+      ) {
+        fail(new Error("领养已在其他窗口完成，请重新读取"));
+        return;
+      }
+      const active = metadata.get(ACTIVE_ID_KEY);
+      active.onsuccess = () => {
+        const activeId = active.result ?? null;
+        if (
+          expectedPreviousActiveId !== undefined &&
+          activeId !== expectedPreviousActiveId &&
+          activeId !== pet.id
+        ) {
+          fail(new Error("当前伙伴已更新，未提交这次领养"));
+          return;
+        }
+        tx.objectStore("pets_collection").put(pet);
+        activate(tx, pet);
+        metadata.put(record, ONBOARDING_KEY);
+        done();
+      };
+    };
   });
   localStorage.removeItem(STORAGE_KEY);
   notifyPetChanged();

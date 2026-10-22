@@ -11,6 +11,7 @@ interface OnboardingProps {
   isTauri: boolean;
   busy: boolean;
   error: string | null;
+  displayPending?: boolean;
   speech: string;
   onChangeName: (name: string) => void;
   onNameBlur: () => void;
@@ -29,6 +30,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
   isTauri,
   busy,
   error,
+  displayPending = false,
   speech,
   onChangeName,
   onNameBlur,
@@ -97,7 +99,25 @@ export const Onboarding: React.FC<OnboardingProps> = ({
         tabIndex={-1}
       >
         <div className="onboarding-body">
-          {record.step === "choose" && (
+          {displayPending ? (
+            <>
+              {steps}
+              <h2 id="onboarding-title">资料已保存，等待显示</h2>
+              <p id="onboarding-description" className="onboarding-lead">
+                伙伴已经在你的伙伴列表里，但桌面窗口还没有确认显示。重试只会重新发送显示命令，不会再次领养。
+              </p>
+              {error && (
+                <p className="onboarding-field-error" role="alert">
+                  {error}
+                </p>
+              )}
+              <div className="onboarding-actions">
+                <button type="button" className="btn-primary" onClick={onRetry} disabled={busy}>
+                  {busy ? "正在显示…" : "重试显示"}
+                </button>
+              </div>
+            </>
+          ) : record.step === "choose" ? (
             <>
               {steps}
               <h2 id="onboarding-title">给今天添一点陪伴</h2>
@@ -115,9 +135,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                 </button>
               </div>
             </>
-          )}
-
-          {record.step === "name" && (
+          ) : record.step === "name" ? (
             <>
               {steps}
               <h2 id="onboarding-title">想怎么称呼它？</h2>
@@ -169,9 +187,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                 </button>
               </div>
             </>
-          )}
-
-          {record.step === "meet" && (
+          ) : record.step === "meet" ? (
             <>
               {steps}
               <h2 id="onboarding-title">{petName}，很高兴见到你</h2>
@@ -207,9 +223,9 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                 </button>
               </div>
             </>
-          )}
+          ) : null}
 
-          {error && (
+          {error && !displayPending && (
             <div className="onboarding-error" role="alert">
               <p>{error}</p>
               <button type="button" className="btn-secondary" onClick={onRetry} disabled={busy}>

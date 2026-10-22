@@ -203,3 +203,43 @@ describe("adoption planning", () => {
     expect(completed.state).toBe("completed");
   });
 });
+
+describe("second adoption resume", () => {
+  it("ignores an old confirmed pet while a new draft is prepared", () => {
+    const record = createOnboardingRecord({
+      step: "name",
+      draftName: "新伙伴",
+      phase: "prepared",
+      confirmedPetId: "A",
+      pendingPetId: "new-pet",
+      adoptionId: "new-adoption"
+    });
+    const start = decideOnboardingStart({
+      record,
+      initialized: true,
+      pets: [pet("A")],
+      activePetId: "A"
+    });
+    expect(start.kind).toBe("show");
+    expect(start.step).toBe("name");
+    expect(start.record.confirmedPetId).toBe("A");
+  });
+
+  it("opens the meet step only when the prepared pending pet exists", () => {
+    const record = createOnboardingRecord({
+      step: "meet",
+      phase: "prepared",
+      confirmedPetId: "A",
+      pendingPetId: "new-pet"
+    });
+    const start = decideOnboardingStart({
+      record,
+      initialized: true,
+      pets: [pet("A"), pet("new-pet")],
+      activePetId: "A"
+    });
+    expect(start.kind).toBe("show");
+    expect(start.step).toBe("meet");
+    expect(start.record.confirmedPetId).toBe("new-pet");
+  });
+});

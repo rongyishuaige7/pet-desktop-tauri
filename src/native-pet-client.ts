@@ -39,7 +39,7 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
   let unlisten: (() => void) | null = null;
   let onChange: ((state: NativePetState) => void) | null = null;
 
-  function apply(next: NativePetState) {
+  function apply(next: NativePetState): NativePetState {
     // Copy snapshots: callers and test doubles may reuse one mutable object.
     const candidate = { ...next };
     const merged = mergeStateEvent(current, candidate);
@@ -48,14 +48,25 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
       merged.sessionId === current.sessionId &&
       merged.revision === current.revision
     ) {
-      return;
+      return current;
     }
     current = merged;
     onChange?.(merged);
+    return merged;
   }
 
-  async function start(onState: (state: NativePetState) => void) {
-    onChange = onState;
+  function resolveSnapshot(snapshot: NativePetState): NativePetState {
+    ready = true;
+    const picked = pickNewestState(snapshot, buffered);
+    buffered = [];
+    const merged = current ? mergeStateEvent(current, { ...picked }) : { ...picked };
+    current = merged;
+    onChange?.(merged);
+    return merged;
+  }
+
+  async function ensureSubscription() {
+    if (unlisten) return;
     unlisten = await deps.listen<NativePetState>("native-pet-state-changed", (payload) => {
       if (disposed) return;
       if (!ready) {
@@ -64,18 +75,23 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
       }
       apply(payload);
     });
+  }
+
+  async function start(onState: (state: NativePetState) => void) {
+    onChange = onState;
+    await ensureSubscription();
     const snapshot = await deps.invoke<NativePetState>("get_native_pet_state");
     if (disposed) return;
-    ready = true;
-    current = { ...pickNewestState(snapshot, buffered) };
-    buffered = [];
-    onChange?.(current);
+    resolveSnapshot(snapshot);
   }
 
   async function refresh() {
+    // A first query may have failed after the subscription was installed.
+    // Reuse that subscription, replay buffered events and mark the stream ready.
+    await ensureSubscription();
     const snapshot = await deps.invoke<NativePetState>("get_native_pet_state");
-    apply(snapshot);
-    return current as NativePetState;
+    if (disposed) throw new Error("原生桌宠连接已关闭");
+    return resolveSnapshot(snapshot);
   }
 
   async function update(request: PreferenceRequest) {
@@ -83,8 +99,7 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
       const next = await deps.invoke<NativePetState>("update_native_pet_preferences", {
         request
       });
-      apply(next);
-      return next;
+      return apply(next);
     } catch (error) {
       await refresh().catch(() => undefined);
       throw error;
@@ -96,8 +111,7 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
       kind,
       petId
     });
-    apply(result.state);
-    return result;
+    return { ...result, state: apply(result.state) };
   }
 
   async function attach(rootDir: string, petId: string | null, petName: string | null) {
@@ -106,8 +120,7 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
       petId,
       petName
     });
-    apply(next);
-    return next;
+    return apply(next);
   }
 
   async function detach() {

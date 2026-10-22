@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { commitAdoptedPet, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingRecord, savePet, setActivePetId, updatePetAction } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingRecord, savePet, setActivePetId, updatePetAction } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -135,5 +135,65 @@ describe("onboarding record ordering", () => {
     const loaded = await loadOnboardingRecord();
     expect(loaded.record?.step).toBe("meet");
     expect(loaded.record?.confirmedPetId).toBe("A");
+  });
+});
+
+describe("adoption claims", () => {
+  it("reuses one pending id when two windows claim together", async () => {
+    const base = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "窗口甲",
+      phase: "draft"
+    });
+    let calls = 0;
+    const factory = () => `id-${++calls}`;
+    const [first, second] = await Promise.all([
+      claimAdoptionRecord(base, "窗口甲", null, factory),
+      claimAdoptionRecord(base, "窗口乙", null, factory)
+    ]);
+    expect(first.record.pendingPetId).toBe(second.record.pendingPetId);
+    expect(first.record.adoptionId).toBe(second.record.adoptionId);
+  });
+
+  it("rejects a commit whose claim was superseded", async () => {
+    const claim = await claimAdoptionRecord(
+      createOnboardingRecord({ state: "in_progress", step: "name", phase: "draft" }),
+      "团子",
+      null,
+      () => "pending-a"
+    );
+    const record = {
+      ...claim.record,
+      phase: "committed" as const,
+      step: "meet" as const,
+      confirmedPetId: claim.record.pendingPetId
+    };
+    await expect(
+      commitAdoptedPet(pet("different"), record, claim.record.previousActivePetId)
+    ).rejects.toThrow("其他窗口");
+    expect(await loadAllPets()).toEqual([]);
+  });
+
+  it("does not replace a newer active selection", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const claim = await claimAdoptionRecord(
+      createOnboardingRecord({ state: "in_progress", step: "name", phase: "draft" }),
+      "团子",
+      "A",
+      () => "pending-a"
+    );
+    await setActivePetId("B");
+    const record = {
+      ...claim.record,
+      phase: "committed" as const,
+      step: "meet" as const,
+      confirmedPetId: "pending-a"
+    };
+    await expect(
+      commitAdoptedPet(pet("pending-a"), record, claim.record.previousActivePetId)
+    ).rejects.toThrow("当前伙伴已更新");
+    expect((await loadPet())?.id).toBe("B");
   });
 });

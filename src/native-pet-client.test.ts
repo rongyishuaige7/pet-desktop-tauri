@@ -139,3 +139,60 @@ describe("native pet client", () => {
     client.dispose();
   });
 });
+
+describe("native pet client recovery and races", () => {
+  it("recovers a failed first query, marks the stream ready and replays buffered events", async () => {
+    const initial = baseState({ revision: 3, visibilityMode: "hidden", visible: false });
+    let handler: ((payload: NativePetState) => void) | null = null;
+    let reads = 0;
+    const client = createNativePetClient(
+      deps(
+        vi.fn(async (command: string) => {
+          if (command !== "get_native_pet_state") throw new Error(`unexpected ${command}`);
+          reads += 1;
+          if (reads === 1) throw new Error("connection refused");
+          return initial;
+        }),
+        vi.fn(async (_event: string, next: (payload: unknown) => void) => {
+          handler = next as (payload: NativePetState) => void;
+          return () => undefined;
+        })
+      )
+    );
+    const received: NativePetState[] = [];
+    await expect(client.start((state) => received.push(state))).rejects.toThrow("connection refused");
+    handler!({ ...initial, revision: 4, visibilityMode: "hidden" });
+    const refreshed = await client.refresh();
+    expect(refreshed.revision).toBe(4);
+    expect(received.at(-1)?.revision).toBe(4);
+    handler!({ ...initial, revision: 5, visibilityMode: "snoozed" });
+    expect(received.at(-1)?.revision).toBe(5);
+  });
+
+  it("returns the merged state when a command reply is older than an event", async () => {
+    const initial = baseState({ revision: 10 });
+    let handler: ((payload: NativePetState) => void) | null = null;
+    const client = createNativePetClient(
+      deps(
+        vi.fn(async (command: string) => {
+          if (command === "get_native_pet_state") return initial;
+          if (command === "update_native_pet_preferences") {
+            handler!({ ...initial, revision: 12, visibilityMode: "hidden", visible: false });
+            return { ...initial, revision: 11, visibilityMode: "shown", visible: true };
+          }
+          throw new Error(`unexpected ${command}`);
+        }),
+        vi.fn(async (_event: string, next: (payload: unknown) => void) => {
+          handler = next as (payload: NativePetState) => void;
+          return () => undefined;
+        })
+      )
+    );
+    const received: NativePetState[] = [];
+    await client.start((state) => received.push(state));
+    const result = await client.update({ kind: "hide" });
+    expect(result.revision).toBe(12);
+    expect(result.visibilityMode).toBe("hidden");
+    expect(received.at(-1)?.revision).toBe(12);
+  });
+});
