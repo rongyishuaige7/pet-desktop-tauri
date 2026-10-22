@@ -107,6 +107,18 @@
 
 验证：105 项前端单元测试、33 项 Rust 测试、51 个隔离浏览器流程（原 49 个 + 第四次复核 2 个）、生产构建通过。仍待真实桌面验收。
 
+## v0.3 C00 可靠性收尾（2026-10-22）
+
+实现提交 `e996997`。范围只覆盖实施方案的 C00：R01、R02 及同类的激活、恢复和过期写入边界；C01–C06 尚未实施。
+
+1. **领养进度**：`saveOnboardingProgress` 在同一事务校验当前 `intentId` 和可比较的 `progressRevision`，过期步骤与跨意图写入返回带 `code` 的 `OnboardingProgressError`；界面区分“领养已更新 / 进度过期 / 存储失败”，存储故障保留本地输入，不再统一说成过期。命名失焦和“下一步”的异步回复不会覆盖写入期间新输入的名字。
+2. **激活结果**：新增 `pet-activation.ts` 的 `ActivationResult`（displayed / webPreview / savedOnly / displayPending / superseded）与 `DisplayRetryContext`。只有合并后的原生快照 `petId` 匹配且 `visible=true` 才报告 displayed；网页模式只报告“可在网页预览”，不再声称已到系统桌面。
+3. **目标与版本**：`selection_revision_v1` 在保存、明确选择、领养提交和删除导致活动替换时递增；显示重试校验活动 id 与选择版本，并携带 `expectedPetId / expectedState`。Rust 在串行控制段、写入 pending 或 revision 之前校验目标，不匹配返回 `TARGET_CHANGED / STATE_CHANGED` 且不修改显示意图或错误状态；有目标的 detach 同样拒绝错误目标。客户端与 hook 暴露最新快照供迟到的重试使用。
+4. **恢复入口**：伙伴架、导入、装配和 AI 的部分成功都保留“重试显示”，只重发 `show`，不重建资料、素材或重新生成。hide/snooze、跨窗口选择、删除和原生伙伴切换会立即失效旧入口；刷新后不自动重发 show，回到当前伙伴的显式唤回。
+5. **回归**：新增事务测试（选择版本、进度版本、存储中止与冲突原因）、激活/错误解析单测、客户端目标透传与最新快照单测，以及 7 个隔离浏览器流程（伙伴架/导入/装配/AI 显示失败、跨窗口选择失效、原生目标拒绝、刷新不自动显示、网页预览文案）。
+
+验证：118 项前端单元测试（15 个文件）、36 项 Rust 测试、58 个隔离浏览器流程、TypeScript/Vite 生产构建通过；macOS / Linux CI 通过：[CI 39812313232](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39812313232)。首次 C00 CI（`e996997`）在 Linux 上暴露 detach 测试读取共享运行时与并行测试竞争，改为纯目标判定后由 `b9752dc` 通过。所有原生交互仍由模拟 IPC 验证，真实桌面验收未完成，不能标记 C06 或对外发布。
+
 ## 本轮之外的依赖维护
 
 只读 `npm audit` 发现开发工具链 6 项告警（3 high / 3 moderate）：Vite 8.1.4 的编辑器启动接口、Vitest / @vitest/mocker 4.1.10 的测试服务路径读取，以及 PostCSS、nanoid、source-map-js 的传递依赖告警。`npm audit --omit=dev` 返回 0 项，不能据此忽略开发环境风险。本轮保持既有依赖版本，未执行 `audit fix` 或升级；应在独立的工具链更新中调整锁文件并验证插件兼容性。
