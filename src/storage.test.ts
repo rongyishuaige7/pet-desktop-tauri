@@ -114,3 +114,26 @@ describe("adoption commit", () => {
     expect(loaded.corrupt).toBe(true);
   });
 });
+
+describe("onboarding record ordering", () => {
+  it("ignores a stale write from a late blur or retry", async () => {
+    const newer = createOnboardingRecord({
+      state: "in_progress",
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "A",
+      updatedAt: "2026-10-22T00:00:02.000Z"
+    });
+    const older = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      phase: "prepared",
+      updatedAt: "2026-10-22T00:00:01.000Z"
+    });
+    await saveOnboardingRecord(newer);
+    await saveOnboardingRecord(older);
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.step).toBe("meet");
+    expect(loaded.record?.confirmedPetId).toBe("A");
+  });
+});

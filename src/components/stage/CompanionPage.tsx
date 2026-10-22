@@ -72,7 +72,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
 
   useEffect(() => {
     setFrameIndex(0);
-  }, [pet?.id, action, pet?.actionStartedAt]);
+  }, [pet?.id, action, pet?.actionStartedAt, state.actionRevision]);
 
   useEffect(() => {
     if (!pet) return;

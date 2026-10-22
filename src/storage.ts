@@ -211,8 +211,19 @@ export function loadOnboardingRecord(): Promise<OnboardingLoadResult> {
 
 export async function saveOnboardingRecord(record: OnboardingRecord): Promise<void> {
   await transaction<void>("readwrite", (tx, done) => {
-    tx.objectStore("metadata").put(record, ONBOARDING_KEY);
-    done();
+    const store = tx.objectStore("metadata");
+    const current = store.get(ONBOARDING_KEY);
+    current.onsuccess = () => {
+      const existing = normalizeOnboardingRecord(current.result);
+      // A late blur/retry callback must not overwrite a newer prepared or
+      // committed record. Equal timestamps are allowed to land.
+      if (existing && existing.updatedAt > record.updatedAt) {
+        done();
+        return;
+      }
+      store.put(record, ONBOARDING_KEY);
+      done();
+    };
   });
 }
 
