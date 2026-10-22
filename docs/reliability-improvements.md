@@ -52,6 +52,17 @@
 - `npm run frames:check` 改用现有 TypeScript 守卫，4 项帧包检查通过，无 Pillow 依赖；未重新生成或覆盖内置素材。
 - 浏览器回归关闭全部任务浏览器，复用既有 `http://localhost:1420`；Rust 使用隔离构建目录，未主动启停开发服务。本轮未打包新安装包或完成桌面窗口实机验收。
 
+## 第四批验证（v0.2 首版）
+
+- 原生控制：新增 `NativePetState` 会话/revision 快照、串行控制服务、能力探测和统一事件；前端先订阅再读快照，按 session/revision 合并；慢速帧包加载由 `attach_seq` 丢弃。托盘与主界面读取同一份状态，菜单更新回到主线程。
+- 显示与休息：设置文件升级到 `schemaVersion: 2`，保存显示意图、休息到期时刻、动态偏好和宠物 id；隐藏/休息停止播放与自主调度；到期由 Rust 按绝对时刻处理；低动态合成不覆盖用户的暂停和自主活动选择。
+- 领养引导：新增 `onboarding_v1` 记录、老用户静默迁移、稳定 `adoptionId / pendingPetId`、单事务提交和失败回滚；命名输入失焦不会再覆盖已提交的引导记录（双击流程已复现并修复）。
+- 陪伴界面：陪伴主页、互动冷却、设置抽屉、能力驱动的系统选项、持续错误恢复、焦点陷阱、Escape 关闭和 840×620 布局；主操作颜色调整以满足文本对比度。
+- 验证：85 项前端单元测试（14 个文件）、33 项 Rust 测试、34 个隔离浏览器流程（保留原 16 个并新增 18 个）、TypeScript/Vite 生产构建通过；本机 macOS `.app` 打包通过（`/tmp/pet-desktop-tauri-release-target/release/bundle/macos/桌面贴贴宠物.app`）。
+- CI：S02、S03、S04 提交的 macOS / Linux Rust 检查、前端测试和构建通过；S01 运行因后续提交的并发取消，S02 起覆盖。
+- 未完成：真实 macOS / Linux 桌面操作（主窗口关闭后托盘恢复、睡眠唤醒、拖拽/单击、透明穿透、低动态在原生窗口中的表现、安装签名与常驻资源量测）。浏览器模拟 IPC 和本地 `.app` 构建不能替代这些验收。
+- 未新增运行时依赖，未升级既有依赖，未修改 package / Cargo 版本。
+
 ## 本轮之外的依赖维护
 
 只读 `npm audit` 发现开发工具链 6 项告警（3 high / 3 moderate）：Vite 8.1.4 的编辑器启动接口、Vitest / @vitest/mocker 4.1.10 的测试服务路径读取，以及 PostCSS、nanoid、source-map-js 的传递依赖告警。`npm audit --omit=dev` 返回 0 项，不能据此忽略开发环境风险。本轮保持既有依赖版本，未执行 `audit fix` 或升级；应在独立的工具链更新中调整锁文件并验证插件兼容性。

@@ -689,4 +689,36 @@ await record('web_mode_marks_demo_and_hides_system_settings',async()=>{
   return {passed:status.includes('网页演示')&&hasClickThrough===0&&hasAutostart===0&&capabilities.includes('暂不支持')&&errors.length===0,status,hasClickThrough,hasAutostart,capabilities,errors};
  }finally{await context.close();}
 });
+await record('onboarding_keyboard_only_adoption',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  await page.locator('.onboarding-dialog').waitFor();
+  const initialFocus=await page.evaluate(()=>document.activeElement?.textContent?.trim());
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.activeElement?.id==='onboarding-name');
+  await page.keyboard.type('团子');
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading',{name:'团子，很高兴见到你',exact:true}).waitFor();
+  const focusAfterMeet=await page.evaluate(()=>document.activeElement?.textContent?.trim());
+  if(!focusAfterMeet?.includes('完成见面'))return {passed:false,reason:'meet focus missing',focusAfterMeet};
+  await page.keyboard.press('Enter');
+  await page.locator('.onboarding-dialog').waitFor({state:'detached'});
+  const pets=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadAllPets()).length);
+  return {passed:initialFocus?.includes('下一步')&&focusAfterMeet?.includes('完成见面')&&pets===1&&errors.length===0,initialFocus,focusAfterMeet,pets,errors};
+ }finally{await context.close();}
+});
+await record('settings_tutorial_reopens_meet_step',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await page.locator('.sidebar-settings').click();
+  await page.getByRole('button',{name:'查看教学',exact:true}).click();
+  await page.locator('.onboarding-dialog').waitFor();
+  const title=await page.locator('#onboarding-title').innerText();
+  await page.keyboard.press('Escape');
+  await page.locator('.onboarding-dialog').waitFor({state:'detached'});
+  const record=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  return {passed:title.includes('很高兴见到你')&&record?.state==='completed'&&errors.length===0,title,record,errors};
+ }finally{await context.close();}
+});
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}

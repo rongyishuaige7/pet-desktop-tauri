@@ -553,6 +553,7 @@ pub fn set_visible(visible: bool) -> Result<(), String> {
     update_preferences(request).map(|_| ())
 }
 
+#[allow(dead_code)]
 pub fn set_autonomous(enabled: bool) -> Result<(), String> {
     update_preferences(PreferencesRequest::SetAutonomous { value: enabled }).map(|_| ())
 }

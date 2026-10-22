@@ -1056,8 +1056,8 @@ function StudioApp() {
     if (onboardingError && !onboardingOpen) {
       return {
         id: "onboarding-read",
-        title: "资料读取失败，请重试",
-        body: "伙伴资料没有改动。读取成功后再继续领养或使用已有伙伴。",
+        title: "引导资料暂时不可用，请重试",
+        body: "伙伴资料没有改动。重试成功后再继续领养或使用已有伙伴。",
         operation: "loadOnboarding",
         code: "ONBOARDING_READ_FAILED",
         actions: [

@@ -56,7 +56,15 @@ export const Onboarding: React.FC<OnboardingProps> = ({
     if (record.step === "name") {
       nameRef.current?.focus({ preventScroll: true });
       nameRef.current?.select();
+      return;
     }
+    // Keep keyboard focus inside the dialog after a step swap removes the
+    // previously focused input or button.
+    const target =
+      dialogRef.current?.querySelector<HTMLElement>(".onboarding-actions .btn-primary") ??
+      dialogRef.current?.querySelector<HTMLElement>(".onboarding-actions .btn-secondary") ??
+      dialogRef.current?.querySelector<HTMLElement>(".onboarding-pet");
+    target?.focus({ preventScroll: true });
   }, [record.step]);
 
   const steps = (

@@ -41,16 +41,6 @@ export const PreferencesDrawer: React.FC<PreferencesDrawerProps> = ({
     setScale(Math.round(state.scale * 100));
   }, [state.scale]);
 
-  useEffect(() => {
-    if (!open) return;
-    const target = scale / 100;
-    if (Math.abs(target - state.scale) < 0.001) return;
-    const timer = window.setTimeout(() => {
-      onUpdate({ kind: "setScale", value: target });
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [scale, open, state.scale, onUpdate]);
-
   if (!open) return null;
 
   const lowMotion = reducedMotion(state);
@@ -126,7 +116,11 @@ export const PreferencesDrawer: React.FC<PreferencesDrawerProps> = ({
               step="5"
               value={scale}
               disabled={pending}
-              onChange={(event) => setScale(Number(event.target.value))}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setScale(value);
+                onUpdate({ kind: "setScale", value: value / 100 });
+              }}
             />
           </div>
 
