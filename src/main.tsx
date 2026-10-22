@@ -1679,7 +1679,7 @@ function StudioApp() {
   }
 
   function handleShowRecovery() {
-    const node = document.querySelector<HTMLElement>(".recovery-notice");
+    const node = document.querySelector<HTMLElement>(".recovery-notice, .recovery-reopen");
     if (!node) return;
     node.scrollIntoView({ block: "start" });
     node.focus({ preventScroll: true });
