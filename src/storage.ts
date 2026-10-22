@@ -274,6 +274,46 @@ export interface AdoptionClaim {
 }
 
 /**
+ * Progress writes (name, step, finish, dismiss) must belong to the intent that
+ * is still current. A stale window reads the newer result instead of silently
+ * reporting success.
+ */
+export async function saveOnboardingProgress(
+  record: OnboardingRecord
+): Promise<OnboardingRecord> {
+  return transaction<OnboardingRecord>("readwrite", (tx, done, fail) => {
+    const store = tx.objectStore("metadata");
+    const current = store.get(ONBOARDING_KEY);
+    current.onsuccess = () => {
+      const existing = normalizeOnboardingRecord(current.result);
+      if (existing) {
+        const sameIntent =
+          Boolean(existing.intentId) &&
+          Boolean(record.intentId) &&
+          existing.intentId === record.intentId;
+        const legacySame = !existing.intentId && !record.intentId;
+        if (!sameIntent && !legacySame) {
+          fail(new Error("领养已更新，未保存这次进度"));
+          return;
+        }
+        const lateStep =
+          existing.phase === "committed" &&
+          record.phase !== "committed" &&
+          record.state === "in_progress";
+        const afterCompletion =
+          existing.state === "completed" && record.state !== "completed";
+        if (lateStep || afterCompletion || existing.updatedAt > record.updatedAt) {
+          fail(new Error("这次进度已过期"));
+          return;
+        }
+      }
+      store.put(record, ONBOARDING_KEY);
+      done(record);
+    };
+  });
+}
+
+/**
  * Explicit "adopt again" starts a new intent. This is intentionally separate
  * from progress writes so an old completed/committed record cannot suppress
  * the user's new adoption, and old records without an intent can migrate.

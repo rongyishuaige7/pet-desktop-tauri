@@ -25,6 +25,7 @@ import {
   isCollectionInitialized,
   loadOnboardingRecord,
   saveOnboardingRecord,
+  saveOnboardingProgress,
   startNewAdoptionIntent,
   claimAdoptionRecord,
   commitAdoptedPet,
@@ -233,7 +234,7 @@ function StudioApp() {
     setPets(all.map((p) => p.id === current?.id ? { ...p, sourceImage: current.sourceImage, actions: current.actions } : p));
   }
   async function activatePet(pet: PetProfile, create = false, explicitShow = true) {
-    return serial(async () => {
+    return serial(async (): Promise<{ pet: PetProfile; displayed: boolean }> => {
       transitioning.current = true;
       const previous = activePetRef.current;
       let nativeChanged = false;
@@ -251,13 +252,16 @@ function StudioApp() {
         else if (!await setActivePetId(full.id)) throw new Error("该宠物已被移除");
         persisted = true;
         setActivePet(full);
+        let displayed = true;
         if (isTauri && explicitShow) {
+          lastPreferenceRef.current = { kind: "show" };
           try {
-            await native.update({ kind: "show" });
-          } catch (err) {
+            const shown = await native.update({ kind: "show" });
+            displayed = Boolean(shown?.visible && shown.petId === full.id);
+          } catch {
             // The profile is already saved and active; keep it and leave the
             // display retry to the recovery entry instead of rolling back.
-            showToast(`伙伴已切换，但暂时没能显示到桌面：${formatError(err)}`, "error");
+            displayed = false;
           }
         }
         try {
@@ -265,7 +269,7 @@ function StudioApp() {
         } catch {
           // A list refresh failure only needs a later re-read.
         }
-        return full;
+        return { pet: full, displayed };
       } catch (error) {
         if (!persisted && nativeChanged && previous?.frameRoot) {
           try {
@@ -278,6 +282,20 @@ function StudioApp() {
         throw error;
       } finally { transitioning.current = false; }
     });
+  }
+
+  function announceActivation(
+    result: { pet: PetProfile; displayed: boolean },
+    successMessage: string
+  ) {
+    if (result.displayed) {
+      showToast(successMessage, "success");
+    } else {
+      showToast(
+        `「${result.pet.name}」已保存并切换，但暂时没能显示到桌面。请在恢复提示中重试显示。`,
+        "error"
+      );
+    }
   }
 
   // Native action changes are authoritative; only the active profile is written.
@@ -686,6 +704,21 @@ function StudioApp() {
     }
   }
 
+  async function refreshOnboardingFromStorage(message?: string) {
+    const latest = await loadOnboardingRecord().catch(() => null);
+    if (latest?.record) {
+      setOnboarding(latest.record);
+      setAdoptionDisplayPending(
+        latest.record.state === "in_progress" &&
+          latest.record.phase === "committed" &&
+          !latest.record.displayConfirmed
+      );
+      setOnboardingOpen(latest.record.state === "in_progress");
+      adoptionCommittedRef.current = latest.record.phase === "committed";
+    }
+    if (message) setOnboardingError(message);
+  }
+
   async function handleOnboardingNext() {
     if (!onboarding || onboardingBusyRef.current) return;
     const next: OnboardingRecord = {
@@ -697,9 +730,12 @@ function StudioApp() {
     setOnboarding(next);
     setOnboardingError(null);
     try {
-      await saveOnboardingRecord(next);
-    } catch (err) {
-      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+      const saved = await saveOnboardingProgress(next);
+      setOnboarding(saved);
+    } catch {
+      await refreshOnboardingFromStorage(
+        "这次进度已过期，已读取最新领养结果。"
+      );
     }
   }
 
@@ -720,7 +756,11 @@ function StudioApp() {
     ) {
       return;
     }
-    void saveOnboardingRecord(onboarding).catch(() => undefined);
+    void saveOnboardingProgress(onboarding)
+      .then((saved) => setOnboarding(saved))
+      .catch(() => {
+        void refreshOnboardingFromStorage("这次名字没有保存，已读取最新领养结果。");
+      });
   }
 
   async function handleOnboardingBrowse() {
@@ -743,9 +783,10 @@ function StudioApp() {
     setOnboardingError(null);
     setCurrentTab("workshop");
     try {
-      await saveOnboardingRecord(next);
-    } catch (err) {
-      setOnboardingError(`还没保存成功，可以稍后继续：${formatError(err)}`);
+      const saved = await saveOnboardingProgress(next);
+      setOnboarding(saved);
+    } catch {
+      await refreshOnboardingFromStorage("这次进度已过期，已读取最新领养结果。");
     }
   }
 
@@ -1132,14 +1173,16 @@ function StudioApp() {
       activePetRef.current?.id ?? onboarding.confirmedPetId
     );
     try {
-      await saveOnboardingRecord(completed);
-      setOnboarding(completed);
+      const saved = await saveOnboardingProgress(completed);
+      setOnboarding(saved);
       setOnboardingOpen(false);
       setOnboardingError(null);
       setOnboardingSpeech("");
       showToast("已经记住你们第一次见面。", "success");
-    } catch (err) {
-      setOnboardingError(`还没保存成功，名字和选择都保留着：${formatError(err)}`);
+    } catch {
+      await refreshOnboardingFromStorage(
+        "这次见面已过期，已读取最新领养结果。"
+      );
     }
   }
 
@@ -1194,8 +1237,8 @@ function StudioApp() {
           frameRoot: rootDir,
           storageMode: "preset-root"
         });
-        await activatePet(newPet, true);
-        showToast("已导入真实预置帧包（小怪兽动画包）！", "success");
+        const result = await activatePet(newPet, true);
+        announceActivation(result, "已导入真实预置帧包（小怪兽动画包）！");
         setCurrentTab("stage");
         return;
       }
@@ -1213,8 +1256,8 @@ function StudioApp() {
         storageMode: "preset-root"
       });
 
-      await activatePet(newPet, true);
-      showToast(`已成功导入「${newPet.name}」并同步至桌面！`, "success");
+      const result = await activatePet(newPet, true);
+      announceActivation(result, `已成功导入「${newPet.name}」并同步至桌面！`);
       setCurrentTab("stage");
     } catch (err) {
       showToast(`导入失败：${formatError(err)}`, "error");
@@ -1246,8 +1289,8 @@ function StudioApp() {
           frameRoot: saved.frameRoot,
           storageMode: "preset-root"
         });
-        await activatePet(newPet, true);
-        showToast(`已成功保存「${newPet.name}」并同步至桌面！`, "success");
+        const result = await activatePet(newPet, true);
+        announceActivation(result, `已成功保存「${newPet.name}」并同步至桌面！`);
         setCurrentTab("stage");
         return;
       }
@@ -1258,8 +1301,8 @@ function StudioApp() {
         sourceImage: fallbackImage,
         manualFrames: actions
       });
-      await activatePet(newPet, true);
-      showToast("已保存动作帧（网页预览模式）！", "success");
+      const result = await activatePet(newPet, true);
+      announceActivation(result, "已保存动作帧（网页预览模式）！");
       setCurrentTab("stage");
     } catch (err) {
       showToast(`保存帧包失败：${formatError(err)}`, "error");
@@ -1307,10 +1350,10 @@ function StudioApp() {
         storageMode: "preset-root"
       });
 
-      await activatePet(newPet, true);
+      const activation = await activatePet(newPet, true);
       aiCheckpointRef.current = createGenerationCheckpoint();
       setCanResumeAI(false);
-      showToast(`AI 宠物「${newPet.name}」制作完成并已入住桌面！`, "success");
+      announceActivation(activation, `AI 宠物「${newPet.name}」制作完成并已入住桌面！`);
       setCurrentTab("stage");
     } catch (err) {
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
@@ -1338,8 +1381,8 @@ function StudioApp() {
     try {
       const latest = (await loadAllPets()).find((p) => p.id === pet.id);
       if (!latest) throw new Error("该宠物已被移除");
-      const full = await activatePet(latest);
-      showToast(`已将「${full.name}」派往桌面！🐾`, "success");
+      const result = await activatePet(latest);
+      announceActivation(result, `已将「${result.pet.name}」派往桌面！🐾`);
     } catch (err) { showToast(`切换宠物失败：${formatError(err)}`, "error"); }
   }
 

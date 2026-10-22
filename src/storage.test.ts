@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingRecord, savePet, setActivePetId, startNewAdoptionIntent, updatePetAction } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, startNewAdoptionIntent, updatePetAction } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -407,5 +407,54 @@ describe("explicit intents and display confirmation", () => {
     expect(confirmed.displayConfirmed).toBe(true);
     const loaded = await loadOnboardingRecord();
     expect(loaded.record?.displayConfirmed).toBe(true);
+  });
+});
+
+describe("intent-matched progress writes", () => {
+  it("refuses an old meet completion over a newer draft", async () => {
+    const newer = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "乙",
+      phase: "draft",
+      intentId: "intent-new",
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    await startNewAdoptionIntent(newer);
+    const stale = createOnboardingRecord({
+      state: "completed",
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "pet-old",
+      pendingPetId: "pet-old",
+      intentId: "intent-old",
+      displayConfirmed: true,
+      updatedAt: "2026-10-22T00:00:04.000Z"
+    });
+    await expect(saveOnboardingProgress(stale)).rejects.toThrow("领养已更新");
+    const loaded = await loadOnboardingRecord();
+    expect(loaded.record?.intentId).toBe("intent-new");
+    expect(loaded.record?.draftName).toBe("乙");
+    expect(loaded.record?.state).toBe("in_progress");
+  });
+
+  it("allows progress within the same intent", async () => {
+    const base = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "咕唧",
+      phase: "draft",
+      intentId: "intent-a",
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    await startNewAdoptionIntent(base);
+    const next = {
+      ...base,
+      draftName: "新名字",
+      updatedAt: "2026-10-22T00:00:04.000Z"
+    };
+    const saved = await saveOnboardingProgress(next);
+    expect(saved.draftName).toBe("新名字");
+    expect((await loadOnboardingRecord()).record?.draftName).toBe("新名字");
   });
 });

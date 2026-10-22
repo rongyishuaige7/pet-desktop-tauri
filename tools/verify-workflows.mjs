@@ -800,6 +800,9 @@ await record('adoption_show_failure_waits_and_retries_display',async()=>{
   const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {visible:window.__review.native.visible,mode:window.__review.native.visibilityMode,record:(await s.loadOnboardingRecord()).record,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   await page.evaluate(()=>{window.__review.failPreference=false;});
   await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForTimeout(600);
+  const retryTitle=await page.locator('#onboarding-title').innerText();
+  if(!retryTitle.includes('很高兴见到你'))return {passed:false,reason:'retry did not leave waiting',retryTitle,debug:await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {error:document.querySelector('.onboarding-error')?.textContent,record:(await s.loadOnboardingRecord()).record,native:window.__review.native};})};
   await page.getByRole('heading',{name:'等待显示，很高兴见到你',exact:true}).waitFor();
   const retried=await page.evaluate(()=>({visible:window.__review.native.visible,mode:window.__review.native.visibilityMode,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
   return {passed:failed.visible===false&&failed.record?.phase==='committed'&&!failed.toasts.some(text=>text?.includes('入住桌面'))&&retried.visible===true&&retried.mode==='shown'&&retried.toasts.some(text=>text?.includes('已经显示到桌面'))&&errors.length===0,failed,retried,errors};
@@ -854,6 +857,8 @@ await record('stale_window_after_first_finishes_joins_result',async()=>{
   await second.locator('.onboarding-dialog').waitFor();
   await page.getByRole('button',{name:'下一步',exact:true}).click();
   await page.locator('#onboarding-name').fill('窗口甲');
+  await second.getByRole('button',{name:'下一步',exact:true}).click();
+  await second.locator('#onboarding-name').fill('窗口乙');
   await page.getByRole('button',{name:'领养并入住',exact:true}).click();
   await page.getByRole('heading',{name:'窗口甲，很高兴见到你',exact:true}).waitFor();
   await page.getByRole('button',{name:'完成见面',exact:true}).click();
@@ -861,8 +866,6 @@ await record('stale_window_after_first_finishes_joins_result',async()=>{
   const finishDebug=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
   if(finishDebug.dialog)return {passed:false,reason:'finish did not close',finishDebug};
   await page.locator('.onboarding-dialog').waitFor({state:'detached'});
-  await second.getByRole('button',{name:'下一步',exact:true}).click();
-  await second.locator('#onboarding-name').fill('窗口乙');
   await second.getByRole('button',{name:'领养并入住',exact:true}).click();
   await second.waitForTimeout(500);
   const secondDebug=await second.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,pets:await s.loadAllPets(),dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
@@ -887,6 +890,9 @@ await record('adoption_show_failure_reload_keeps_waiting',async()=>{
   await page.keyboard.press('Escape');
   const stillWaiting=await page.locator('.onboarding-dialog').isVisible();
   await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForTimeout(600);
+  const retryHeading=await page.locator('#onboarding-title').innerText();
+  if(!retryHeading.includes('很高兴见到你'))return {passed:false,reason:'retry did not leave waiting',retryHeading,debug:await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {error:document.querySelector('.onboarding-error')?.textContent,record:(await s.loadOnboardingRecord()).record,native:window.__review.native};})};
   await page.getByRole('heading',{name:'待显示伙伴，很高兴见到你',exact:true}).waitFor();
   const confirmed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,native:window.__review.native};});
   return {passed:failed.record?.displayConfirmed===false&&failed.native.visible===false&&reloaded.record?.displayConfirmed===false&&reloaded.native.visible===false&&stillWaiting&&confirmed.record?.displayConfirmed===true&&confirmed.native.visible===true&&errors.length===0,failed,reloaded,stillWaiting,confirmed,errors};
@@ -999,6 +1005,52 @@ await record('follow_window_leaves_waiting_when_native_confirms',async()=>{
   await second.getByRole('heading',{name:'待显示，很高兴见到你',exact:true}).waitFor();
   const followed=await second.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
   return {passed:waiting?.displayConfirmed===false&&confirmed?.displayConfirmed===true&&followed?.displayConfirmed===true&&errors.length===0,waiting,confirmed,followed,errors};
+ }finally{await context.close();}
+});
+await record('stale_meet_completion_does_not_overwrite_new_draft',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,onboarding:'keep'});
+ try{
+  const second=await context.newPage();
+  await second.goto(base,{waitUntil:'domcontentloaded'});
+  await second.locator('.onboarding-dialog').waitFor();
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.locator('#onboarding-name').fill('甲');
+  await page.getByRole('button',{name:'领养并入住',exact:true}).click();
+  await page.getByRole('heading',{name:'甲，很高兴见到你',exact:true}).waitFor();
+  await second.reload({waitUntil:'domcontentloaded'});
+  await second.locator('.onboarding-dialog').waitFor();
+  const meetButton=await second.getByRole('button',{name:'稍后熟悉',exact:true}).count();
+  if(!meetButton)return {passed:false,reason:'second not on meet',debug:await second.evaluate(()=>({title:document.querySelector('#onboarding-title')?.textContent,body:document.querySelector('.onboarding-body')?.textContent}))};
+  await second.getByRole('button',{name:'稍后熟悉',exact:true}).click();
+  await second.locator('.onboarding-dialog').waitFor({state:'detached'});
+  await second.getByRole('button',{name:/领养与制作/}).click();
+  await second.getByRole('button',{name:'再领养一只',exact:true}).click();
+  await second.locator('#onboarding-name').fill('乙');
+  await second.keyboard.press('Tab');
+  await second.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadOnboardingRecord()).record?.draftName==='乙';});
+  const before=await second.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
+  await page.getByRole('button',{name:'完成见面',exact:true}).click();
+  await page.waitForTimeout(500);
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
+  return {passed:before?.draftName==='乙'&&after.record?.intentId===before?.intentId&&after.record?.draftName==='乙'&&after.record?.state==='in_progress'&&Boolean(after.error)&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('shelf_deploy_show_failure_does_not_report_success',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+  await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,native:{petId:window.__review.native.petId,mode:window.__review.native.visibilityMode,visible:window.__review.native.visible},toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试保存',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visible===true);
+  const retried=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
+  return {passed:failed.active==='B'&&failed.native.petId==='B'&&failed.native.mode==='hidden'&&failed.native.visible===false&&!failed.toasts.some(text=>text?.includes('派往桌面'))&&failed.toasts.some(text=>text?.includes('暂时没能显示'))&&retried.mode==='shown'&&retried.visible===true&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
 }finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}
