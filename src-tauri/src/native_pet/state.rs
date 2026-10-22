@@ -48,37 +48,125 @@ pub enum InteractionReason {
     StalePet,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpectedState {
+    pub session_id: String,
+    pub revision: u64,
+}
+
+/// Optional execution-time guards for an operation that names one companion.
+/// They are checked inside the serial control section before any mutation.
+#[derive(Debug, Clone, Default)]
+pub struct RequestTarget {
+    pub expected_pet_id: Option<String>,
+    pub expected_state: Option<ExpectedState>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PreferencesRequest {
-    Show,
+    Show {
+        #[serde(default)]
+        expected_pet_id: Option<String>,
+        #[serde(default)]
+        expected_state: Option<ExpectedState>,
+    },
     Hide,
-    Snooze,
-    SetAnimationPaused { value: bool },
-    SetAutonomous { value: bool },
-    SetScale { value: f64 },
-    SetClickThrough { value: bool },
-    SetMotionPreference { value: MotionPreference },
-    SetAutostart { value: bool },
-    ResetPosition,
+    Snooze {
+        #[serde(default)]
+        expected_pet_id: Option<String>,
+    },
+    SetAnimationPaused {
+        value: bool,
+    },
+    SetAutonomous {
+        value: bool,
+    },
+    SetScale {
+        value: f64,
+    },
+    SetClickThrough {
+        value: bool,
+    },
+    SetMotionPreference {
+        value: MotionPreference,
+    },
+    SetAutostart {
+        value: bool,
+    },
+    ResetPosition {
+        #[serde(default)]
+        expected_pet_id: Option<String>,
+    },
 }
 
 impl PreferencesRequest {
     /// Stable operation name used for operation-level errors and retry matching.
     pub fn operation(&self) -> &'static str {
         match self {
-            Self::Show => "show",
+            Self::Show { .. } => "show",
             Self::Hide => "hide",
-            Self::Snooze => "snooze",
+            Self::Snooze { .. } => "snooze",
             Self::SetAnimationPaused { .. } => "setAnimationPaused",
             Self::SetAutonomous { .. } => "setAutonomous",
             Self::SetScale { .. } => "setScale",
             Self::SetClickThrough { .. } => "setClickThrough",
             Self::SetMotionPreference { .. } => "setMotionPreference",
             Self::SetAutostart { .. } => "setAutostart",
-            Self::ResetPosition => "resetPosition",
+            Self::ResetPosition { .. } => "resetPosition",
         }
     }
+
+    pub fn target(&self) -> RequestTarget {
+        match self {
+            Self::Show {
+                expected_pet_id,
+                expected_state,
+            } => RequestTarget {
+                expected_pet_id: expected_pet_id.clone(),
+                expected_state: expected_state.clone(),
+            },
+            Self::Snooze { expected_pet_id } | Self::ResetPosition { expected_pet_id } => {
+                RequestTarget {
+                    expected_pet_id: expected_pet_id.clone(),
+                    expected_state: None,
+                }
+            }
+            _ => RequestTarget::default(),
+        }
+    }
+}
+
+/// A late operation must not act on a different companion or a newer native
+/// snapshot. Returning a code lets the interface invalidate only that entry.
+pub fn target_conflict(
+    current_pet_id: Option<&str>,
+    session_id: &str,
+    revision: u64,
+    target: &RequestTarget,
+) -> Option<(String, String)> {
+    if let Some(expected) = &target.expected_pet_id {
+        if current_pet_id != Some(expected.as_str()) {
+            return Some((
+                "TARGET_CHANGED".to_string(),
+                "当前伙伴已切换，未执行这次操作".to_string(),
+            ));
+        }
+    }
+    if let Some(expected) = &target.expected_state {
+        if expected.session_id != session_id || expected.revision != revision {
+            return Some((
+                "STATE_CHANGED".to_string(),
+                "伙伴状态已更新，未执行这次操作".to_string(),
+            ));
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -224,7 +312,10 @@ mod tests {
     #[test]
     fn reduced_motion_follows_system_until_user_overrides() {
         assert!(!reduced_motion_active(MotionPreference::System, None));
-        assert!(!reduced_motion_active(MotionPreference::System, Some(false)));
+        assert!(!reduced_motion_active(
+            MotionPreference::System,
+            Some(false)
+        ));
         assert!(reduced_motion_active(MotionPreference::System, Some(true)));
         assert!(reduced_motion_active(MotionPreference::Reduce, None));
         assert!(reduced_motion_active(MotionPreference::Reduce, Some(false)));
@@ -235,18 +326,8 @@ mod tests {
         assert!(effective_paused(false, true));
         assert!(effective_paused(true, false));
         assert!(!effective_paused(false, false));
-        assert!(effective_autonomous(
-            true,
-            false,
-            true,
-            Availability::Ready
-        ));
-        assert!(!effective_autonomous(
-            true,
-            true,
-            true,
-            Availability::Ready
-        ));
+        assert!(effective_autonomous(true, false, true, Availability::Ready));
+        assert!(!effective_autonomous(true, true, true, Availability::Ready));
         assert!(!effective_autonomous(
             true,
             false,
@@ -323,5 +404,56 @@ mod tests {
                 value: MotionPreference::Reduce
             }
         ));
+    }
+
+    #[test]
+    fn target_checks_reject_a_different_pet_or_a_newer_snapshot() {
+        let show: PreferencesRequest = serde_json::from_str(
+            r#"{"kind":"show","expectedPetId":"pet-a","expectedState":{"sessionId":"s1","revision":7}}"#,
+        )
+        .unwrap();
+        let target = show.target();
+        assert_eq!(target.expected_pet_id.as_deref(), Some("pet-a"));
+        assert_eq!(
+            target.expected_state.as_ref().map(|state| state.revision),
+            Some(7)
+        );
+        assert_eq!(target_conflict(Some("pet-a"), "s1", 7, &target), None);
+        assert_eq!(
+            target_conflict(Some("pet-b"), "s1", 7, &target)
+                .expect("different pet")
+                .0,
+            "TARGET_CHANGED"
+        );
+        assert_eq!(
+            target_conflict(Some("pet-a"), "s1", 8, &target)
+                .expect("newer revision")
+                .0,
+            "STATE_CHANGED"
+        );
+        assert_eq!(
+            target_conflict(Some("pet-a"), "s2", 7, &target)
+                .expect("newer session")
+                .0,
+            "STATE_CHANGED"
+        );
+        assert_eq!(
+            target_conflict(None, "s1", 7, &target)
+                .expect("no current pet")
+                .0,
+            "TARGET_CHANGED"
+        );
+    }
+
+    #[test]
+    fn untargeted_and_targeted_requests_keep_their_existing_shape() {
+        let snooze: PreferencesRequest = serde_json::from_str(r#"{"kind":"snooze"}"#).unwrap();
+        assert_eq!(snooze.operation(), "snooze");
+        assert_eq!(snooze.target().expected_pet_id, None);
+        let reset: PreferencesRequest =
+            serde_json::from_str(r#"{"kind":"resetPosition","expectedPetId":"pet-a"}"#).unwrap();
+        assert_eq!(reset.target().expected_pet_id.as_deref(), Some("pet-a"));
+        let hide: PreferencesRequest = serde_json::from_str(r#"{"kind":"hide"}"#).unwrap();
+        assert_eq!(hide.target().expected_pet_id, None);
     }
 }

@@ -195,4 +195,59 @@ describe("native pet client recovery and races", () => {
     expect(result.visibilityMode).toBe("hidden");
     expect(received.at(-1)?.revision).toBe(12);
   });
+
+  it("forwards the retry target and snapshot version without rewriting them", async () => {
+    const initial = baseState({ revision: 10, petId: "pet-b" });
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const client = createNativePetClient(
+      deps(
+        vi.fn(async (command: string, args?: Record<string, unknown>) => {
+          calls.push({ command, args });
+          if (command === "get_native_pet_state") return initial;
+          if (command === "update_native_pet_preferences") {
+            return { ...initial, revision: 11, visible: true };
+          }
+          throw new Error(`unexpected ${command}`);
+        }),
+        vi.fn(async () => () => undefined)
+      )
+    );
+    await client.start(() => undefined);
+    await client.update({
+      kind: "show",
+      expectedPetId: "pet-b",
+      expectedState: { sessionId: "mock-session", revision: 10 }
+    });
+    const request = calls.find(
+      (call) => call.command === "update_native_pet_preferences"
+    )?.args?.request;
+    expect(request).toEqual({
+      kind: "show",
+      expectedPetId: "pet-b",
+      expectedState: { sessionId: "mock-session", revision: 10 }
+    });
+  });
+
+  it("targets detach and exposes the latest state to late retries", async () => {
+    const initial = baseState({ revision: 10, petId: "pet-b" });
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const client = createNativePetClient(
+      deps(
+        vi.fn(async (command: string, args?: Record<string, unknown>) => {
+          calls.push({ command, args });
+          if (command === "get_native_pet_state") return initial;
+          if (command === "detach_native_pet") return;
+          throw new Error(`unexpected ${command}`);
+        }),
+        vi.fn(async () => () => undefined)
+      )
+    );
+    await client.start(() => undefined);
+    expect(client.currentState()?.petId).toBe("pet-b");
+    await client.detach("pet-b");
+    expect(
+      calls.find((call) => call.command === "detach_native_pet")?.args
+    ).toEqual({ expectedPetId: "pet-b" });
+    expect(client.currentState()?.petId).toBe("pet-b");
+  });
 });

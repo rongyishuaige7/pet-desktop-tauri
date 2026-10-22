@@ -35,7 +35,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
   window.__TAURI_INTERNALS__={
    transformCallback:(fn)=>{const id=seq++;callbacks.set(id,fn);return id;},
    invoke:async(cmd,args={})=>{
-    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,action:args.action});
+    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
     if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);return id;}
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
@@ -59,7 +59,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      if(state.emitOnSet)setTimeout(()=>{state.action='walk';state.native.action='walk';state.native.actionRevision++;void state.emitNative();},30);
      return state.native;
     }
-    if(cmd==='detach_native_pet'){Object.assign(state.native,{petId:null,petName:null,availability:'absent',visible:false});state.visible=false;state.emitNative();return;}
+    if(cmd==='detach_native_pet'){if(args.expectedPetId&&args.expectedPetId!==state.native.petId)throw new Error('TARGET_CHANGED: mock target changed');Object.assign(state.native,{petId:null,petName:null,availability:'absent',visible:false});state.visible=false;state.emitNative();return;}
     if(cmd==='set_native_pet_name'){state.native.petName=args.name;state.emitNative();return;}
     if(cmd==='set_native_pet_action'){state.action=args.action;state.native.action=args.action;state.native.actionRevision++;state.emitNative();return {action:args.action,petId:state.native.petId,revision:state.native.actionRevision};}
     if(cmd==='set_native_pet_visible'){state.native.visibilityMode=args.visible?'shown':'hidden';state.visible=args.visible;state.emitNative();return state.native;}
@@ -67,6 +67,8 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='reset_native_pet_position')return;
     if(cmd==='update_native_pet_preferences'){
      const r=args.request;const n=state.native;
+     if(r.expectedPetId&&r.expectedPetId!==n.petId)throw new Error('TARGET_CHANGED: mock target changed');
+     if(r.expectedState&&(r.expectedState.sessionId!==n.sessionId||r.expectedState.revision!==n.revision))throw new Error('STATE_CHANGED: mock state changed');
      if(state.failPreference){
       n.lastOperationError={id:'mock-pref-error',operation:r.kind,code:'SETTINGS_WRITE_FAILED',recoverable:true};
       await state.emitNative();
@@ -150,7 +152,9 @@ async function seed(page,{desktop=false,active='A',empty=true}={}){
  await page.locator('.companion-pet-button, .toast-message.error').first().waitFor();
  await sleep(300);
 }
+const only=process.env.PET_ONLY?new Set(process.env.PET_ONLY.split(',').map(name=>name.trim()).filter(Boolean)):null;
 async function record(name,fn){
+ if(only&&!only.has(name))return;
  try{const detail=await fn();const result={name,...detail};results.push(result);console.log(JSON.stringify(result));}
  catch(e){const result={name,harnessError:e.message};results.push(result);console.log(JSON.stringify(result));}
 }
@@ -803,7 +807,8 @@ await record('adoption_show_failure_waits_and_retries_display',async()=>{
   await page.waitForTimeout(600);
   const retryTitle=await page.locator('#onboarding-title').innerText();
   if(!retryTitle.includes('很高兴见到你'))return {passed:false,reason:'retry did not leave waiting',retryTitle,debug:await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {error:document.querySelector('.onboarding-error')?.textContent,record:(await s.loadOnboardingRecord()).record,native:window.__review.native};})};
-  await page.getByRole('heading',{name:'等待显示，很高兴见到你',exact:true}).waitFor();
+  try{await page.waitForFunction(()=>document.querySelector('#onboarding-title')?.textContent==='等待显示，很高兴见到你',{timeout:30000});}
+  catch{return {passed:false,reason:'heading mismatch',retryTitle,debug:await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {title:document.querySelector('#onboarding-title')?.textContent,dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,record:(await s.loadOnboardingRecord()).record,active:(await s.loadPet())?.name,native:window.__review.native};})};}
   const retried=await page.evaluate(()=>({visible:window.__review.native.visible,mode:window.__review.native.visibilityMode,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
   return {passed:failed.visible===false&&failed.record?.phase==='committed'&&!failed.toasts.some(text=>text?.includes('入住桌面'))&&retried.visible===true&&retried.mode==='shown'&&retried.toasts.some(text=>text?.includes('已经显示到桌面'))&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
@@ -976,7 +981,8 @@ await record('old_record_new_adoption_draft_saves',async()=>{
   await page.locator('#onboarding-name').fill('新伙伴');
   const afterStart=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
   await page.getByRole('button',{name:'领养并入住',exact:true}).click();
-  await page.getByRole('heading',{name:'新伙伴，很高兴见到你',exact:true}).waitFor();
+  try{await page.getByRole('heading',{name:'新伙伴，很高兴见到你',exact:true}).waitFor({timeout:30000});}
+  catch{return {passed:false,reason:'meet heading missing',debug:await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {title:document.querySelector('#onboarding-title')?.textContent,dialog:Boolean(document.querySelector('.onboarding-dialog')),error:document.querySelector('.onboarding-error')?.textContent,record:(await s.loadOnboardingRecord()).record,active:(await s.loadPet())?.name,pets:(await s.loadAllPets()).map(p=>p.name),native:window.__review.native,toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};})};}
   const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),record:(await s.loadOnboardingRecord()).record};});
   return {passed:afterStart?.state==='in_progress'&&Boolean(afterStart?.intentId)&&after.pets.length===3&&after.pets.some(pet=>pet.name==='新伙伴')&&after.record?.confirmedPetId!==null&&errors.length===0,afterStart,after,errors};
  }finally{await context.close();}
@@ -1047,10 +1053,145 @@ await record('shelf_deploy_show_failure_does_not_report_success',async()=>{
   await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
   const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,native:{petId:window.__review.native.petId,mode:window.__review.native.visibilityMode,visible:window.__review.native.visible},toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   await page.evaluate(()=>{window.__review.failPreference=false;});
-  await page.getByRole('button',{name:'重试保存',exact:true}).click();
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
   await page.waitForFunction(()=>window.__review.native.visible===true);
   const retried=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
   return {passed:failed.active==='B'&&failed.native.petId==='B'&&failed.native.mode==='hidden'&&failed.native.visible===false&&!failed.toasts.some(text=>text?.includes('派往桌面'))&&failed.toasts.some(text=>text?.includes('暂时没能显示'))&&retried.mode==='shown'&&retried.visible===true&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
-}finally{await browser.close();if(results.some(r=>!r.passed))process.exitCode=1;await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));console.log('EVIDENCE_DIR='+evidenceDir);}
+
+await record('import_show_failure_retries_display_only',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
+ try{
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  await page.getByRole('button',{name:/本地帧包导入/}).click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
+  await page.locator('.recovery-notice').filter({hasText:'还没有显示到桌面'}).waitFor();
+  const read=()=>page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,loads:window.__review.calls.filter(c=>c.cmd==='load_preset_frame_pack').length,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  const failed=await read();
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visible===true);
+  const retried=await read();
+  return {passed:failed.pets===1&&failed.loads===2&&failed.shows===1&&failed.visible===false&&!failed.toasts.some(text=>text?.includes('同步至桌面'))&&retried.pets===1&&retried.loads===2&&retried.shows===2&&retried.toasts.some(text=>text?.includes('已在桌面陪着你'))&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('assembly_show_failure_retries_display_only',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
+ try{
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  await page.getByRole('button',{name:/动作帧装配台/}).click();
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  const file={name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')};
+  for(const label of ['待机','坐下','睡觉','开心','走路','跳跃']){
+   await page.getByRole('button',{name:new RegExp('^'+label+' \\(')}).click();
+   await page.locator('.frame-add-card input[type=file]').setInputFiles(Array.from({length:5},(_,i)=>({...file,name:`${label}-${i}.png`})));
+  }
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
+  const read=()=>page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,saves:window.__review.saves,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  const failed=await read();
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visible===true);
+  const retried=await read();
+  return {passed:failed.pets===1&&failed.saves===1&&failed.shows===1&&failed.visible===false&&!failed.toasts.some(text=>text?.includes('同步至桌面'))&&retried.pets===1&&retried.saves===1&&retried.shows===2&&retried.visible===true&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('ai_show_failure_retries_display_only',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
+  const read=()=>page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,generations:window.__review.generations,saves:window.__review.saves,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  const failed=await read();
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visible===true);
+  const retried=await read();
+  return {passed:failed.pets===1&&failed.generations===7&&failed.saves===1&&failed.shows===1&&failed.visible===false&&!failed.toasts.some(text=>text?.includes('同步至桌面'))&&retried.pets===1&&retried.generations===7&&retried.saves===1&&retried.shows===2&&retried.visible===true&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('display_retry_invalidated_by_newer_selection',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+  await page.getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await page.evaluate(()=>{window.__review.failPreference=false;});
+  const second=await context.newPage();
+  await second.goto(base,{waitUntil:'domcontentloaded'});
+  await second.locator('.companion-pet-button').waitFor();
+  await second.evaluate(async()=>{await (await import('/src/storage.ts')).setActivePetId('A');});
+  await page.waitForTimeout(300);
+  const shows=()=>page.evaluate(()=>window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length);
+  const before=await shows();
+  await page.waitForTimeout(400);
+  const after=await page.evaluate(()=>({visible:window.__review.native.visible,displayRecovery:document.querySelector('.recovery-notice')?.textContent?.includes('还没有显示到桌面')??false,retryButtons:[...document.querySelectorAll('button')].filter(node=>node.textContent?.trim()==='重试显示').length}));
+  const afterShows=await shows();
+  return {passed:before===1&&afterShows===1&&after.visible===false&&!after.displayRecovery&&after.retryButtons===0&&errors.length===0,before,afterShows,after,errors};
+ }finally{await context.close();}
+});
+await record('display_retry_rejected_by_native_target',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+  await page.getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await page.evaluate(()=>{window.__review.failPreference=false;window.__review.native.petId='intruder';});
+  await page.getByRole('button',{name:'重试显示',exact:true}).click();
+  await page.waitForTimeout(400);
+  const state=await page.evaluate(()=>({shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,displayRecovery:document.querySelector('.recovery-notice')?.textContent?.includes('还没有显示到桌面')??false,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
+  return {passed:state.shows===2&&state.visible===false&&!state.displayRecovery&&state.toasts.some(text=>text?.includes('已失效'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('display_retry_is_not_replayed_after_reload',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failPreference=true;});
+  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+  await page.getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('.companion-pet-button').waitFor();
+  await page.waitForTimeout(500);
+  const reloaded=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,pets:(await s.loadAllPets()).length,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,mode:window.__review.native.visibilityMode,recovery:Boolean(document.querySelector('.recovery-notice'))};});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'立即唤回',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visible===true);
+  const recalled=await page.evaluate(()=>({visible:window.__review.native.visible,mode:window.__review.native.visibilityMode}));
+  return {passed:reloaded.active==='B'&&reloaded.pets===2&&reloaded.shows===0&&reloaded.visible===false&&!reloaded.recovery&&recalled.visible===true&&recalled.mode==='shown'&&errors.length===0,reloaded,recalled,errors};
+ }finally{await context.close();}
+});
+await record('web_import_reports_preview_not_desktop',async()=>{
+ const {context,page,errors}=await newCase();
+ try{
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  await page.getByRole('button',{name:/本地帧包导入/}).click();
+  await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
+  await page.locator('.toast-message.success').filter({hasText:'可在网页预览'}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent?.includes('网页演示'));
+  const state=await page.evaluate(async()=>({pets:(await (await import('/src/storage.ts')).loadAllPets()).length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent),webTag:document.querySelector('.status-chip')?.textContent?.includes('网页演示')??false}));
+  return {passed:state.pets===1&&state.toasts.some(text=>text?.includes('可在网页预览'))&&!state.toasts.some(text=>text?.includes('桌面')||text?.includes('同步'))&&state.webTag&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+}finally{
+ if(only){const seen=new Set(results.map(result=>result.name));const missing=[...only].filter(name=>!seen.has(name));if(missing.length){console.error('PET_ONLY matched no scenario: '+missing.join(', '));process.exitCode=1;}}
+ await browser.close();
+ if(results.some(result=>!result.passed))process.exitCode=1;
+ await writeFile(join(evidenceDir,'workflow-results.json'),JSON.stringify(results,null,2));
+ console.log('EVIDENCE_DIR='+evidenceDir);
+}

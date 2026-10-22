@@ -24,12 +24,14 @@ import {
   subscribePetChanges,
   isCollectionInitialized,
   loadOnboardingRecord,
+  loadSelectionRevision,
   saveOnboardingRecord,
   saveOnboardingProgress,
   startNewAdoptionIntent,
   claimAdoptionRecord,
   commitAdoptedPet,
-  confirmAdoptionDisplay
+  confirmAdoptionDisplay,
+  OnboardingProgressError
 } from "./storage";
 import {
   PET_ACTIONS,
@@ -54,12 +56,20 @@ import {
   completeOnboarding,
   createOnboardingRecord,
   decideOnboardingStart,
+  keepNewerDraftName,
   markAdoptionCommitted,
   type OnboardingRecord
 } from "./onboarding";
 import { findPreset } from "./presets";
 import { formatSnoozeTime, statusText } from "./native-pet-state";
 import { useNativePet } from "./use-native-pet";
+import {
+  displayRetryStillValid,
+  nativeStateVersion,
+  parseNativeError,
+  type ActivationResult,
+  type DisplayRetryContext
+} from "./pet-activation";
 import type { InteractionKind, PreferenceRequest } from "./native-pet-types";
 import "./styles.css";
 
@@ -106,12 +116,14 @@ function StudioApp() {
     code?: string;
   } | null>(null);
   const [dismissedRecovery, setDismissedRecovery] = useState<string | null>(null);
+  const [displayRetry, setDisplayRetry] = useState<DisplayRetryContext | null>(null);
   const lastPreferenceRef = useRef<PreferenceRequest | null>(null);
   const displayConfirmRef = useRef<string | null>(null);
   const speechTimerRef = useRef<number | null>(null);
   const scaleTimerRef = useRef<number | null>(null);
   const onboardingBusyRef = useRef(false);
   const adoptionCommittedRef = useRef(false);
+  const nameEditSeqRef = useRef(0);
   const activePetRef = useRef<PetProfile | null>(null);
   const native = useNativePet({
     isTauri,
@@ -176,6 +188,15 @@ function StudioApp() {
   ]);
   const lastNativeActionRevision = useRef(0);
 
+  // Another window or the tray may have switched the native companion. A
+  // retry prepared for the old one is no longer meaningful.
+  useEffect(() => {
+    if (!displayRetry) return;
+    if (native.state.petId && native.state.petId !== displayRetry.petId) {
+      setDisplayRetry(null);
+    }
+  }, [displayRetry, native.state.petId]);
+
   // Workshop Form State
   const [name, setName] = useState("奶茶");
   const [species, setSpecies] = useState<PetSpecies>("cat");
@@ -233,8 +254,12 @@ function StudioApp() {
     const current = activePetRef.current;
     setPets(all.map((p) => p.id === current?.id ? { ...p, sourceImage: current.sourceImage, actions: current.actions } : p));
   }
-  async function activatePet(pet: PetProfile, create = false, explicitShow = true) {
-    return serial(async (): Promise<{ pet: PetProfile; displayed: boolean }> => {
+  async function activatePet(
+    pet: PetProfile,
+    create = false,
+    explicitShow = true
+  ): Promise<ActivationResult> {
+    return serial(async (): Promise<ActivationResult> => {
       transitioning.current = true;
       const previous = activePetRef.current;
       let nativeChanged = false;
@@ -252,24 +277,46 @@ function StudioApp() {
         else if (!await setActivePetId(full.id)) throw new Error("该宠物已被移除");
         persisted = true;
         setActivePet(full);
-        let displayed = true;
-        if (isTauri && explicitShow) {
-          lastPreferenceRef.current = { kind: "show" };
-          try {
-            const shown = await native.update({ kind: "show" });
-            displayed = Boolean(shown?.visible && shown.petId === full.id);
-          } catch {
-            // The profile is already saved and active; keep it and leave the
-            // display retry to the recovery entry instead of rolling back.
-            displayed = false;
-          }
-        }
+        setDisplayRetry(null);
+        const selectionRevision = await loadSelectionRevision().catch(() => 0);
         try {
           await refreshList();
         } catch {
           // A list refresh failure only needs a later re-read.
         }
-        return { pet: full, displayed };
+        if (!isTauri) return { status: "webPreview", pet: full };
+        if (!explicitShow) return { status: "savedOnly", pet: full };
+
+        lastPreferenceRef.current = { kind: "show" };
+        try {
+          const shown = await native.update({ kind: "show", expectedPetId: full.id });
+          if (shown?.visible && shown.petId === full.id) {
+            return { status: "displayed", pet: full, state: shown };
+          }
+          // A different pet became visible while this command was in flight.
+          const latest = await loadPet().catch(() => null);
+          if (latest && latest.id !== full.id) {
+            return { status: "superseded", currentPetId: latest.id };
+          }
+          const retry = createDisplayRetry(full, selectionRevision, "DISPLAY_UNCONFIRMED");
+          setDisplayRetry(retry);
+          return { status: "displayPending", pet: full, retry, code: retry.code };
+        } catch (error) {
+          const parsed = parseNativeError(error);
+          if (parsed.code === "TARGET_CHANGED" || parsed.code === "STATE_CHANGED") {
+            const latest = await loadPet().catch(() => null);
+            return { status: "superseded", currentPetId: latest?.id ?? null };
+          }
+          // The profile is already saved and selected; keep it and leave only
+          // the display retry. Never roll back into "not saved".
+          const retry = createDisplayRetry(
+            full,
+            selectionRevision,
+            parsed.code ?? "DISPLAY_FAILED"
+          );
+          setDisplayRetry(retry);
+          return { status: "displayPending", pet: full, retry, code: retry.code };
+        }
       } catch (error) {
         if (!persisted && nativeChanged && previous?.frameRoot) {
           try {
@@ -284,17 +331,114 @@ function StudioApp() {
     });
   }
 
-  function announceActivation(
-    result: { pet: PetProfile; displayed: boolean },
-    successMessage: string
-  ) {
-    if (result.displayed) {
-      showToast(successMessage, "success");
-    } else {
-      showToast(
-        `「${result.pet.name}」已保存并切换，但暂时没能显示到桌面。请在恢复提示中重试显示。`,
-        "error"
-      );
+  function createDisplayRetry(
+    pet: PetProfile,
+    selectionRevision: number,
+    code: string
+  ): DisplayRetryContext {
+    return {
+      operationId: crypto.randomUUID(),
+      petId: pet.id,
+      petName: pet.name,
+      selectionRevision,
+      nativeVersion: nativeStateVersion(native.snapshot()),
+      code
+    };
+  }
+
+  /**
+   * Retrying a display sends only `show`. It re-checks the stored selection
+   * revision and asks Rust to check the pet and snapshot version again, so a
+   * late retry cannot wake a newer companion or override a newer hide.
+   */
+  async function retryDisplay(context: DisplayRetryContext): Promise<void> {
+    await serial(async () => {
+      let petIds: string[];
+      let activeId: string | null;
+      let revision: number;
+      try {
+        const [all, active, storedRevision] = await Promise.all([
+          loadAllPets(),
+          loadPet(),
+          loadSelectionRevision()
+        ]);
+        petIds = all.map((pet) => pet.id);
+        activeId = active?.id ?? null;
+        revision = storedRevision;
+      } catch (error) {
+        showToast(`读取伙伴资料失败：${formatError(error)}`, "error");
+        return;
+      }
+      if (!displayRetryStillValid(context, petIds, activeId, revision)) {
+        setDisplayRetry(null);
+        showToast(
+          "这次显示请求已失效：伙伴选择已经更新。请在陪伴页重新唤回当前伙伴。",
+          "info"
+        );
+        return;
+      }
+      try {
+        const shown = await native.update({
+          kind: "show",
+          expectedPetId: context.petId,
+          expectedState: context.nativeVersion ?? undefined
+        });
+        if (shown?.visible && shown.petId === context.petId) {
+          setDisplayRetry(null);
+          showToast(`「${context.petName}」已在桌面陪着你。`, "success");
+          return;
+        }
+        const retry = {
+          ...context,
+          operationId: crypto.randomUUID(),
+          nativeVersion: nativeStateVersion(native.snapshot())
+        };
+        setDisplayRetry(retry);
+        showToast(
+          `还没能显示「${context.petName}」，资料仍然保留。可以稍后再试。`,
+          "error"
+        );
+      } catch (error) {
+        const parsed = parseNativeError(error);
+        if (parsed.code === "TARGET_CHANGED" || parsed.code === "STATE_CHANGED") {
+          setDisplayRetry(null);
+          showToast(
+            "这次显示请求已失效：桌面伙伴或状态已经更新。请在陪伴页重新唤回当前伙伴。",
+            "info"
+          );
+          return;
+        }
+        const retry = {
+          ...context,
+          operationId: crypto.randomUUID(),
+          nativeVersion: nativeStateVersion(native.snapshot())
+        };
+        setDisplayRetry(retry);
+        showToast(`重试显示失败：${parsed.message}`, "error");
+      }
+    });
+  }
+
+  function announceActivation(result: ActivationResult, successMessage: string) {
+    switch (result.status) {
+      case "displayed":
+        showToast(successMessage, "success");
+        return;
+      case "webPreview":
+        showToast(`「${result.pet.name}」已保存，可在网页预览。`, "success");
+        return;
+      case "savedOnly":
+        showToast(`「${result.pet.name}」已保存并切换。`, "success");
+        return;
+      case "displayPending":
+        showToast(
+          `「${result.pet.name}」已保存并切换，但暂时没能显示到桌面。重试只恢复显示。`,
+          "error"
+        );
+        return;
+      case "superseded":
+        showToast("这次切换已被更新的伙伴选择取代，已读取最新状态。", "info");
+        return;
     }
   }
 
@@ -446,7 +590,13 @@ function StudioApp() {
         if (cancelled) return;
         const stored = await loadPet();
         const full = stored ? await ensurePetHydrated(stored) : null;
-        if (!cancelled) { setActivePet(full); await refreshList(); }
+        if (!cancelled) {
+          setActivePet(full);
+          setDisplayRetry((current) =>
+            current && full?.id !== current.petId ? null : current
+          );
+          await refreshList();
+        }
       }).catch((err) => { if (!cancelled) showToast(`同步宠物失败：${formatError(err)}`, "error"); });
     });
     const unlistenError = isTauri ? listen<string>("native-pet-error", (event) => {
@@ -513,12 +663,34 @@ function StudioApp() {
 
   async function applyPreference(request: PreferenceRequest) {
     lastPreferenceRef.current = request;
+    // A hide or snooze replaces the earlier display intent immediately. Other
+    // preferences (scale, motion, autostart) do not invalidate a display retry.
+    if (request.kind === "hide" || request.kind === "snooze") setDisplayRetry(null);
     try {
       const next = await native.update(request);
+      if (request.kind === "show") setDisplayRetry(null);
       setDismissedRecovery(null);
       return next;
     } catch (err) {
-      showToast(`设置没有保存：${formatError(err)}`, "error");
+      const parsed = parseNativeError(err);
+      if (parsed.code === "TARGET_CHANGED" || parsed.code === "STATE_CHANGED") {
+        // The request named a profile or snapshot that is no longer current.
+        // Do not attach a retry for it; the page shows the latest state.
+        setDisplayRetry(null);
+        showToast(
+          "这次操作已失效：伙伴或状态已经更新，请按当前状态再试一次。",
+          "info"
+        );
+        throw err;
+      }
+      if (request.kind === "show") {
+        const pet = activePetRef.current;
+        if (pet && isTauri) {
+          const revision = await loadSelectionRevision().catch(() => 0);
+          setDisplayRetry(createDisplayRetry(pet, revision, parsed.code ?? "DISPLAY_FAILED"));
+        }
+      }
+      showToast(`设置没有保存：${parsed.message}`, "error");
       throw err;
     }
   }
@@ -559,7 +731,11 @@ function StudioApp() {
   async function handleToggleVisibility() {
     const hiding = native.state.visibilityMode === "shown";
     try {
-      await applyPreference({ kind: hiding ? "hide" : "show" });
+      await applyPreference(
+        hiding
+          ? { kind: "hide" }
+          : { kind: "show", expectedPetId: activePetRef.current?.id }
+      );
       showToast(hiding ? "伙伴已收起，随时可以叫回来。" : "伙伴回来了。", "success");
     } catch {
       // applyPreference already reported the failure; recovery keeps the retry.
@@ -569,7 +745,10 @@ function StudioApp() {
   async function handleSnooze() {
     if (native.state.visibilityMode === "snoozed") {
       try {
-        await applyPreference({ kind: "show" });
+        await applyPreference({
+          kind: "show",
+          expectedPetId: activePetRef.current?.id
+        });
         showToast("已提前唤回伙伴。", "success");
       } catch {
         // Reported by applyPreference.
@@ -599,7 +778,10 @@ function StudioApp() {
   async function handleResetPosition() {
     if (!isTauri) return;
     try {
-      await applyPreference({ kind: "resetPosition" });
+      await applyPreference({
+        kind: "resetPosition",
+        expectedPetId: activePetRef.current?.id
+      });
       showToast("桌面伙伴已唤回右下角 🎯", "success");
     } catch {
       // Reported by applyPreference.
@@ -632,7 +814,7 @@ function StudioApp() {
       const full = await ensurePetHydrated(current);
       if (isTauri) {
         await native.attach(full.frameRoot!, full.id, full.name);
-        await native.update({ kind: "show" });
+        await native.update({ kind: "show", expectedPetId: full.id });
       }
       setActivePet(full);
       setLocalError(null);
@@ -669,11 +851,18 @@ function StudioApp() {
   }
 
   function handleRetryPreference() {
-    const request = lastPreferenceRef.current;
-    if (!request) {
+    const stored = lastPreferenceRef.current;
+    if (!stored) {
       setSettingsOpen(true);
       return;
     }
+    // A late retry still names the profile it was prepared for; Rust rejects
+    // it if another window or the tray changed the target in the meantime.
+    const request =
+      (stored.kind === "show" || stored.kind === "resetPosition") &&
+      activePetRef.current
+        ? { ...stored, expectedPetId: stored.expectedPetId ?? activePetRef.current.id }
+        : stored;
     void applyPreference(request).catch(() => undefined);
   }
 
@@ -721,6 +910,7 @@ function StudioApp() {
 
   async function handleOnboardingNext() {
     if (!onboarding || onboardingBusyRef.current) return;
+    const editSeq = nameEditSeqRef.current;
     const next: OnboardingRecord = {
       ...onboarding,
       step: "name",
@@ -731,15 +921,18 @@ function StudioApp() {
     setOnboardingError(null);
     try {
       const saved = await saveOnboardingProgress(next);
-      setOnboarding(saved);
-    } catch {
-      await refreshOnboardingFromStorage(
-        "这次进度已过期，已读取最新领养结果。"
+      setOnboarding((current) =>
+        keepNewerDraftName(saved, current, editSeq, nameEditSeqRef.current)
       );
+    } catch (error) {
+      const failure = onboardingSaveFailure(error);
+      if (failure.refresh) await refreshOnboardingFromStorage(failure.message);
+      else setOnboardingError(failure.message);
     }
   }
 
   function handleOnboardingName(name: string) {
+    nameEditSeqRef.current += 1;
     if (!onboarding) return;
     setOnboarding({ ...onboarding, draftName: name.slice(0, MAX_PET_NAME_LENGTH) });
     setOnboardingError(null);
@@ -756,10 +949,20 @@ function StudioApp() {
     ) {
       return;
     }
+    const editSeq = nameEditSeqRef.current;
     void saveOnboardingProgress(onboarding)
-      .then((saved) => setOnboarding(saved))
-      .catch(() => {
-        void refreshOnboardingFromStorage("这次名字没有保存，已读取最新领养结果。");
+      .then((saved) => {
+        // A reply must not replace a name typed while it was in flight.
+        if (nameEditSeqRef.current !== editSeq) return;
+        setOnboarding(saved);
+      })
+      .catch((error) => {
+        const failure = onboardingSaveFailure(error);
+        if (failure.refresh) {
+          void refreshOnboardingFromStorage(failure.message);
+        } else {
+          setOnboardingError(failure.message);
+        }
       });
   }
 
@@ -785,8 +988,16 @@ function StudioApp() {
     try {
       const saved = await saveOnboardingProgress(next);
       setOnboarding(saved);
-    } catch {
-      await refreshOnboardingFromStorage("这次进度已过期，已读取最新领养结果。");
+    } catch (error) {
+      const failure = onboardingSaveFailure(error);
+      if (failure.refresh) {
+        await refreshOnboardingFromStorage(failure.message);
+      } else {
+        // The dialog was already closed optimistically; reopen it so the
+        // unsaved draft and the reason stay visible.
+        setOnboardingOpen(true);
+        setOnboardingError(failure.message);
+      }
     }
   }
 
@@ -870,6 +1081,7 @@ function StudioApp() {
           if (stored) {
             const full = await ensurePetHydrated(stored);
             setActivePet(full);
+            setDisplayRetry(null);
             if (isTauri && full.frameRoot) {
               // The following window may not have attached this profile yet;
               // attaching lets the shared native state confirm the display.
@@ -968,6 +1180,7 @@ function StudioApp() {
             if (stored) {
               const full = await ensurePetHydrated(stored);
               setActivePet(full);
+              setDisplayRetry(null);
               if (isTauri && full.frameRoot) {
                 try {
                   await native.attach(full.frameRoot, full.id, full.name);
@@ -1007,6 +1220,7 @@ function StudioApp() {
     }
 
     setActivePet(fullPet);
+    setDisplayRetry(null);
     setPets((prev) =>
       prev.some((pet) => pet.id === fullPet.id)
         ? prev.map((pet) => (pet.id === fullPet.id ? fullPet : pet))
@@ -1030,7 +1244,10 @@ function StudioApp() {
       let shown;
       try {
         lastPreferenceRef.current = { kind: "show" };
-        shown = await native.update({ kind: "show" });
+        shown = await native.update({
+          kind: "show",
+          expectedPetId: plan.pendingPetId
+        });
       } catch {
         // The profile is committed; stay in a waiting state and retry the
         // display command, not the tutorial.
@@ -1107,7 +1324,10 @@ function StudioApp() {
     let shown;
     try {
       lastPreferenceRef.current = { kind: "show" };
-      shown = await native.update({ kind: "show" });
+      shown = await native.update({
+        kind: "show",
+        expectedPetId: onboarding.confirmedPetId ?? undefined
+      });
     } catch {
       setAdoptionDisplayPending(true);
       setOnboardingError("还没显示到桌面，资料已经保存。请重试显示。");
@@ -1179,10 +1399,10 @@ function StudioApp() {
       setOnboardingError(null);
       setOnboardingSpeech("");
       showToast("已经记住你们第一次见面。", "success");
-    } catch {
-      await refreshOnboardingFromStorage(
-        "这次见面已过期，已读取最新领养结果。"
-      );
+    } catch (error) {
+      const failure = onboardingSaveFailure(error);
+      if (failure.refresh) await refreshOnboardingFromStorage(failure.message);
+      else setOnboardingError(failure.message);
     }
   }
 
@@ -1382,13 +1602,14 @@ function StudioApp() {
       const latest = (await loadAllPets()).find((p) => p.id === pet.id);
       if (!latest) throw new Error("该宠物已被移除");
       const result = await activatePet(latest);
-      announceActivation(result, `已将「${result.pet.name}」派往桌面！🐾`);
+      announceActivation(result, `已将「${latest.name}」派往桌面！🐾`);
     } catch (err) { showToast(`切换宠物失败：${formatError(err)}`, "error"); }
   }
 
   async function handleDeletePet(id: string) {
     const pet = pets.find((p) => p.id === id);
     if (!pet || !confirm(`确定要从宠物架移除「${pet.name}」吗？`)) return;
+    setDisplayRetry((current) => (current?.petId === id ? null : current));
     try {
       await serial(async () => {
         transitioning.current = true;
@@ -1403,7 +1624,7 @@ function StudioApp() {
             await native.attach(full.frameRoot, full.id, full.name);
             full.currentAction = await syncNativeAction(full.currentAction);
           }
-          if (isTauri && remaining.length === 0) await native.detach();
+          if (isTauri && remaining.length === 0) await native.detach(current?.id ?? null);
           const next = await deletePet(id);
           setActivePet(next && full?.id === next.id ? { ...full, name: next.name } : next ? await ensurePetHydrated(next) : null);
           await refreshList();
@@ -1460,6 +1681,23 @@ function StudioApp() {
         operation: localError.operation,
         code: localError.code,
         actions: assetRecovery.actions
+      };
+    }
+    if (displayRetry) {
+      return {
+        id: `display-${displayRetry.operationId}`,
+        title: "伙伴已保存，但还没有显示到桌面",
+        body: `「${displayRetry.petName}」的资料和选择都已保留。重试只会再次发送显示，不会重建资料或素材。`,
+        operation: "show",
+        code: displayRetry.code,
+        actions: [
+          {
+            label: "重试显示",
+            primary: true,
+            onClick: () => void retryDisplay(displayRetry)
+          },
+          { label: "查看已有伙伴", onClick: () => setCurrentTab("shelf") }
+        ]
       };
     }
     if (native.error) {
@@ -1842,6 +2080,29 @@ function formatError(error: unknown) {
   } catch {
     return String(error);
   }
+}
+
+/**
+ * A storage outage keeps the local draft and says so. Only an intent or
+ * version conflict re-reads the persisted adoption and replaces the form.
+ */
+function onboardingSaveFailure(error: unknown): {
+  message: string;
+  refresh: boolean;
+} {
+  if (error instanceof OnboardingProgressError) {
+    return {
+      refresh: true,
+      message:
+        error.code === "INTENT_CHANGED"
+          ? "领养已更新，已读取最新结果；刚才的输入没有写入旧记录。"
+          : "这次进度已过期，已读取最新领养结果。"
+    };
+  }
+  return {
+    refresh: false,
+    message: `资料暂时没能保存，输入还在：${formatError(error)}`
+  };
 }
 
 createRoot(document.getElementById("root")!).render(

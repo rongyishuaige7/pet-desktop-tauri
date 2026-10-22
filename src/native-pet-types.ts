@@ -54,17 +54,23 @@ export interface InteractionResult {
   state: NativePetState;
 }
 
+/** The native snapshot a late retry was prepared against. */
+export interface NativeStateVersion {
+  sessionId: string;
+  revision: number;
+}
+
 export type PreferenceRequest =
-  | { kind: "show" }
+  | { kind: "show"; expectedPetId?: string; expectedState?: NativeStateVersion }
   | { kind: "hide" }
-  | { kind: "snooze" }
+  | { kind: "snooze"; expectedPetId?: string }
   | { kind: "setAnimationPaused"; value: boolean }
   | { kind: "setAutonomous"; value: boolean }
   | { kind: "setScale"; value: number }
   | { kind: "setClickThrough"; value: boolean }
   | { kind: "setMotionPreference"; value: MotionPreference }
   | { kind: "setAutostart"; value: boolean }
-  | { kind: "resetPosition" };
+  | { kind: "resetPosition"; expectedPetId?: string };
 
 export function preferenceOperation(request: PreferenceRequest): string {
   return request.kind;

@@ -36,9 +36,9 @@ pub use settings::{
 };
 pub use state::{
     action_for_interaction, effective_autonomous, effective_paused, interaction_rejection,
-    reduced_motion_active, AutostartState, Availability, Capabilities, InteractionKind,
-    InteractionReason, InteractionResult, MotionPreference, NativePetState, OperationError,
-    PreferencesRequest, VisibilityMode, SNOOZE_DURATION_MS,
+    reduced_motion_active, target_conflict, AutostartState, Availability, Capabilities,
+    InteractionKind, InteractionReason, InteractionResult, MotionPreference, NativePetState,
+    OperationError, PreferencesRequest, VisibilityMode, SNOOZE_DURATION_MS,
 };
 
 use std::path::PathBuf;
@@ -518,10 +518,18 @@ pub fn set_pet_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn detach_native_pet() -> Result<(), String> {
+pub fn detach_native_pet(expected_pet_id: Option<String>) -> Result<(), String> {
     let _guard = CONTROL_LOCK
         .lock()
         .map_err(|_| "原生宠物控制锁已损坏".to_string())?;
+    if let Some(expected) = expected_pet_id {
+        let runtime = runtime()
+            .lock()
+            .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+        if runtime.pet_id.as_deref() != Some(expected.as_str()) {
+            return Err("TARGET_CHANGED: 当前伙伴已切换，未执行这次操作".to_string());
+        }
+    }
     {
         let mut runtime = runtime()
             .lock()
@@ -546,7 +554,10 @@ pub fn set_scale(scale: f64) -> Result<(), String> {
 
 pub fn set_visible(visible: bool) -> Result<(), String> {
     let request = if visible {
-        PreferencesRequest::Show
+        PreferencesRequest::Show {
+            expected_pet_id: None,
+            expected_state: None,
+        }
     } else {
         PreferencesRequest::Hide
     };
@@ -869,6 +880,22 @@ pub fn update_preferences(request: PreferencesRequest) -> Result<NativePetState,
         .lock()
         .map_err(|_| "原生宠物控制锁已损坏".to_string())?;
     let operation = request.operation();
+    // Check the caller's target before this request writes pending, clears an
+    // error or bumps the revision. A stale retry must not attach its error to
+    // the newer companion.
+    {
+        let runtime = runtime()
+            .lock()
+            .map_err(|_| "原生宠物状态锁已损坏".to_string())?;
+        if let Some((code, message)) = target_conflict(
+            runtime.pet_id.as_deref(),
+            &runtime.session_id,
+            runtime.revision,
+            &request.target(),
+        ) {
+            return Err(format!("{code}: {message}"));
+        }
+    }
     let Some(before) = PreferenceSnapshot::capture() else {
         return Err("原生宠物状态锁已损坏".to_string());
     };
@@ -939,7 +966,7 @@ impl PreferenceSnapshot {
 fn apply_preference(request: &PreferencesRequest) -> Result<bool, (String, String)> {
     let unavailable = || ("NATIVE_STATE_UNAVAILABLE".to_string(), "原生宠物状态不可用".to_string());
     match request {
-        PreferencesRequest::Show => {
+        PreferencesRequest::Show { .. } => {
             let mut runtime = runtime().lock().map_err(|_| unavailable())?;
             runtime.visibility_mode = VisibilityMode::Shown;
             runtime.snooze_until_ms = None;
@@ -958,7 +985,7 @@ fn apply_preference(request: &PreferencesRequest) -> Result<bool, (String, Strin
             bump(&mut runtime);
             Ok(true)
         }
-        PreferencesRequest::Snooze => {
+        PreferencesRequest::Snooze { .. } => {
             let mut runtime = runtime().lock().map_err(|_| unavailable())?;
             runtime.visibility_mode = VisibilityMode::Snoozed;
             runtime.snooze_until_ms = Some(state::now_ms().saturating_add(SNOOZE_DURATION_MS));
@@ -1018,7 +1045,7 @@ fn apply_preference(request: &PreferencesRequest) -> Result<bool, (String, Strin
             bump(&mut runtime);
             Ok(false)
         }
-        PreferencesRequest::ResetPosition => {
+        PreferencesRequest::ResetPosition { .. } => {
             if !capabilities().reset_position {
                 return Err((
                     "UNSUPPORTED_CAPABILITY".to_string(),
@@ -1186,5 +1213,32 @@ mod tests {
         )
         .is_err());
         assert_eq!(current_settings().frame_root, previous.frame_root);
+    }
+
+    #[test]
+    fn targeted_preferences_reject_another_pet_before_mutating() {
+        let before = state_snapshot();
+        let error = update_preferences(PreferencesRequest::Show {
+            expected_pet_id: Some("not-the-current-pet".into()),
+            expected_state: None,
+        })
+        .expect_err("a different target must be rejected");
+        assert!(error.starts_with("TARGET_CHANGED"));
+        let after = state_snapshot();
+        assert_eq!(after.pet_id, before.pet_id);
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.visibility_mode, before.visibility_mode);
+        assert_eq!(after.last_operation_error, before.last_operation_error);
+    }
+
+    #[test]
+    fn targeted_detach_rejects_another_pet_without_clearing_state() {
+        let before = state_snapshot();
+        let error = detach_native_pet(Some("not-the-current-pet".into()))
+            .expect_err("a different target must be rejected");
+        assert!(error.starts_with("TARGET_CHANGED"));
+        let after = state_snapshot();
+        assert_eq!(after.pet_id, before.pet_id);
+        assert_eq!(after.revision, before.revision);
     }
 }

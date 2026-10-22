@@ -15,6 +15,7 @@ export interface NativePetClient {
   start: (onState: (state: NativePetState) => void) => Promise<void>;
   dispose: () => void;
   refresh: () => Promise<NativePetState>;
+  currentState: () => NativePetState | null;
   update: (request: PreferenceRequest) => Promise<NativePetState>;
   interact: (kind: InteractionKind, petId: string | null) => Promise<InteractionResult>;
   attach: (
@@ -22,7 +23,7 @@ export interface NativePetClient {
     petId: string | null,
     petName: string | null
   ) => Promise<NativePetState>;
-  detach: () => Promise<void>;
+  detach: (expectedPetId?: string | null) => Promise<void>;
   setName: (name: string) => Promise<void>;
   setAction: (action: string) => Promise<void>;
 }
@@ -123,8 +124,8 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
     return apply(next);
   }
 
-  async function detach() {
-    await deps.invoke<void>("detach_native_pet");
+  async function detach(expectedPetId?: string | null) {
+    await deps.invoke<void>("detach_native_pet", { expectedPetId: expectedPetId ?? null });
     await refresh().catch(() => undefined);
   }
 
@@ -142,5 +143,20 @@ export function createNativePetClient(deps: NativePetClientDeps): NativePetClien
     unlisten = null;
   }
 
-  return { start, dispose, refresh, update, interact, attach, detach, setName, setAction };
+  function currentState() {
+    return current ? { ...current } : null;
+  }
+
+  return {
+    start,
+    dispose,
+    refresh,
+    currentState,
+    update,
+    interact,
+    attach,
+    detach,
+    setName,
+    setAction
+  };
 }

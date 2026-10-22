@@ -66,8 +66,8 @@ fn set_native_pet_name(name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn detach_native_pet() -> Result<(), String> {
-    native_pet::detach_native_pet()
+fn detach_native_pet(expected_pet_id: Option<String>) -> Result<(), String> {
+    native_pet::detach_native_pet(expected_pet_id)
 }
 
 #[tauri::command]
@@ -89,7 +89,10 @@ fn get_native_pet_settings() -> native_pet::NativePetSettings {
 
 #[tauri::command]
 fn reset_native_pet_position() -> Result<(), String> {
-    native_pet::update_preferences(native_pet::PreferencesRequest::ResetPosition).map(|_| ())
+    native_pet::update_preferences(native_pet::PreferencesRequest::ResetPosition {
+        expected_pet_id: None,
+    })
+    .map(|_| ())
 }
 
 #[derive(Debug, Deserialize)]
@@ -655,15 +658,23 @@ fn handle_tray_event(app: &tauri::AppHandle, id: &str) {
             let request = if state.visibility_mode == native_pet::VisibilityMode::Shown {
                 native_pet::PreferencesRequest::Hide
             } else {
-                native_pet::PreferencesRequest::Show
+                native_pet::PreferencesRequest::Show {
+                    expected_pet_id: None,
+                    expected_state: None,
+                }
             };
             native_pet::update_preferences(request).map(|_| ())
         }
         "toggle_snooze" => {
             let request = if state.visibility_mode == native_pet::VisibilityMode::Snoozed {
-                native_pet::PreferencesRequest::Show
+                native_pet::PreferencesRequest::Show {
+                    expected_pet_id: None,
+                    expected_state: None,
+                }
             } else {
-                native_pet::PreferencesRequest::Snooze
+                native_pet::PreferencesRequest::Snooze {
+                    expected_pet_id: None,
+                }
             };
             native_pet::update_preferences(request).map(|_| ())
         }
@@ -680,7 +691,10 @@ fn handle_tray_event(app: &tauri::AppHandle, id: &str) {
         )
         .map(|_| ()),
         "reset_position" => {
-            native_pet::update_preferences(native_pet::PreferencesRequest::ResetPosition).map(|_| ())
+            native_pet::update_preferences(native_pet::PreferencesRequest::ResetPosition {
+                expected_pet_id: None,
+            })
+            .map(|_| ())
         }
         "toggle_autostart" => native_pet::update_preferences(
             native_pet::PreferencesRequest::SetAutostart {

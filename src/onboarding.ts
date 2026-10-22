@@ -25,6 +25,8 @@ export interface OnboardingRecord {
   intentId: string | null;
   /** False until the native window confirms the committed pet is visible. */
   displayConfirmed: boolean;
+  /** Monotonic version for progress writes within one adoption intent. */
+  progressRevision: number;
   updatedAt: string;
 }
 
@@ -50,6 +52,7 @@ export function createOnboardingRecord(
     phase: null,
     intentId: crypto.randomUUID(),
     displayConfirmed: true,
+    progressRevision: 0,
     updatedAt: new Date().toISOString(),
     ...overrides
   };
@@ -96,6 +99,12 @@ export function normalizeOnboardingRecord(value: unknown): OnboardingRecord | nu
     // a committed adoption can write false.
     displayConfirmed:
       typeof record.displayConfirmed === "boolean" ? record.displayConfirmed : true,
+    progressRevision:
+      typeof record.progressRevision === "number" &&
+      Number.isFinite(record.progressRevision) &&
+      record.progressRevision >= 0
+        ? Math.floor(record.progressRevision)
+        : 0,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
   };
 }
@@ -248,4 +257,24 @@ export function completeOnboarding(
     displayConfirmed: true,
     updatedAt: new Date().toISOString()
   };
+}
+
+/**
+ * A save reply may only replace the form when the name was not edited while
+ * the write was in flight. The record's intent must still match as well.
+ */
+export function keepNewerDraftName(
+  saved: OnboardingRecord,
+  current: OnboardingRecord | null,
+  editSeqAtCall: number,
+  editSeqNow: number
+): OnboardingRecord {
+  if (
+    editSeqNow !== editSeqAtCall &&
+    current &&
+    current.intentId === saved.intentId
+  ) {
+    return { ...saved, draftName: current.draftName };
+  }
+  return saved;
 }

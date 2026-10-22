@@ -11,6 +11,7 @@ import {
 const DB_NAME = "desktop-sticker-pet-db";
 const STORES = ["pet", "pets_collection", "metadata"];
 const ACTIVE_ID_KEY = "active_pet_id";
+const SELECTION_REVISION_KEY = "selection_revision_v1";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -116,11 +117,36 @@ function activate(tx: IDBTransaction, pet: PetProfile | null) {
   }
 }
 
+/**
+ * Bumped inside the same transaction as every explicit active-selection
+ * change. Display retries compare it so an older intent cannot win over a
+ * newer choice, even when the user selected the same profile again.
+ */
+function bumpSelectionRevision(tx: IDBTransaction) {
+  const meta = tx.objectStore("metadata");
+  const current = meta.get(SELECTION_REVISION_KEY);
+  current.onsuccess = () => {
+    const previous = Number(current.result);
+    meta.put(Number.isFinite(previous) ? previous + 1 : 1, SELECTION_REVISION_KEY);
+  };
+}
+
+export function loadSelectionRevision(): Promise<number> {
+  return transaction<number>("readonly", (tx, done) => {
+    const req = tx.objectStore("metadata").get(SELECTION_REVISION_KEY);
+    req.onsuccess = () => {
+      const value = Number(req.result);
+      done(Number.isFinite(value) ? value : 0);
+    };
+  });
+}
+
 /** New/imported profiles are explicitly activated. Runtime updates never activate. */
 export async function savePet(pet: PetProfile, _broadcastPet: PetProfile = pet) {
   await transaction<void>("readwrite", (tx, done) => {
     tx.objectStore("pets_collection").put(pet);
     activate(tx, pet);
+    bumpSelectionRevision(tx);
     done();
   });
   localStorage.removeItem(STORAGE_KEY);
@@ -131,7 +157,10 @@ export async function setActivePetId(id: string): Promise<PetProfile | null> {
   const pet = await transaction<PetProfile | null>("readwrite", (tx, done) => {
     const req = tx.objectStore("pets_collection").get(id);
     req.onsuccess = () => {
-      if (req.result) activate(tx, req.result);
+      if (req.result) {
+        activate(tx, req.result);
+        bumpSelectionRevision(tx);
+      }
       done(req.result ?? null);
     };
   });
@@ -149,6 +178,7 @@ export async function deletePet(id: string): Promise<PetProfile | null> {
       req.onsuccess = () => {
         const next = req.result[0] ?? null;
         activate(tx, next);
+        bumpSelectionRevision(tx);
         done(next);
       };
     });
@@ -273,6 +303,22 @@ export interface AdoptionClaim {
   alreadyCommitted: boolean;
 }
 
+export type OnboardingProgressFailure = "INTENT_CHANGED" | "STALE";
+
+/**
+ * Progress writes fail for two very different reasons. The interface must not
+ * report a storage failure as "expired", so the reason travels with the error.
+ */
+export class OnboardingProgressError extends Error {
+  readonly code: OnboardingProgressFailure;
+
+  constructor(code: OnboardingProgressFailure, message: string) {
+    super(message);
+    this.name = "OnboardingProgressError";
+    this.code = code;
+  }
+}
+
 /**
  * Progress writes (name, step, finish, dismiss) must belong to the intent that
  * is still current. A stale window reads the newer result instead of silently
@@ -293,7 +339,12 @@ export async function saveOnboardingProgress(
           existing.intentId === record.intentId;
         const legacySame = !existing.intentId && !record.intentId;
         if (!sameIntent && !legacySame) {
-          fail(new Error("领养已更新，未保存这次进度"));
+          fail(
+            new OnboardingProgressError(
+              "INTENT_CHANGED",
+              "领养已更新，未保存这次进度"
+            )
+          );
           return;
         }
         const lateStep =
@@ -302,13 +353,22 @@ export async function saveOnboardingProgress(
           record.state === "in_progress";
         const afterCompletion =
           existing.state === "completed" && record.state !== "completed";
-        if (lateStep || afterCompletion || existing.updatedAt > record.updatedAt) {
-          fail(new Error("这次进度已过期"));
+        if (
+          lateStep ||
+          afterCompletion ||
+          existing.updatedAt > record.updatedAt ||
+          record.progressRevision !== existing.progressRevision
+        ) {
+          fail(new OnboardingProgressError("STALE", "这次进度已过期"));
           return;
         }
       }
-      store.put(record, ONBOARDING_KEY);
-      done(record);
+      const next = {
+        ...record,
+        progressRevision: (existing?.progressRevision ?? 0) + 1
+      };
+      store.put(next, ONBOARDING_KEY);
+      done(next);
     };
   });
 }
@@ -324,11 +384,12 @@ export async function startNewAdoptionIntent(
   if (record.state !== "in_progress" || !record.intentId) {
     throw new Error("无效的新领养意图");
   }
+  const intent = { ...record, progressRevision: 0 };
   await transaction<void>("readwrite", (tx, done) => {
-    tx.objectStore("metadata").put(record, ONBOARDING_KEY);
+    tx.objectStore("metadata").put(intent, ONBOARDING_KEY);
     done();
   });
-  return record;
+  return intent;
 }
 
 /**
@@ -479,6 +540,7 @@ export async function commitAdoptedPet(
         }
         tx.objectStore("pets_collection").put(pet);
         activate(tx, pet);
+        bumpSelectionRevision(tx);
         metadata.put(record, ONBOARDING_KEY);
         done();
       };

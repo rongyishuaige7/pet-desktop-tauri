@@ -54,13 +54,14 @@ export interface NativePetController {
   connected: boolean;
   error: string | null;
   update: (request: PreferenceRequest) => Promise<NativePetState | null>;
+  snapshot: () => NativePetState;
   interact: (kind: InteractionKind) => Promise<InteractionResult | null>;
   attach: (
     rootDir: string,
     petId: string | null,
     petName: string | null
   ) => Promise<NativePetState | null>;
-  detach: () => Promise<void>;
+  detach: (expectedPetId?: string | null) => Promise<void>;
   setName: (name: string) => Promise<void>;
   setAction: (action: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -193,13 +194,19 @@ export function useNativePet({
     [isTauri]
   );
 
-  const detach = useCallback(async () => {
+  const detach = useCallback(async (expectedPetId?: string | null) => {
     if (!isTauri) {
       setState((previous) => syncWebPet(previous, null));
       return;
     }
-    await clientRef.current?.detach();
+    await clientRef.current?.detach(expectedPetId);
   }, [isTauri]);
+
+  /** Latest known snapshot, including a reply or refresh not yet rendered. */
+  const snapshot = useCallback(
+    () => clientRef.current?.currentState() ?? stateRef.current,
+    []
+  );
 
   const setName = useCallback(
     async (name: string) => {
@@ -238,6 +245,7 @@ export function useNativePet({
     connected,
     error,
     update,
+    snapshot,
     interact,
     attach,
     detach,

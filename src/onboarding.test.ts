@@ -4,6 +4,7 @@ import {
   completeOnboarding,
   createOnboardingRecord,
   decideOnboardingStart,
+  keepNewerDraftName,
   markAdoptionCommitted,
   normalizeOnboardingRecord,
   prepareAdoption
@@ -263,5 +264,28 @@ describe("adoption intent and display confirmation", () => {
     expect(prepared.intentId).toBe("intent-a");
     expect(committed.intentId).toBe("intent-a");
     expect(completed.intentId).toBe("intent-a");
+  });
+});
+
+describe("in-flight progress replies", () => {
+  it("keeps a name typed after the save started", () => {
+    const saved = createOnboardingRecord({
+      step: "name",
+      draftName: "旧名字",
+      intentId: "intent-a"
+    });
+    const current = { ...saved, draftName: "新名字" };
+    expect(keepNewerDraftName(saved, current, 1, 2).draftName).toBe("新名字");
+    expect(keepNewerDraftName(saved, current, 2, 2).draftName).toBe("旧名字");
+  });
+
+  it("never merges a name across adoption intents", () => {
+    const saved = createOnboardingRecord({
+      step: "name",
+      draftName: "旧名字",
+      intentId: "intent-a"
+    });
+    const current = { ...saved, draftName: "新名字", intentId: "intent-b" };
+    expect(keepNewerDraftName(saved, current, 1, 2).draftName).toBe("旧名字");
   });
 });

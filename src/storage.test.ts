@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, renamePet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, startNewAdoptionIntent, updatePetAction } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadSelectionRevision, renamePet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, startNewAdoptionIntent, updatePetAction } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -456,5 +456,107 @@ describe("intent-matched progress writes", () => {
     const saved = await saveOnboardingProgress(next);
     expect(saved.draftName).toBe("新名字");
     expect((await loadOnboardingRecord()).record?.draftName).toBe("新名字");
+  });
+});
+
+describe("selection revision", () => {
+  it("bumps only for explicit selection changes", async () => {
+    expect(await loadSelectionRevision()).toBe(0);
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    expect(await loadSelectionRevision()).toBe(2);
+    await setActivePetId("A");
+    expect(await loadSelectionRevision()).toBe(3);
+    await renamePet("A", "奶茶");
+    await updatePetAction("A", "walk");
+    expect(await loadSelectionRevision()).toBe(3);
+    await deletePet("B");
+    expect(await loadSelectionRevision()).toBe(3);
+    await deletePet("A");
+    expect(await loadSelectionRevision()).toBe(4);
+  });
+
+  it("bumps when an adoption commits the active profile", async () => {
+    const record = createOnboardingRecord({
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "A"
+    });
+    await commitAdoptedPet(pet("A"), record);
+    expect(await loadSelectionRevision()).toBe(1);
+  });
+});
+
+describe("progress failure reasons", () => {
+  it("separates a changed intent from an outdated step", async () => {
+    const first = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "甲",
+      intentId: "intent-a",
+      updatedAt: "2026-10-22T00:00:03.000Z"
+    });
+    await startNewAdoptionIntent(first);
+    await expect(
+      saveOnboardingProgress({ ...first, intentId: "intent-b" })
+    ).rejects.toMatchObject({ code: "INTENT_CHANGED" });
+    await expect(
+      saveOnboardingProgress({
+        ...first,
+        draftName: "迟到的名字",
+        updatedAt: "2026-10-22T00:00:02.000Z"
+      })
+    ).rejects.toMatchObject({ code: "STALE" });
+  });
+
+  it("rejects a progress write based on an older revision", async () => {
+    const base = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "甲",
+      intentId: "intent-a"
+    });
+    await startNewAdoptionIntent(base);
+    const first = await saveOnboardingProgress({ ...base, draftName: "乙" });
+    expect(first.progressRevision).toBe(1);
+    await expect(
+      saveOnboardingProgress({ ...base, draftName: "丙" })
+    ).rejects.toMatchObject({ code: "STALE" });
+    const second = await saveOnboardingProgress({ ...first, draftName: "丁" });
+    expect(second.progressRevision).toBe(2);
+    expect((await loadOnboardingRecord()).record?.draftName).toBe("丁");
+  });
+
+  it("keeps a storage abort as a plain error, not a progress conflict", async () => {
+    const record = createOnboardingRecord({
+      state: "in_progress",
+      step: "name",
+      draftName: "甲",
+      intentId: "intent-a"
+    });
+    await startNewAdoptionIntent(record);
+    const put = IDBObjectStore.prototype.put;
+    const spy = vi
+      .spyOn(IDBObjectStore.prototype, "put")
+      .mockImplementation(function (
+        this: IDBObjectStore,
+        ...args: Parameters<typeof put>
+      ) {
+        const req = put.apply(this, args);
+        if (this.name === "metadata" && args[1] === "onboarding_v1") {
+          queueMicrotask(() => this.transaction.abort());
+        }
+        return req;
+      });
+    try {
+      const error = await saveOnboardingProgress({
+        ...record,
+        draftName: "新名字"
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toHaveProperty("code");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
