@@ -59,7 +59,7 @@
 - 领养引导：新增 `onboarding_v1` 记录、老用户静默迁移、稳定 `adoptionId / pendingPetId`、单事务提交和失败回滚；命名输入失焦不会再覆盖已提交的引导记录（双击流程已复现并修复）。
 - 陪伴界面：陪伴主页、互动冷却、设置抽屉、能力驱动的系统选项、持续错误恢复、焦点陷阱、Escape 关闭和 840×620 布局；主操作颜色调整以满足文本对比度。
 - 验证：103 项前端单元测试（14 个文件）、33 项 Rust 测试、49 个隔离浏览器流程（保留原 16 个并新增 33 个，含三轮复核 15 个）、TypeScript/Vite 生产构建通过；本机 macOS `.app` 打包通过（`/tmp/pet-desktop-tauri-release-target/release/bundle/macos/桌面贴贴宠物.app`）。
-- CI：S02、S03、S04 和二次复核修复 `3765495` 的 macOS / Linux Rust 检查、前端测试和构建通过；运行见 [CI 39752793676](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39752793676)。S01 运行因后续提交的并发取消，S02 起覆盖。
+- CI：S02、S03、S04 和第三次复核修复 `1738aba` 的 macOS / Linux Rust 检查、前端测试和构建通过；运行见 [CI 39779782709](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39779782709)。S01 运行因后续提交的并发取消，S02 起覆盖。
 - 未完成：真实 macOS / Linux 桌面操作（主窗口关闭后托盘恢复、睡眠唤醒、拖拽/单击、透明穿透、低动态在原生窗口中的表现、安装签名与常驻资源量测）。浏览器模拟 IPC 和本地 `.app` 构建不能替代这些验收。
 - 未新增运行时依赖，未升级既有依赖，未修改 package / Cargo 版本。
 
