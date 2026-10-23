@@ -18,6 +18,7 @@ interface WorkshopProps {
   frameInspection: FrameInspection | null;
   inspectingFrames: boolean;
   onInspectFrames: () => Promise<void> | void;
+  onChoosePresetDir: () => Promise<void> | void;
   manualFrames: Partial<ActionFrameSet>;
   onChangeManualFrames: (frames: Partial<ActionFrameSet>) => void;
   onSaveManualFrames: () => Promise<void>;
@@ -55,6 +56,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
   frameInspection,
   inspectingFrames,
   onInspectFrames,
+  onChoosePresetDir,
   manualFrames,
   onChangeManualFrames,
   onSaveManualFrames,
@@ -171,14 +173,27 @@ export const Workshop: React.FC<WorkshopProps> = ({
 
             <div className="input-group">
               <label htmlFor="workshop-preset-dir">本地帧包目录</label>
-              <input
-                id="workshop-preset-dir"
-                type="text"
-                className="input-control"
-                value={presetDir}
-                onChange={(e) => onChangePresetDir(e.target.value)}
-                placeholder={DEFAULT_PRESET_FRAME_DIR}
-              />
+              <div className="preset-dir-row">
+                <input
+                  id="workshop-preset-dir"
+                  type="text"
+                  className="input-control"
+                  value={presetDir}
+                  onChange={(e) => onChangePresetDir(e.target.value)}
+                  placeholder={DEFAULT_PRESET_FRAME_DIR}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void onChoosePresetDir()}
+                  disabled={busy}
+                >
+                  选择目录…
+                </button>
+              </div>
+              <p className="frame-inspection-note">
+                也可以把帧包目录拖进窗口；选择和拖入都会走同一套只读预检。
+              </p>
             </div>
 
             <div style={{ display: "flex", gap: "12px", marginTop: "8px", flexWrap: "wrap" }}>

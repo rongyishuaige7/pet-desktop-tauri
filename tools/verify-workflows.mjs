@@ -33,11 +33,12 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
    for(let i=0;i<(sheet?5:1);i++)ctx.fillRect((i%3)*300+80,Math.floor(i/3)*300+35,140,240);
    return canvas.toDataURL('image/png');
   };
-  state.emit=async(payload)=>{
-   await Promise.all([...listeners.entries()].filter(([,v])=>v.event==='native-pet-action-changed').map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload})));
+  state.emit=async(payload,event='native-pet-action-changed')=>{
+   await Promise.all([...listeners.entries()].filter(([,v])=>v.event===event).map(([id,v])=>callbacks.get(v.handler)?.({event:v.event,id,payload})));
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:(_event,id)=>listeners.delete(id)};
   window.__TAURI_INTERNALS__={
+   metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},
    transformCallback:(fn)=>{const id=seq++;callbacks.set(id,fn);return id;},
    invoke:async(cmd,args={})=>{
     state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
@@ -45,6 +46,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
     if(cmd==='get_native_pet_state'){if(state.failStateReads>0){state.failStateReads--;throw new Error('mock state read failed');}return state.native;}
+    if(cmd==='plugin:dialog|open')return state.dialogPath??null;
     if(cmd==='inspect_frame_directory'){
      const report=state.frameInspection??(()=>{const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));return {root:args.rootDir,actions,missingActions:[],totalBytes:6*5*1024,decodedBytes:6*5*512*512*4,valid:true,issues:[],globalIssues:[],thumbnail:null};})();
      if(state.inspectDelay)await new Promise(resolve=>setTimeout(resolve,state.inspectDelay));
@@ -1826,6 +1828,36 @@ await record('workshop_preflight_shows_global_capacity_issue',async()=>{
   await page.locator('.frame-inspection.is-invalid').waitFor();
   const state=await page.evaluate(()=>({text:document.querySelector('.frame-inspection')?.textContent??'',disabled:[...document.querySelectorAll('button')].some(button=>button.textContent?.includes('一键导入并保存到宠物架')&&button.disabled)}));
   return {passed:state.text.includes('超过 256 MiB')&&state.text.includes('容量或全局限制')&&state.disabled&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('workshop_directory_choose_and_cancel',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  const input=page.locator('#workshop-preset-dir');
+  const before=await input.inputValue();
+  await page.evaluate(()=>{window.__review.dialogPath=null;});
+  await page.getByRole('button',{name:'选择目录…',exact:true}).click();
+  await page.locator('.toast-message').filter({hasText:'已取消选择'}).waitFor();
+  const cancelled=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {value:document.querySelector('#workshop-preset-dir')?.value,reports:document.querySelectorAll('.frame-inspection').length,pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,inspects:window.__review.calls.filter(c=>c.cmd==='inspect_frame_directory').length};});
+  await page.evaluate(()=>{window.__review.dialogPath='/tmp/chosen';});
+  await page.getByRole('button',{name:'选择目录…',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#workshop-preset-dir')?.value==='/tmp/chosen');
+  const selected=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {value:document.querySelector('#workshop-preset-dir')?.value,reports:document.querySelectorAll('.frame-inspection').length,pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,inspects:window.__review.calls.filter(c=>c.cmd==='inspect_frame_directory').length,dialogs:window.__review.calls.filter(c=>c.cmd==='plugin:dialog|open').length};});
+  return {passed:cancelled.value===before&&cancelled.reports===0&&cancelled.pets===2&&cancelled.active==='A'&&cancelled.inspects===0&&selected.value==='/tmp/chosen'&&selected.reports===0&&selected.pets===2&&selected.active==='A'&&selected.inspects===0&&selected.dialogs===2&&errors.length===0,before,cancelled,selected,errors};
+ }finally{await context.close();}
+});
+await record('workshop_directory_drop_sets_path',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.waitForTimeout(100);
+  await page.evaluate(async()=>{await window.__review.emit({type:'drop',paths:['/tmp/dropped'],position:{x:10,y:10}},'tauri://drag-drop');});
+  await page.waitForFunction(()=>document.querySelector('#workshop-preset-dir')?.value==='/tmp/dropped');
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {value:document.querySelector('#workshop-preset-dir')?.value,reports:document.querySelectorAll('.frame-inspection').length,pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,inspects:window.__review.calls.filter(c=>c.cmd==='inspect_frame_directory').length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  return {passed:state.value==='/tmp/dropped'&&state.reports===0&&state.pets===2&&state.active==='A'&&state.inspects===0&&state.toasts.some(text=>text?.includes('已收到目录'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

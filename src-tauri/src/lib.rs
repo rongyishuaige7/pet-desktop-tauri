@@ -440,6 +440,7 @@ pub fn run() {
     native_pet::init_runtime();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             native_pet::set_bundled_frame_root(app.handle());
             let (settings, issue) = native_pet::load_settings_with_issue(app.handle());

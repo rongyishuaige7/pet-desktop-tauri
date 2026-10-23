@@ -682,6 +682,16 @@ button {
   color: var(--text-secondary);
 }
 
+.preset-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-dir-row .input-control {
+  flex: 1;
+}
+
 .frame-inspection {
   display: flex;
   flex-direction: column;

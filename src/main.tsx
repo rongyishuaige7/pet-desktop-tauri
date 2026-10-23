@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   AUTONOMOUS_STORAGE,
   DEFAULT_PRESET_FRAME_DIR,
@@ -125,6 +126,41 @@ function StudioApp() {
   const [frameInspection, setFrameInspection] = useState<FrameInspection | null>(null);
   const [inspectingFrames, setInspectingFrames] = useState(false);
   const inspectionRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (
+      !isTauri ||
+      !(window as { __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } } })
+        .__TAURI_INTERNALS__?.metadata?.currentWebview?.label
+    ) {
+      return;
+    }
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        if (currentTab !== "workshop" || workshopTask !== "import") return;
+        const path = event.payload.paths.find((entry) => entry.trim());
+        if (!path) return;
+        inspectionRequestRef.current += 1;
+        setPresetFrameDir(path);
+        setFrameInspection(null);
+        setInspectingFrames(false);
+        showToast("已收到目录，点击“预检目录”检查六个动作。", "info");
+      })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {
+        // Drag and drop is an optional shortcut; the path input still works.
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [currentTab, isTauri, workshopTask]);
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [removedPets, setRemovedPets] = useState<RemovedPetRecord[]>([]);
   const [removalNotice, setRemovalNotice] = useState<RemovalNotice | null>(null);
@@ -1544,6 +1580,34 @@ function StudioApp() {
   }
 
   // Workshop - Import Preset
+  async function handleChooseFrameDir() {
+    if (!isTauri) {
+      showToast("目录选择需要桌面版；网页模式请使用手动路径或文件选择。", "info");
+      return;
+    }
+    try {
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          directory: true,
+          multiple: false,
+          title: "选择帧包目录",
+          defaultPath: presetFrameDir.trim() || undefined
+        }
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path) {
+        showToast("已取消选择，目录和预检结果没有变化。", "info");
+        return;
+      }
+      inspectionRequestRef.current += 1;
+      setPresetFrameDir(path);
+      setFrameInspection(null);
+      setInspectingFrames(false);
+    } catch (err) {
+      showToast(`无法打开目录选择：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleInspectFrames() {
     if (!isTauri) {
       showToast("目录预检需要桌面版；网页模式只提供实际支持的文件选择。", "info");
@@ -2386,6 +2450,7 @@ function StudioApp() {
                   frameInspection={frameInspection}
                   inspectingFrames={inspectingFrames}
                   onInspectFrames={handleInspectFrames}
+                  onChoosePresetDir={handleChooseFrameDir}
                   manualFrames={manualFrames}
                   onChangeManualFrames={setManualFrames}
                   onSaveManualFrames={handleSaveManualFrames}
