@@ -179,15 +179,18 @@
 
 验证：136 项前端单元测试、38 项 Rust 测试（本批未改 Rust）、87 个隔离浏览器流程、TypeScript/Vite 生产构建通过；macOS / Linux CI 通过：[CI 39895848515](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39895848515)。真实桌面上的移除/撤销、素材目录失败和安装升级仍待 C06 实机验收。
 
-## v0.3 C06 部分执行记录（2026-10-23）
+## v0.3 C06 macOS 执行记录（2026-10-23）
 
-实现提交 `6ab5348`（C05）之后开始 C06。只完成 macOS arm64 本地构建与隔离启动，未通过真实桌面验收。
+状态：macOS 部分通过，C06 未通过；Linux 按用户指示本轮不执行。实现基线为 `6ab5348`，托盘修复为 `b44f9ed`。
 
-- 构建：`CARGO_TARGET_DIR=/tmp/pet-v03-release-target npm run tauri:build -- --bundles app` 退出 0；产物 20 MB、arm64 thin、版本 0.1.0，二进制 SHA-256 `004790b993204ecc63eeda41d71674dfd884bdeb30df7e18531815a216c47a92`。
-- 签名：ad-hoc / linker-signed，无 TeamIdentifier；`codesign --verify --deep --strict` 失败；本机只有 Apple Development 身份，没有 Developer ID 与公证。
-- 隔离启动：用同一代码构建 `local.pet.desktop.sticker.c06` 测试包，避免触碰现有用户数据；观察到主窗口、内置伙伴领养、桌面宠物窗口、见面练习隐藏/重开主窗口、重启后陪伴页与控制栏；测试后正常退出并删除测试数据目录。
-- 未执行：托盘菜单与 15/30/60 休息、睡眠/唤醒、拖拽/穿透、多屏、真实移除/撤销、干净安装/升级、DMG、签名/公证、5 分钟资源量测、Linux、用户观察。
-- 结论：C06 未通过，不能标记 macOS 或 v0.3 可发布。证据截图见 `docs/screenshots/v0.3-c06-*.jpg`。
+- 构建：`CARGO_TARGET_DIR=/tmp/pet-v03-release-target npm run tauri:build -- --bundles app` 退出 0；产物 20 MB、arm64 thin、版本 0.1.0，最终二进制 SHA-256 `e3b9a4c4a1b41f6cccaaf257cd7af271ccd7059cc0efed04ab828033aeec4237`。
+- 签名：Apple Development（TeamIdentifier `QQ472M9NLL`），`codesign --verify --deep --strict` 通过；`spctl --assess` 仍 rejected，没有 Developer ID 与公证，分发门槛未满足。
+- 隔离启动：用 `local.pet.desktop.sticker.c06` 测试包和独立数据目录，观察到主窗口、内置伙伴领养、桌面宠物、见面练习隐藏/重开主窗口、重启后陪伴页与控制栏；测试后正常退出并删除测试数据，原有用户数据未改动。
+- 托盘：通过辅助功能点击真实状态项，验证打开主界面、收起/唤回、15/30/60 休息、保持收起、重置位置和退出应用。休息态曾出现两个“立即唤回”，`b44f9ed` 改为“提前唤回”+“保持收起”，并新增 Rust 标签测试。
+- 资源：显示与“收起且管理窗口关闭”各 5 分钟、30 个 `top` 样本；top CPU 均为 0.0，MEM 85–87 MB；`ps` 平均 CPU 0.3%、RSS 约 28 MB。采样分辨率下无可测 CPU 差异，不声称省电；低动态与帧/调度计数未量测。
+- 未完成：真实睡眠/唤醒与系统时钟、拖拽/单击/右键/透明穿透、多屏/缩放、真实移除撤销、干净安装/升级、低动态资源、公证、用户观察；Linux 本轮不执行。
+- 托盘修复 `b44f9ed` 的 macOS / Linux CI 通过：[CI 39917162018](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39917162018)。
+- 结论：C06 未通过，不能标记 macOS 或 v0.3 可发布。截图见 `docs/screenshots/v0.3-c06-*.jpg`。
 
 ## 本轮之外的依赖维护
 
