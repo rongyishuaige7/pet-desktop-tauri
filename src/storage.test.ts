@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadSelectionRevision, renamePet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, startNewAdoptionIntent, updatePetAction } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -558,5 +558,229 @@ describe("progress failure reasons", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("recent removals", () => {
+  function datedPet(id: string, createdAt: string): PetProfile {
+    return { ...pet(id), createdAt };
+  }
+
+  async function openV2Database() {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open("desktop-sticker-pet-db", 2);
+      req.onupgradeneeded = () => {
+        const database = req.result;
+        if (!database.objectStoreNames.contains("pet")) database.createObjectStore("pet");
+        if (!database.objectStoreNames.contains("pets_collection")) {
+          database.createObjectStore("pets_collection", { keyPath: "id" });
+        }
+        if (!database.objectStoreNames.contains("metadata")) database.createObjectStore("metadata");
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return db;
+  }
+
+  it("upgrades a v2 database without changing profiles, active pointer or onboarding", async () => {
+    const db = await openV2Database();
+    const record = createOnboardingRecord({
+      state: "completed",
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "A",
+      intentId: "intent-a"
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(["pet", "pets_collection", "metadata"], "readwrite");
+      tx.objectStore("pets_collection").put(pet("A"));
+      tx.objectStore("pets_collection").put(pet("B"));
+      tx.objectStore("metadata").put("A", "active_pet_id");
+      tx.objectStore("metadata").put(true, "collection_initialized");
+      tx.objectStore("metadata").put(record, "onboarding_v1");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+
+    expect((await loadAllPets()).map((entry) => entry.id).sort()).toEqual(["A", "B"]);
+    expect((await loadPet())?.id).toBe("A");
+    expect(await loadRemovedPets()).toEqual([]);
+    expect((await loadOnboardingRecord()).record?.intentId).toBe("intent-a");
+  });
+
+  it("reports a blocked upgrade and succeeds after the old connection closes", async () => {
+    const legacy = await openV2Database();
+    await expect(loadAllPets()).rejects.toThrow("阻塞");
+    legacy.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await loadAllPets()).toEqual([]);
+    expect(await loadRemovedPets()).toEqual([]);
+  });
+
+  it("soft-removes a non-active profile without changing the active choice", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const revision = await loadSelectionRevision();
+    const result = await softRemovePet("A");
+
+    expect(result.nextActive).toBeNull();
+    expect(result.removed).toMatchObject({ id: "A", wasActive: false });
+    expect((await loadPet())?.id).toBe("B");
+    expect((await loadAllPets()).map((entry) => entry.id)).toEqual(["B"]);
+    expect((await loadRemovedPets())[0].pet.name).toBe("A");
+    expect(await loadSelectionRevision()).toBe(revision);
+  });
+
+  it("removes the active profile and selects the oldest remaining profile", async () => {
+    await savePet(datedPet("A", "2026-01-02T00:00:00.000Z"));
+    await savePet(datedPet("B", "2026-01-01T00:00:00.000Z"));
+    await savePet(datedPet("C", "2026-01-03T00:00:00.000Z"));
+    await setActivePetId("A");
+    const result = await softRemovePet("A");
+
+    expect(result.nextActive?.id).toBe("B");
+    expect((await loadPet())?.id).toBe("B");
+    expect(result.removed.wasActive).toBe(true);
+    expect(result.selectionRevision).toBe(await loadSelectionRevision());
+    expect(result.removed.selectionRevisionAfterRemoval).toBe(result.selectionRevision);
+  });
+
+  it("removes the last profile, keeps the collection initialized and detaches the pointer", async () => {
+    await savePet(pet("A"));
+    const result = await softRemovePet("A");
+
+    expect(result.nextActive).toBeNull();
+    expect(await loadPet()).toBeNull();
+    expect(await loadAllPets()).toEqual([]);
+    expect(await isCollectionInitialized()).toBe(true);
+    expect((await loadRemovedPets()).map((entry) => entry.id)).toEqual(["A"]);
+  });
+
+  it("undoes an active removal while the selection revision still matches", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const removed = await softRemovePet("B");
+    const restored = await restoreRemovedPet("B", removed.removed.removalId, "undo");
+
+    expect(restored.restoredActive).toBe(true);
+    expect((await loadPet())?.id).toBe("B");
+    expect(await loadRemovedPets()).toEqual([]);
+    expect(await loadSelectionRevision()).toBe(removed.selectionRevision + 1);
+  });
+
+  it("does not let undo take over a newer explicit selection", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const removed = await softRemovePet("B");
+    await setActivePetId("A");
+    const revision = await loadSelectionRevision();
+    const restored = await restoreRemovedPet("B", removed.removed.removalId, "undo");
+
+    expect(restored.restoredActive).toBe(false);
+    expect((await loadPet())?.id).toBe("A");
+    expect((await loadAllPets()).map((entry) => entry.id).sort()).toEqual(["A", "B"]);
+    expect(await loadSelectionRevision()).toBe(revision);
+  });
+
+  it("restores to the shelf without changing the active profile", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const removed = await softRemovePet("A");
+    const revision = await loadSelectionRevision();
+    const restored = await restoreRemovedPet("A", removed.removed.removalId, "shelf");
+
+    expect(restored.restoredActive).toBe(false);
+    expect((await loadPet())?.id).toBe("B");
+    expect((await loadAllPets()).map((entry) => entry.id).sort()).toEqual(["A", "B"]);
+    expect(await loadSelectionRevision()).toBe(revision);
+    const again = await restoreRemovedPet("A", removed.removed.removalId, "shelf");
+    expect(again.alreadyRestored).toBe(true);
+    expect((await loadAllPets()).length).toBe(2);
+  });
+
+  it("does not let an old removalId restore a newer removal", async () => {
+    await savePet(pet("A"));
+    const first = await softRemovePet("A");
+    await restoreRemovedPet("A", first.removed.removalId, "shelf");
+    const second = await softRemovePet("A");
+    await expect(
+      restoreRemovedPet("A", first.removed.removalId, "shelf")
+    ).rejects.toThrow("移除已更新");
+    expect((await loadRemovedPets())[0].removalId).toBe(second.removed.removalId);
+    expect(await loadAllPets()).toEqual([]);
+  });
+
+  it("does not resurrect a removed profile from the legacy current mirror", async () => {
+    await savePet(pet("A"));
+    const removed = await softRemovePet("A");
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open("desktop-sticker-pet-db", 3);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(["pet"], "readwrite");
+        tx.objectStore("pet").put(removed.removed.pet, "current");
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    expect(await loadPet()).toBeNull();
+    expect(await loadAllPets()).toEqual([]);
+  });
+
+  it("leaves profiles, pointer and revision untouched when the removal aborts", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const revision = await loadSelectionRevision();
+    const put = IDBObjectStore.prototype.put;
+    const spy = vi
+      .spyOn(IDBObjectStore.prototype, "put")
+      .mockImplementation(function (
+        this: IDBObjectStore,
+        ...args: Parameters<typeof put>
+      ) {
+        const req = put.apply(this, args);
+        if (this.name === "removed_pets") {
+          queueMicrotask(() => this.transaction.abort());
+        }
+        return req;
+      });
+    try {
+      await expect(softRemovePet("B")).rejects.toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await loadPet())?.id).toBe("B");
+    expect((await loadAllPets()).map((entry) => entry.id).sort()).toEqual(["A", "B"]);
+    expect(await loadRemovedPets()).toEqual([]);
+    expect(await loadSelectionRevision()).toBe(revision);
+  });
+
+  it("does not let a late rename or action update rebuild a removed profile", async () => {
+    await savePet(pet("A"));
+    await softRemovePet("A");
+    expect(await renamePet("A", "迟到的名字")).toBeNull();
+    expect(await updatePetAction("A", "walk")).toBeNull();
+    expect(await loadAllPets()).toEqual([]);
+    expect((await loadRemovedPets()).length).toBe(1);
+    expect((await loadRemovedPets())[0].pet.name).toBe("A");
+  });
+
+  it("refuses to save or adopt a profile that is in recent removals", async () => {
+    await savePet(pet("A"));
+    const removed = await softRemovePet("A");
+    await expect(savePet(pet("A"))).rejects.toThrow("最近移除");
+    const record = createOnboardingRecord({
+      step: "meet",
+      phase: "committed",
+      confirmedPetId: "A",
+      pendingPetId: "A"
+    });
+    await expect(commitAdoptedPet(pet("A"), record)).rejects.toThrow("最近移除");
+    expect((await loadRemovedPets())[0].removalId).toBe(removed.removed.removalId);
+    expect(await loadAllPets()).toEqual([]);
   });
 });

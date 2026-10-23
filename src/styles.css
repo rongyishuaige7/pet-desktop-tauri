@@ -1205,6 +1205,136 @@ button {
   line-height: 1.6;
 }
 
+/* Recent removals and undo */
+.shelf-removed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--bg-glass-card);
+}
+
+.shelf-removed-head h2 {
+  font-size: 16px;
+}
+
+.shelf-removed-head p {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.shelf-removed-empty {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.shelf-removed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.removed-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card-solid);
+}
+
+.removed-card-avatar {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+}
+
+.removed-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.removed-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.removed-card-body strong {
+  font-size: 14px;
+}
+
+.removed-card-body span {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.removed-restore {
+  height: 36px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.removal-undo {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1300;
+  width: min(620px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  background: #2f3b33;
+  color: #f7f5f0;
+  box-shadow: var(--shadow-lg);
+}
+
+.removal-undo-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.removal-undo-body strong {
+  font-size: 14px;
+}
+
+.removal-undo-body p {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #d8ded7;
+}
+
+.removal-undo-action {
+  height: 40px;
+  flex: none;
+}
+
+.removal-undo-close {
+  color: #f7f5f0;
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
 /* Toast Notification (Floating, Non-intrusive) */
 .toast-container {
   position: fixed;

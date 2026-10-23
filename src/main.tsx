@@ -21,11 +21,14 @@ import {
   deletePet,
   renamePet,
   replacePetAssets,
+  restoreRemovedPet,
+  softRemovePet,
   updatePetAction,
   subscribePetChanges,
   subscribeOnboardingChanges,
   isCollectionInitialized,
   loadOnboardingRecord,
+  loadRemovedPets,
   loadSelectionRevision,
   saveOnboardingRecord,
   saveOnboardingProgress,
@@ -33,7 +36,8 @@ import {
   claimAdoptionRecord,
   commitAdoptedPet,
   confirmAdoptionDisplay,
-  OnboardingProgressError
+  OnboardingProgressError,
+  type RemovedPetRecord
 } from "./storage";
 import {
   PET_ACTIONS,
@@ -57,6 +61,7 @@ import { PetShelf } from "./components/shelf/PetShelf";
 import { PresetGallery } from "./components/workshop/PresetGallery";
 import { PreferencesDrawer } from "./components/settings/PreferencesDrawer";
 import { RecoveryNotice } from "./components/recovery/RecoveryNotice";
+import { RemovalUndo } from "./components/shelf/RemovalUndo";
 import { Onboarding } from "./components/onboarding/Onboarding";
 import {
   DEFAULT_PET_NAME,
@@ -85,6 +90,15 @@ const isTauri = typeof window !== "undefined" && (window as any).__TAURI_INTERNA
 
 interface NativeActionEvent { action: PetAction; petId: string | null; revision: number }
 
+interface RemovalNotice {
+  removalId: string;
+  petId: string;
+  petName: string;
+  replacementName: string | null;
+  wasActive: boolean;
+  selectionRevision: number;
+}
+
 interface NativePetSettings {
   frameRoot: string;
   scale: number;
@@ -108,6 +122,8 @@ function StudioApp() {
   const [repairPetId, setRepairPetId] = useState<string | null>(null);
   const [inspectAction, setInspectAction] = useState<PetAction>("idle");
   const [pets, setPets] = useState<PetProfile[]>([]);
+  const [removedPets, setRemovedPets] = useState<RemovedPetRecord[]>([]);
+  const [removalNotice, setRemovalNotice] = useState<RemovalNotice | null>(null);
   const [activePet, setActivePetState] = useState<PetProfile | null>(null);
   const [initialized, setInitialized] = useState(false);
   const [onboarding, setOnboarding] = useState<OnboardingRecord | null>(null);
@@ -267,9 +283,10 @@ function StudioApp() {
     setActivePetState(pet);
   }
   async function refreshList() {
-    const all = await loadAllPets();
+    const [all, removed] = await Promise.all([loadAllPets(), loadRemovedPets()]);
     const current = activePetRef.current;
     setPets(all.map((p) => p.id === current?.id ? { ...p, sourceImage: current.sourceImage, actions: current.actions } : p));
+    setRemovedPets(removed);
   }
   async function activatePet(
     pet: PetProfile,
@@ -485,14 +502,16 @@ function StudioApp() {
     const init = serial(async () => {
       transitioning.current = true;
       try {
-        const [all, stored, settings, onboardingLoad, collectionInitialized] = await Promise.all([
+        const [all, stored, settings, onboardingLoad, collectionInitialized, removed] = await Promise.all([
           loadAllPets(), loadPet(),
           isTauri ? invoke<NativePetSettings>("get_native_pet_settings") : Promise.resolve(null),
           loadOnboardingRecord().catch(() => ({ record: null, corrupt: true })),
-          isCollectionInitialized().catch(() => null)
+          isCollectionInitialized().catch(() => null),
+          loadRemovedPets().catch(() => [])
         ]);
         if (cancelled) return;
         setPets(all);
+        setRemovedPets(removed);
         let current = stored ?? all[0] ?? null;
         let pendingDisplayRecord: OnboardingRecord | null = null;
 
@@ -1806,39 +1825,209 @@ function StudioApp() {
     setCurrentTab("workshop");
   }
 
-  async function handleDeletePet(id: string) {
-    const pet = pets.find((p) => p.id === id);
-    if (!pet || !confirm(`确定要从宠物架移除「${pet.name}」吗？`)) return;
-    setDisplayRetry((current) => (current?.petId === id ? null : current));
+  async function handleRemovePet(pet: PetProfile) {
+    const current = activePetRef.current;
+    const removingActive = current?.id === pet.id;
+    setDisplayRetry((value) => (value?.petId === pet.id ? null : value));
     try {
+      if (removingActive) {
+        // Check the replacement material before the transaction; a broken
+        // replacement must not silently fall back to the default character.
+        const all = await loadAllPets();
+        const candidate = all
+          .filter((entry) => entry.id !== pet.id)
+          .sort(
+            (a, b) =>
+              a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+          )[0];
+        if (candidate) {
+          try {
+            await ensurePetHydrated(candidate);
+          } catch {
+            showToast(
+              "接替伙伴的素材暂时不可用，请先修复或选择另一只；这次没有移除。",
+              "error"
+            );
+            return;
+          }
+        }
+      }
+
       await serial(async () => {
         transitioning.current = true;
         try {
-          const current = activePetRef.current;
-          const remaining = (await loadAllPets()).filter((p) => p.id !== id);
-          const candidate = current?.id === id ? remaining[0] ?? null : current;
-          const full = candidate ? await ensurePetHydrated(candidate) : null;
-          if (isTauri && current?.id === id && full?.frameRoot) {
-            // Replacing the active profile is not a display intent: keep the
-            // current hidden/snoozed mode and its expiry.
-            await native.attach(full.frameRoot, full.id, full.name);
-            full.currentAction = await syncNativeAction(full.currentAction);
-          }
-          if (isTauri && remaining.length === 0) await native.detach(current?.id ?? null);
-          const next = await deletePet(id);
-          setActivePet(next && full?.id === next.id ? { ...full, name: next.name } : next ? await ensurePetHydrated(next) : null);
+          const result = await softRemovePet(pet.id);
           await refreshList();
-        } catch (error) {
-          const previous = activePetRef.current;
-          if (isTauri && previous?.frameRoot) {
-            await native.attach(previous.frameRoot, previous.id, previous.name);
-            await syncNativeAction(previous.currentAction);
+          let fullNext: PetProfile | null = null;
+          if (result.nextActive) {
+            try {
+              fullNext = await ensurePetHydrated(result.nextActive);
+            } catch {
+              fullNext = result.nextActive;
+            }
+            setActivePet(fullNext);
+          } else if (removingActive) {
+            setActivePet(null);
           }
-          throw error;
-        } finally { transitioning.current = false; }
+          setRemovalNotice({
+            removalId: result.removed.removalId,
+            petId: pet.id,
+            petName: pet.name,
+            replacementName: fullNext?.name ?? result.nextActive?.name ?? null,
+            wasActive: result.removed.wasActive,
+            selectionRevision: result.selectionRevision
+          });
+
+          if (isTauri && result.removed.wasActive) {
+            try {
+              if (fullNext?.frameRoot) {
+                // Attaching preserves the confirmed hidden/snoozed intent.
+                await native.attach(fullNext.frameRoot, fullNext.id, fullNext.name);
+                fullNext.currentAction = await syncNativeAction(fullNext.currentAction);
+                setActivePet(fullNext);
+              } else {
+                await native.detach(pet.id);
+              }
+            } catch (error) {
+              const parsed = parseNativeError(error);
+              if (parsed.code === "TARGET_CHANGED" && !fullNext) {
+                // Already detached, or another window changed the target.
+                await native.refresh().catch(() => undefined);
+              } else {
+                setLocalError({
+                  id: `removal-sync-${pet.id}`,
+                  petId: pet.id,
+                  title: "资料已移除，桌面尚未同步",
+                  body: "最近移除和新的伙伴选择已保存。可以重试把桌面同步到最新伙伴。",
+                  operation: "set_frame_root",
+                  code: "REMOVAL_SYNC_FAILED"
+                });
+                showToast(`桌面同步失败：${parsed.message}`, "error");
+              }
+            }
+          }
+        } finally {
+          transitioning.current = false;
+        }
       });
-      showToast(`已移除「${pet.name}」`, "info");
-    } catch (err) { showToast(`删除失败：${formatError(err)}`, "error"); }
+    } catch (err) {
+      showToast(`移除失败：${formatError(err)}`, "error");
+      await refreshList().catch(() => undefined);
+    }
+  }
+
+  async function handleUndoRemoval(notice: RemovalNotice) {
+    try {
+      const result = await restoreRemovedPet(
+        notice.petId,
+        notice.removalId,
+        "undo"
+      );
+      setRemovalNotice(null);
+      await refreshList();
+      if (result.alreadyRestored) {
+        showToast("这位伙伴已经在伙伴架。", "info");
+        return;
+      }
+      if (!result.restoredActive) {
+        showToast("已恢复到伙伴架，当前伙伴保持不变。", "info");
+        return;
+      }
+      let full: PetProfile;
+      try {
+        full = await ensurePetHydrated(result.restored);
+      } catch {
+        setActivePet(result.restored);
+        setLocalError({
+          id: `asset-${result.restored.id}`,
+          petId: result.restored.id,
+          title: `暂时找不到${result.restored.name}的动作素材，资料仍在`,
+          body: "已经撤销移除，但素材暂时不可用。可以重试加载，或稍后重新定位素材。",
+          operation: "set_frame_root",
+          code: "ASSET_NOT_FOUND"
+        });
+        showToast(
+          `已撤销移除，但「${result.restored.name}」的素材暂时不可用。`,
+          "info"
+        );
+        return;
+      }
+      setActivePet(full);
+      if (isTauri && full.frameRoot) {
+        try {
+          await native.attach(full.frameRoot, full.id, full.name);
+        } catch (err) {
+          setLocalError({
+            id: `removal-sync-${full.id}`,
+            petId: full.id,
+            title: "已撤销移除，桌面尚未同步",
+            body: "资料和活动选择已经恢复。可以重试把桌面同步到最新伙伴。",
+            operation: "set_frame_root",
+            code: "REMOVAL_SYNC_FAILED"
+          });
+          showToast(`桌面同步失败：${formatError(err)}`, "error");
+          return;
+        }
+      }
+      showToast(`已撤销移除，「${full.name}」重新成为当前伙伴。`, "success");
+    } catch (err) {
+      setRemovalNotice(null);
+      await refreshList().catch(() => undefined);
+      showToast(`撤销失败：${formatError(err)}`, "error");
+    }
+  }
+
+  async function handleRestoreRemoved(
+    id: string,
+    removalId: string,
+    mode: "shelf"
+  ) {
+    const result = await restoreRemovedPet(id, removalId, mode);
+    await refreshList();
+    if (result.alreadyRestored) {
+      showToast("这位伙伴已经在伙伴架。", "success");
+      return;
+    }
+    let assetWarning = false;
+    try {
+      await ensurePetHydrated(result.restored);
+    } catch {
+      assetWarning = true;
+    }
+    showToast(
+      assetWarning
+        ? `已把「${result.restored.name}」恢复到伙伴架，但素材暂时不可用，可稍后修复。`
+        : `已把「${result.restored.name}」恢复到伙伴架。`,
+      assetWarning ? "info" : "success"
+    );
+  }
+
+  async function handleRetryRemovalSync() {
+    const removedId = localError?.petId ?? null;
+    try {
+      const current = await loadPet();
+      if (current?.frameRoot) {
+        const full = await ensurePetHydrated(current);
+        await native.attach(full.frameRoot!, full.id, full.name);
+        setActivePet(full);
+      } else {
+        await native.detach(removedId);
+        setActivePet(null);
+      }
+      setLocalError(null);
+      await refreshList();
+      showToast("桌面已同步到最新伙伴。", "success");
+    } catch (err) {
+      setLocalError({
+        id: `removal-sync-${removedId ?? "unknown"}`,
+        petId: removedId ?? undefined,
+        title: "资料已移除，桌面尚未同步",
+        body: "最近移除和新的伙伴选择已保存。可以重试把桌面同步到最新伙伴。",
+        operation: "set_frame_root",
+        code: "REMOVAL_SYNC_FAILED"
+      });
+      showToast(`同步失败：${formatError(err)}`, "error");
+    }
   }
 
   async function handleRenamePet(id: string, newName: string) {
@@ -1883,6 +2072,23 @@ function StudioApp() {
   };
 
   const recovery = (() => {
+    if (localError?.code === "REMOVAL_SYNC_FAILED") {
+      return {
+        id: localError.id,
+        title: localError.title,
+        body: localError.body,
+        operation: localError.operation,
+        code: localError.code,
+        actions: [
+          {
+            label: "重试同步",
+            primary: true,
+            onClick: () => void handleRetryRemovalSync()
+          },
+          { label: "查看已有伙伴", onClick: () => setCurrentTab("shelf") }
+        ]
+      };
+    }
     if (localError) {
       return {
         id: localError.id,
@@ -2206,8 +2412,10 @@ function StudioApp() {
             displayRetryPetId={displayRetry?.petId ?? null}
             assetErrorPetId={assetErrorPetId}
             hasRecovery={Boolean(recovery)}
+            removedPets={removedPets}
             onDeployPet={handleDeployPet}
-            onDeletePet={handleDeletePet}
+            onRemovePet={handleRemovePet}
+            onRestoreRemoved={handleRestoreRemoved}
             onRenamePet={handleRenamePet}
             onRecallPet={handleRecallPet}
             onSnoozePet={handleSnoozePet}
@@ -2255,6 +2463,13 @@ function StudioApp() {
           onTutorial={handleTutorial}
         />
       </main>
+      {removalNotice && (
+        <RemovalUndo
+          notice={removalNotice}
+          onUndo={() => void handleUndoRemoval(removalNotice)}
+          onDismiss={() => setRemovalNotice(null)}
+        />
+      )}
     </div>
   );
 }

@@ -10,7 +10,8 @@ const browser=await chromium.launch({executablePath:process.env.PET_CHROME_PATH 
 const results=[];
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function openCompanionDetails(page){const details=page.locator('.companion-details');if(await details.count()&&!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
-async function deleteCard(card){await card.locator('.pet-card-more > summary').click();await card.getByRole('button',{name:'移除宠物',exact:true}).click();}
+function petCard(page,name){return page.locator('.pet-card').filter({has:page.getByText(name,{exact:true})});}
+async function deleteCard(card){await card.locator('.pet-card-more > summary').click();await card.getByRole('button',{name:'移到最近移除',exact:true}).click();}
 async function joinOrAdopt(page){const adopt=page.getByRole('button',{name:'领养并入住',exact:true});if(await adopt.count()){await adopt.click();return;}const finish=page.getByRole('button',{name:'完成见面',exact:true});if(await finish.count())await finish.click();}
 async function chooseSnooze(scope,minutes=60){await scope.getByRole('button',{name:/^(休息…|调整休息…)$/}).click();await scope.getByRole('menuitem',{name:`${minutes} 分钟`,exact:true}).click();}
 async function openWorkshopTask(page,label){await page.getByRole('button',{name:/领养与制作/}).click();const task=page.getByRole('button',{name:new RegExp('^'+label)});if(await task.count())await task.click();}
@@ -153,8 +154,8 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
 async function seed(page,{desktop=false,active='A',empty=true}={}){
  await page.evaluate(async({desktop,active,empty})=>{
   const storage=await import('/src/storage.ts');
-  const db=await new Promise((resolve,reject)=>{const req=indexedDB.open('desktop-sticker-pet-db',2);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
-  await new Promise((resolve,reject)=>{const tx=db.transaction(['pet','pets_collection','metadata'],'readwrite');for(const name of ['pet','pets_collection','metadata'])tx.objectStore(name).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+  const db=await new Promise((resolve,reject)=>{const req=indexedDB.open('desktop-sticker-pet-db',3);req.onupgradeneeded=()=>{const database=req.result;for(const name of ['pet','pets_collection','metadata','removed_pets'])if(!database.objectStoreNames.contains(name))database.createObjectStore(name,name==='pets_collection'||name==='removed_pets'?{keyPath:'id'}:undefined);};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
+  await new Promise((resolve,reject)=>{const stores=['pet','pets_collection','metadata','removed_pets'];const tx=db.transaction(stores,'readwrite');for(const name of stores)tx.objectStore(name).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
   for(const id of ['A','B']){
    const actions=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,desktop&&empty?[]:[0,1,2,3,4].map(i=>`/frame-pack/${a}/${String(i).padStart(3,'0')}.png`)]));
    await storage.savePet({id,name:id==='A'?'测试甲':'测试乙',species:'dog',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',storageMode:'preset-root',frameRoot:'/review/'+id,sourceImage:desktop&&empty?'':actions.idle[0],actions,currentAction:'idle',actionStartedAt:'2026-10-21T00:00:00Z',scale:1});
@@ -261,8 +262,8 @@ try{
    await seed(page,{active:'B'});
    await page.getByRole('button',{name:/我的伙伴/}).click();
    page.once('dialog',d=>d.accept());
-   await deleteCard(page.locator('.pet-card').filter({hasText:'测试甲'}));
-   await page.locator('.pet-card').filter({hasText:'测试甲'}).waitFor({state:'detached'});
+   await deleteCard(petCard(page,'测试甲'));
+   await petCard(page,'测试甲').waitFor({state:'detached'});
    await page.getByRole('button',{name:'陪伴',exact:true}).click();
    const stored=await page.evaluate(async()=>{const m=await import('/src/storage.ts');return (await m.loadPet())?.id;});
    const empty=await page.locator('.companion-empty').isVisible();
@@ -298,7 +299,7 @@ try{
    await seed(page,{desktop:true,active:'A'});
    await page.evaluate(()=>{window.__review.delayB=500;window.__review.emitOnSet=true;});
    await page.getByRole('button',{name:/我的伙伴/}).click();
-   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+   await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
    await sleep(800);
    const stored=await page.evaluate(async()=>{const m=await import('/src/storage.ts');return (await m.loadPet())?.id;});
    const visible=await page.locator('.widget-name').innerText();
@@ -347,7 +348,7 @@ try{
   try{
    await seed(page,{desktop:true});await page.evaluate(()=>window.__review.failB=true);
    await page.getByRole('button',{name:/我的伙伴/}).click();
-   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+   await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
    await page.locator('.toast-message.error').waitFor();
    const state=await page.evaluate(async()=>({stored:(await (await import('/src/storage.ts')).loadPet())?.id,root:window.__review.root}));
    const visible=await page.locator('.widget-name').innerText();
@@ -359,7 +360,7 @@ try{
   try{
    await seed(page,{desktop:true});
    await page.getByRole('button',{name:/我的伙伴/}).click();
-   await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+   await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
    await page.waitForFunction(()=>document.querySelector('.widget-name')?.textContent==='测试乙');
    await page.evaluate(()=>window.__review.emit({action:'sleep',petId:'A',revision:100}));
    await page.getByRole('button',{name:'陪伴',exact:true}).click();
@@ -373,7 +374,7 @@ try{
   try{
    await seed(page,{desktop:true});await page.getByRole('button',{name:/我的伙伴/}).click();
    for (const name of ['测试甲','测试乙']) {
-    page.once('dialog',d=>d.accept());const card=page.locator('.pet-card').filter({hasText:name});
+    page.once('dialog',d=>d.accept());const card=petCard(page,name);
     await deleteCard(card);await card.waitFor({state:'detached'});
    }
    const visible=await page.evaluate(()=>window.__review.visible);
@@ -386,7 +387,7 @@ try{
    await seed(page);await page.getByRole('button',{name:/我的伙伴/}).click();
    for (const name of ['测试甲','测试乙']) {
     page.once('dialog',d=>d.accept());
-    const card=page.locator('.pet-card').filter({hasText:name});
+    const card=petCard(page,name);
     await deleteCard(card);await card.waitFor({state:'detached'});
    }
    await page.reload();await page.locator('.companion-empty').waitFor();
@@ -484,7 +485,7 @@ await record('onboarding_empty_old_user_stays_empty',async()=>{
   await page.getByRole('button',{name:/我的伙伴/}).click();
   for(const name of ['测试甲','测试乙']){
    page.once('dialog',d=>d.accept());
-   const card=page.locator('.pet-card').filter({hasText:name});
+   const card=petCard(page,name);
    await deleteCard(card);
    await card.waitFor({state:'detached'});
   }
@@ -659,7 +660,7 @@ await record('shelf_empty_and_reonboard_entry',async()=>{
   await page.getByRole('button',{name:/我的伙伴/}).click();
   for(const name of ['测试甲','测试乙']){
    page.once('dialog',d=>d.accept());
-   const card=page.locator('.pet-card').filter({hasText:name});
+   const card=petCard(page,name);
    await deleteCard(card);
    await card.waitFor({state:'detached'});
   }
@@ -782,7 +783,7 @@ await record('delete_active_pet_while_hidden_keeps_hidden',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   page.once('dialog',d=>d.accept());
-  await deleteCard(page.locator('.pet-card').filter({hasText:'测试甲'}));
+  await deleteCard(petCard(page,'测试甲'));
   await page.waitForFunction(()=>window.__review.native.petId==='B');
   const state=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible,petId:window.__review.native.petId}));
   return {passed:state.mode==='hidden'&&state.visible===false&&state.petId==='B'&&errors.length===0,state,errors};
@@ -797,7 +798,7 @@ await record('delete_active_pet_while_snoozed_keeps_expiry',async()=>{
   const before=await page.evaluate(()=>({until:window.__review.native.snoozeUntilMs}));
   await page.getByRole('button',{name:/我的伙伴/}).click();
   page.once('dialog',d=>d.accept());
-  await deleteCard(page.locator('.pet-card').filter({hasText:'测试甲'}));
+  await deleteCard(petCard(page,'测试甲'));
   await page.waitForFunction(()=>window.__review.native.petId==='B');
   const state=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,visible:window.__review.native.visible,petId:window.__review.native.petId}));
   return {passed:state.mode==='snoozed'&&state.until===before.until&&state.visible===false&&state.petId==='B'&&errors.length===0,before,state,errors};
@@ -1063,11 +1064,11 @@ await record('shelf_deploy_show_failure_does_not_report_success',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
+  await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
   await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
   const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,native:{petId:window.__review.native.petId,mode:window.__review.native.visibilityMode,visible:window.__review.native.visible},toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   await page.evaluate(()=>{window.__review.failPreference=false;});
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).click();
+  await petCard(page,'测试乙').getByRole('button',{name:'重试显示',exact:true}).click();
   await page.waitForFunction(()=>window.__review.native.visible===true);
   const retried=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
   return {passed:failed.active==='B'&&failed.native.petId==='B'&&failed.native.mode==='hidden'&&failed.native.visible===false&&!failed.toasts.some(text=>text?.includes('派往桌面'))&&failed.toasts.some(text=>text?.includes('暂时没能显示'))&&retried.mode==='shown'&&retried.visible===true&&errors.length===0,failed,retried,errors};
@@ -1137,8 +1138,8 @@ await record('display_retry_invalidated_by_newer_selection',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
+  await petCard(page,'测试乙').getByRole('button',{name:'重试显示',exact:true}).waitFor();
   await page.evaluate(()=>{window.__review.failPreference=false;});
   const second=await context.newPage();
   await second.goto(base,{waitUntil:'domcontentloaded'});
@@ -1161,10 +1162,10 @@ await record('display_retry_rejected_by_native_target',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
+  await petCard(page,'测试乙').getByRole('button',{name:'重试显示',exact:true}).waitFor();
   await page.evaluate(()=>{window.__review.failPreference=false;window.__review.native.petId='intruder';});
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).click();
+  await petCard(page,'测试乙').getByRole('button',{name:'重试显示',exact:true}).click();
   await page.waitForTimeout(400);
   const state=await page.evaluate(()=>({shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,displayRecovery:document.querySelector('.recovery-notice')?.textContent?.includes('还没有显示到桌面')??false,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
   return {passed:state.shows===2&&state.visible===false&&!state.displayRecovery&&state.toasts.some(text=>text?.includes('已失效'))&&errors.length===0,state,errors};
@@ -1176,8 +1177,8 @@ await record('display_retry_is_not_replayed_after_reload',async()=>{
   await seed(page,{desktop:true,active:'A'});
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:/派去桌面/}).click();
-  await page.locator('.pet-card').filter({hasText:'测试乙'}).getByRole('button',{name:'重试显示',exact:true}).waitFor();
+  await petCard(page,'测试乙').getByRole('button',{name:/派去桌面/}).click();
+  await petCard(page,'测试乙').getByRole('button',{name:'重试显示',exact:true}).waitFor();
   await page.reload({waitUntil:'domcontentloaded'});
   await page.locator('.companion-pet-button').waitFor();
   await page.waitForTimeout(500);
@@ -1271,7 +1272,7 @@ await record('shelf_current_card_actions_follow_state',async()=>{
  try{
   await seed(page,{desktop:true,active:'A'});
   await page.getByRole('button',{name:/我的伙伴/}).click();
-  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const card=petCard(page,'测试甲');
   const read=()=>card.evaluate(el=>({status:el.querySelector('.pet-card-status')?.textContent?.trim()??null,primary:el.querySelector('.pet-card-action-row .btn-primary')?.textContent?.trim()??null,secondary:el.querySelector('.pet-card-action-row .btn-secondary')?.textContent?.trim()??null,buttons:[...el.querySelectorAll('.pet-card-action-row button')].map(button=>button.textContent?.trim())}));
   const shown=await read();
   await page.getByRole('button',{name:'回到陪伴',exact:true}).click();
@@ -1305,7 +1306,7 @@ await record('shelf_current_card_recall_and_retry_stay_on_shelf',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   await page.evaluate(()=>{window.__review.failPreference=true;});
-  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const card=petCard(page,'测试甲');
   await card.getByRole('button',{name:'唤回伙伴',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.pet-card.active-pet .pet-card-status')?.textContent?.includes('等待显示'));
   const failed=await page.evaluate(()=>({shelf:Boolean(document.querySelector('.shelf-grid')),nav:document.querySelector('.nav-item.active')?.textContent,visible:window.__review.native.visible,status:document.querySelector('.pet-card.active-pet .pet-card-status')?.textContent?.trim(),primary:document.querySelector('.pet-card.active-pet .pet-card-action-row .btn-primary')?.textContent?.trim(),recovery:Boolean(document.querySelector('.recovery-notice'))}));
@@ -1322,8 +1323,8 @@ await record('shelf_native_mismatch_does_not_borrow_other_pet_status',async()=>{
   await seed(page,{desktop:true,active:'A'});
   await page.evaluate(()=>{Object.assign(window.__review.native,{petId:'B',petName:'测试乙',availability:'ready',visibilityMode:'shown',visible:true});window.__review.emitNative();});
   await page.getByRole('button',{name:/我的伙伴/}).click();
-  const cardA=page.locator('.pet-card').filter({hasText:'测试甲'});
-  const cardB=page.locator('.pet-card').filter({hasText:'测试乙'});
+  const cardA=petCard(page,'测试甲');
+  const cardB=petCard(page,'测试乙');
   const read=(card)=>card.evaluate(el=>({status:el.querySelector('.pet-card-status')?.textContent?.trim()??null,primary:el.querySelector('.pet-card-action-row .btn-primary')?.textContent?.trim()??null}));
   const mismatchA=await read(cardA);
   const mismatchB=await read(cardB);
@@ -1339,7 +1340,7 @@ await record('shelf_asset_recovery_preserves_hidden_intent',async()=>{
   await seed(page,{desktop:true,active:'A'});
   await page.locator('.recovery-notice').waitFor();
   await page.getByRole('button',{name:/我的伙伴/}).click();
-  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const card=petCard(page,'测试甲');
   const read=()=>card.evaluate(el=>({status:el.querySelector('.pet-card-status')?.textContent?.trim()??null,primary:el.querySelector('.pet-card-action-row .btn-primary')?.textContent?.trim()??null}));
   const before=await read();
   await page.evaluate(()=>{window.__review.missing=false;});
@@ -1357,7 +1358,7 @@ await record('shelf_position_recovery_does_not_wake_hidden_pet',async()=>{
   await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   await page.getByRole('button',{name:/我的伙伴/}).click();
-  const card=page.locator('.pet-card').filter({hasText:'测试甲'});
+  const card=petCard(page,'测试甲');
   await card.locator('.pet-card-more > summary').click();
   const offered=await card.getByRole('button',{name:'找回位置',exact:true}).isVisible();
   await card.getByRole('button',{name:'找回位置',exact:true}).click();
@@ -1588,6 +1589,180 @@ await record('workshop_long_task_survives_page_switch',async()=>{
   await page.locator('.companion-title').waitFor({timeout:15000});
   const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,generations:window.__review.generations,saves:window.__review.saves,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   return {passed:during.heading?.includes('用照片制作')&&Boolean(during.button)&&after.pets===1&&after.generations===7&&after.saves===1&&!after.toasts.some(text=>text?.includes('已取消'))&&errors.length===0,during,after,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_undo_noncurrent',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'B'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.removal-undo').waitFor();
+  await page.screenshot({path:join(evidenceDir,'c05-recent-removal.png')});
+  const before=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,pets:(await s.loadAllPets()).length,removed:(await s.loadRemovedPets()).length,remaining:Number(document.querySelector('.removal-undo')?.getAttribute('data-remaining')),text:document.querySelector('.removal-undo')?.textContent??'',recentCards:document.querySelectorAll('.removed-card').length};});
+  await page.getByRole('button',{name:'撤销',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadRemovedPets()).length===0;});
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,pets:(await s.loadAllPets()).length,removed:(await s.loadRemovedPets()).length,notice:Boolean(document.querySelector('.removal-undo'))};});
+  return {passed:before.active==='B'&&before.pets===1&&before.removed===1&&before.recentCards===1&&before.remaining>=9&&before.text.includes('当前桌面伙伴保持不变')&&after.active==='B'&&after.pets===2&&after.removed===0&&!after.notice&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_undo_current_preserves_hidden',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.waitForFunction(()=>window.__review.native.petId==='B');
+  const removed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,mode:window.__review.native.visibilityMode,visible:window.__review.native.visible,text:document.querySelector('.removal-undo')?.textContent??''};});
+  await page.getByRole('button',{name:'撤销',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.petId==='A');
+  const restored=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,mode:window.__review.native.visibilityMode,visible:window.__review.native.visible};});
+  return {passed:removed.active==='B'&&removed.removed===1&&removed.mode==='hidden'&&removed.visible===false&&removed.text.includes('当前伙伴由「测试乙」接替')&&restored.active==='A'&&restored.removed===0&&restored.mode==='hidden'&&restored.visible===false&&errors.length===0,removed,restored,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_undo_after_newer_selection',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.removal-undo').waitFor();
+  await page.evaluate(async()=>{await (await import('/src/storage.ts')).setActivePetId('B');});
+  await page.waitForTimeout(200);
+  await page.getByRole('button',{name:'撤销',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadRemovedPets()).length===0;});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,pets:(await s.loadAllPets()).length,removed:(await s.loadRemovedPets()).length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  return {passed:state.active==='B'&&state.pets===2&&state.removed===0&&state.toasts.some(text=>text?.includes('当前伙伴保持不变'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_last_pet_survives_reload',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.removal-undo').waitFor();
+  await deleteCard(petCard(page,'测试乙'));
+  await page.waitForFunction(()=>window.__review.native.petId===null);
+  const emptied=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,removed:(await s.loadRemovedPets()).length};});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.locator('.shelf-empty').waitFor();
+  const reloaded=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,removed:(await s.loadRemovedPets()).length,cards:document.querySelectorAll('.removed-card').length};});
+  await page.getByRole('button',{name:'恢复到伙伴架',exact:true}).first().click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===1;});
+  const restored=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id};});
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  const stageEmpty=await page.locator('.companion-empty').isVisible();
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.locator('.pet-card').getByRole('button',{name:/派去桌面/}).first().click();
+  await page.waitForFunction(()=>Boolean(window.__review.native.petId));
+  const deployed=await page.evaluate(async()=>({active:(await (await import('/src/storage.ts')).loadPet())?.id,native:window.__review.native.petId}));
+  return {passed:emptied.pets===0&&emptied.removed===2&&reloaded.pets===0&&reloaded.removed===2&&reloaded.cards===2&&restored.pets===1&&!restored.active&&stageEmpty&&deployed.active===deployed.native&&errors.length===0,emptied,reloaded,restored,stageEmpty,deployed,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_timer_pauses_on_hover',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'B'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  const notice=page.locator('.removal-undo');
+  await notice.waitFor();
+  const start=Number(await notice.getAttribute('data-remaining'));
+  await page.waitForTimeout(1300);
+  const afterWait=Number(await notice.getAttribute('data-remaining'));
+  await notice.hover();
+  const paused=Number(await notice.getAttribute('data-remaining'));
+  await page.waitForTimeout(1400);
+  const afterHover=Number(await notice.getAttribute('data-remaining'));
+  await page.mouse.move(5,5);
+  await page.waitForTimeout(1300);
+  const afterResume=Number(await notice.getAttribute('data-remaining'));
+  await page.getByRole('button',{name:'撤销',exact:true}).focus();
+  const focusPaused=Number(await notice.getAttribute('data-remaining'));
+  await page.waitForTimeout(1200);
+  const afterFocus=Number(await notice.getAttribute('data-remaining'));
+  await page.getByRole('button',{name:'撤销',exact:true}).click();
+  return {passed:start>=9&&afterWait<start&&afterHover===paused&&afterResume<afterHover&&afterFocus===focusPaused&&errors.length===0,start,afterWait,paused,afterHover,afterResume,focusPaused,afterFocus,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_multi_window_single_copy',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'B'});
+  const second=await context.newPage();
+  await second.goto(base,{waitUntil:'domcontentloaded'});
+  await second.getByRole('button',{name:/我的伙伴/}).click();
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.removal-undo').waitFor();
+  await second.locator('.removed-card').waitFor();
+  await second.getByRole('button',{name:'恢复到伙伴架',exact:true}).click();
+  await second.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadRemovedPets()).length===0;});
+  await page.getByRole('button',{name:'撤销',exact:true}).click();
+  await page.waitForTimeout(400);
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,pets:(await s.loadAllPets()).length,removed:(await s.loadRemovedPets()).length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  return {passed:state.active==='B'&&state.pets===2&&state.removed===0&&state.toasts.some(text=>text?.includes('已经在伙伴架'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_native_sync_retry',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failAttach=true;});
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.recovery-notice').filter({hasText:'资料已移除，桌面尚未同步'}).waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,native:window.__review.native.petId,notice:document.querySelector('.removal-undo')?.textContent??''};});
+  await page.evaluate(()=>{window.__review.failAttach=false;});
+  await page.getByRole('button',{name:'重试同步',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.petId==='B');
+  const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,recovery:Boolean(document.querySelector('.recovery-notice'))};});
+  return {passed:failed.active==='B'&&failed.removed===1&&failed.native==='A'&&failed.notice.includes('当前伙伴由「测试乙」接替')&&retried.active==='B'&&retried.removed===1&&!retried.recovery&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_broken_replacement_aborts',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,missing:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.toast-message.error').filter({hasText:'接替伙伴的素材暂时不可用'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,notice:Boolean(document.querySelector('.removal-undo'))};});
+  return {passed:state.pets===2&&state.active==='A'&&state.removed===0&&!state.notice&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_preserves_paused',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>window.__review.native.animationPaused===true);
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.waitForFunction(()=>window.__review.native.petId==='B');
+  const removed=await page.evaluate(()=>({active:window.__review.native.petId,paused:window.__review.native.animationPaused}));
+  await page.getByRole('button',{name:'撤销',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.petId==='A');
+  const restored=await page.evaluate(()=>({active:window.__review.native.petId,paused:window.__review.native.animationPaused}));
+  return {passed:removed.active==='B'&&removed.paused===true&&restored.active==='A'&&restored.paused===true&&errors.length===0,removed,restored,errors};
+ }finally{await context.close();}
+});
+await record('recent_removal_restore_with_missing_assets_reports',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'B'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await deleteCard(petCard(page,'测试甲'));
+  await page.locator('.removal-undo').waitFor();
+  await page.evaluate(()=>{window.__review.missing=true;});
+  await page.getByRole('button',{name:'恢复到伙伴架',exact:true}).click();
+  await page.locator('.toast-message').filter({hasText:'素材暂时不可用'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length};});
+  return {passed:state.pets===2&&state.active==='B'&&state.removed===0&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

@@ -3,6 +3,7 @@ import type { PetProfile } from "../../types";
 import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
 import { formatSnoozeTime } from "../../native-pet-state";
 import type { NativePetState, SnoozeMinutes } from "../../native-pet-types";
+import type { RemovedPetRecord } from "../../storage";
 import { SnoozeMenu } from "../stage/SnoozeMenu";
 
 interface PetShelfProps {
@@ -12,8 +13,14 @@ interface PetShelfProps {
   displayRetryPetId?: string | null;
   assetErrorPetId?: string | null;
   hasRecovery?: boolean;
+  removedPets?: RemovedPetRecord[];
   onDeployPet: (pet: PetProfile) => Promise<void> | void;
-  onDeletePet: (id: string) => Promise<void> | void;
+  onRemovePet: (pet: PetProfile) => Promise<void> | void;
+  onRestoreRemoved: (
+    id: string,
+    removalId: string,
+    mode: "shelf"
+  ) => Promise<void> | void;
   onRenamePet: (id: string, newName: string) => Promise<void> | void;
   onRecallPet: (pet: PetProfile) => Promise<void> | void;
   onSnoozePet: (pet: PetProfile, minutes: SnoozeMinutes) => Promise<void> | void;
@@ -53,8 +60,10 @@ export const PetShelf: React.FC<PetShelfProps> = ({
   displayRetryPetId = null,
   assetErrorPetId = null,
   hasRecovery = false,
+  removedPets = [],
   onDeployPet,
-  onDeletePet,
+  onRemovePet,
+  onRestoreRemoved,
   onRenamePet,
   onRecallPet,
   onSnoozePet,
@@ -101,6 +110,16 @@ export const PetShelf: React.FC<PetShelfProps> = ({
     setEditName(pet.name);
   }
 
+  function replacementName(pet: PetProfile) {
+    const remaining = pets
+      .filter((candidate) => candidate.id !== pet.id)
+      .sort(
+        (a, b) =>
+          a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+      );
+    return remaining[0]?.name ?? null;
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -116,6 +135,64 @@ export const PetShelf: React.FC<PetShelfProps> = ({
           ➕ 制作新宠物
         </button>
       </div>
+
+      <section className="shelf-removed" aria-labelledby="shelf-removed-title">
+        <div className="shelf-removed-head">
+          <div>
+            <h2 id="shelf-removed-title">最近移除 ({removedPets.length})</h2>
+            <p>恢复只放回伙伴架，不改变当前桌面伙伴；资料和素材仍在本机。</p>
+          </div>
+        </div>
+        {removedPets.length === 0 ? (
+          <p className="shelf-removed-empty">还没有最近移除的伙伴。</p>
+        ) : (
+          <div className="shelf-removed-grid">
+            {removedPets.map((record) => {
+              const preview =
+                record.pet.thumbnailImage ||
+                record.pet.sourceImage ||
+                record.pet.actions?.idle?.[0];
+              return (
+                <div key={record.id} className="removed-card">
+                  <div className="removed-card-avatar">
+                    {preview ? (
+                      <img src={preview} alt={record.pet.name} />
+                    ) : (
+                      <span aria-hidden="true">
+                        {record.pet.species === "cat" ? "🐱" : "🐶"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="removed-card-body">
+                    <strong>{record.pet.name}</strong>
+                    <span>
+                      {new Date(record.removedAt).toLocaleString("zh-CN", {
+                        month: "numeric",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      })}
+                      {record.wasActive ? " · 移除时是当前伙伴" : " · 未在桌面"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary removed-restore"
+                    onClick={() =>
+                      void run(record.id, () =>
+                        onRestoreRemoved(record.id, record.removalId, "shelf")
+                      )
+                    }
+                    disabled={pendingId !== null}
+                  >
+                    恢复到伙伴架
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {pets.length === 0 ? (
         <div
@@ -386,16 +463,23 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                           查看恢复提示
                         </button>
                       )}
+                      {isActive && (
+                        <p className="pet-card-more-note">
+                          {replacementName(pet)
+                            ? `移除后由「${replacementName(pet)}」接替桌面。`
+                            : "移除后桌面将暂时没有伙伴。"}
+                        </p>
+                      )}
                       <button
                         type="button"
                         className="danger"
                         onClick={(event) => {
                           closeMenu(event);
-                          void run(pet.id, () => onDeletePet(pet.id));
+                          void run(pet.id, () => onRemovePet(pet));
                         }}
                         disabled={actionsDisabled}
                       >
-                        移除宠物
+                        移到最近移除
                       </button>
                     </div>
                   </details>

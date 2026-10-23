@@ -9,20 +9,22 @@ import {
 } from "./onboarding";
 
 const DB_NAME = "desktop-sticker-pet-db";
-const STORES = ["pet", "pets_collection", "metadata"];
+const DB_VERSION = 3;
+const STORES = ["pet", "pets_collection", "metadata", "removed_pets"];
 const ACTIVE_ID_KEY = "active_pet_id";
 const SELECTION_REVISION_KEY = "selection_revision_v1";
 const ONBOARDING_CHANNEL = "desktop-sticker-pet-onboarding";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     let blocked = false;
     request.onupgradeneeded = () => {
       const db = request.result;
       for (const name of STORES) {
         if (!db.objectStoreNames.contains(name)) {
-          db.createObjectStore(name, name === "pets_collection" ? { keyPath: "id" } : undefined);
+          const keyPath = name === "pets_collection" || name === "removed_pets" ? { keyPath: "id" } : undefined;
+          db.createObjectStore(name, keyPath);
         }
       }
     };
@@ -76,7 +78,13 @@ function readActive(tx: IDBTransaction, done: (pet: PetProfile | null) => void) 
   const req = tx.objectStore("metadata").get(ACTIVE_ID_KEY);
   const legacy = () => {
     const old = tx.objectStore("pet").get("current");
-    old.onsuccess = () => done(old.result ?? null);
+    old.onsuccess = () => {
+      if (!old.result) return done(null);
+      // A legacy mirror must never resurrect a profile that is in the
+      // recent-removal store.
+      const removed = tx.objectStore("removed_pets").get(old.result.id);
+      removed.onsuccess = () => done(removed.result ? null : old.result);
+    };
   };
   req.onsuccess = () => {
     if (!req.result) return legacy();
@@ -144,11 +152,18 @@ export function loadSelectionRevision(): Promise<number> {
 
 /** New/imported profiles are explicitly activated. Runtime updates never activate. */
 export async function savePet(pet: PetProfile, _broadcastPet: PetProfile = pet) {
-  await transaction<void>("readwrite", (tx, done) => {
-    tx.objectStore("pets_collection").put(pet);
-    activate(tx, pet);
-    bumpSelectionRevision(tx);
-    done();
+  await transaction<void>("readwrite", (tx, done, fail) => {
+    const removed = tx.objectStore("removed_pets").get(pet.id);
+    removed.onsuccess = () => {
+      if (removed.result) {
+        fail(new Error("该伙伴在最近移除中，请先恢复"));
+        return;
+      }
+      tx.objectStore("pets_collection").put(pet);
+      activate(tx, pet);
+      bumpSelectionRevision(tx);
+      done();
+    };
   });
   localStorage.removeItem(STORAGE_KEY);
   notifyPetChanged();
@@ -186,6 +201,170 @@ export async function deletePet(id: string): Promise<PetProfile | null> {
   });
   notifyPetChanged();
   return current;
+}
+
+export interface RemovedPetRecord {
+  id: string;
+  removalId: string;
+  pet: PetProfile;
+  removedAt: string;
+  wasActive: boolean;
+  selectionRevisionAfterRemoval: number;
+}
+
+export interface RemovePetResult {
+  removed: RemovedPetRecord;
+  nextActive: PetProfile | null;
+  selectionRevision: number;
+}
+
+export type RestoreRemovalMode = "undo" | "shelf";
+
+export interface RestoreRemovedResult {
+  restored: PetProfile;
+  restoredActive: boolean;
+  selectionRevision: number;
+  alreadyRestored: boolean;
+}
+
+function comparePetOrder(a: PetProfile, b: PetProfile) {
+  return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+}
+
+/**
+ * Soft-removes one profile in a single transaction. The profile and its files
+ * stay intact in `removed_pets`; only an explicit restore moves it back.
+ */
+export async function softRemovePet(id: string): Promise<RemovePetResult> {
+  const result = await transaction<RemovePetResult>("readwrite", (tx, done, fail) => {
+    const collection = tx.objectStore("pets_collection");
+    const petReq = collection.get(id);
+    petReq.onsuccess = () => {
+      const pet = petReq.result as PetProfile | undefined;
+      if (!pet) {
+        fail(new Error("该宠物已被移除"));
+        return;
+      }
+      const meta = tx.objectStore("metadata");
+      const activeReq = meta.get(ACTIVE_ID_KEY);
+      activeReq.onsuccess = () => {
+        const wasActive = activeReq.result === id;
+        const allReq = collection.getAll();
+        allReq.onsuccess = () => {
+          const remaining = (allReq.result as PetProfile[])
+            .filter((candidate) => candidate.id !== id)
+            .sort(comparePetOrder);
+          const nextActive = wasActive ? remaining[0] ?? null : null;
+          const revisionReq = meta.get(SELECTION_REVISION_KEY);
+          revisionReq.onsuccess = () => {
+            const current = Number(revisionReq.result) || 0;
+            const after = wasActive ? current + 1 : current;
+            const removed: RemovedPetRecord = {
+              id,
+              removalId: crypto.randomUUID(),
+              pet,
+              removedAt: new Date().toISOString(),
+              wasActive,
+              selectionRevisionAfterRemoval: after
+            };
+            tx.objectStore("removed_pets").put(removed);
+            collection.delete(id);
+            if (wasActive) {
+              activate(tx, nextActive);
+              meta.put(after, SELECTION_REVISION_KEY);
+            }
+            done({ removed, nextActive, selectionRevision: after });
+          };
+        };
+      };
+    };
+  });
+  notifyPetChanged();
+  return result;
+}
+
+export function loadRemovedPets(): Promise<RemovedPetRecord[]> {
+  return transaction<RemovedPetRecord[]>("readonly", (tx, done) => {
+    const req = tx.objectStore("removed_pets").getAll();
+    req.onsuccess = () =>
+      done(
+        (req.result as RemovedPetRecord[]).sort(
+          (a, b) =>
+            b.removedAt.localeCompare(a.removedAt) || a.id.localeCompare(b.id)
+        )
+      );
+  });
+}
+
+/**
+ * `shelf` only puts the profile back; `undo` additionally restores the active
+ * choice when no newer selection happened after the removal.
+ */
+export async function restoreRemovedPet(
+  id: string,
+  removalId: string,
+  mode: RestoreRemovalMode
+): Promise<RestoreRemovedResult> {
+  const result = await transaction<RestoreRemovedResult>(
+    "readwrite",
+    (tx, done, fail) => {
+      const removedStore = tx.objectStore("removed_pets");
+      const removedReq = removedStore.get(id);
+      removedReq.onsuccess = () => {
+        const removed = removedReq.result as RemovedPetRecord | undefined;
+        if (!removed) {
+          const existing = tx.objectStore("pets_collection").get(id);
+          existing.onsuccess = () => {
+            if (existing.result) {
+              done({
+                restored: existing.result,
+                restoredActive: false,
+                selectionRevision: 0,
+                alreadyRestored: true
+              });
+            } else {
+              fail(new Error("该伙伴已不在最近移除"));
+            }
+          };
+          return;
+        }
+        if (removed.removalId !== removalId) {
+          fail(new Error("这次移除已更新，未恢复旧记录"));
+          return;
+        }
+        const meta = tx.objectStore("metadata");
+        const activeReq = meta.get(ACTIVE_ID_KEY);
+        const revisionReq = meta.get(SELECTION_REVISION_KEY);
+        activeReq.onsuccess = () => {
+          revisionReq.onsuccess = () => {
+            const revision = Number(revisionReq.result) || 0;
+            const canUndo =
+              mode === "undo" &&
+              removed.wasActive &&
+              revision === removed.selectionRevisionAfterRemoval;
+            tx.objectStore("pets_collection").put(removed.pet);
+            removedStore.delete(id);
+            let restoredActive = false;
+            let nextRevision = revision;
+            if (canUndo) {
+              activate(tx, removed.pet);
+              nextRevision = revision + 1;
+              meta.put(nextRevision, SELECTION_REVISION_KEY);
+              restoredActive = true;
+            }
+            done({
+              restored: removed.pet,
+              restoredActive,
+              selectionRevision: nextRevision,
+              alreadyRestored: false
+            });
+          };
+        };
+      };
+    }
+  );
+  notifyPetChanged();
+  return result;
 }
 
 async function updateExistingPet(id: string, update: (pet: PetProfile) => PetProfile): Promise<PetProfile | null> {
@@ -582,11 +761,18 @@ export async function commitAdoptedPet(
           fail(new Error("当前伙伴已更新，未提交这次领养"));
           return;
         }
-        tx.objectStore("pets_collection").put(pet);
-        activate(tx, pet);
-        bumpSelectionRevision(tx);
-        metadata.put(record, ONBOARDING_KEY);
-        done();
+        const removed = tx.objectStore("removed_pets").get(pet.id);
+        removed.onsuccess = () => {
+          if (removed.result) {
+            fail(new Error("该伙伴在最近移除中，请先恢复"));
+            return;
+          }
+          tx.objectStore("pets_collection").put(pet);
+          activate(tx, pet);
+          bumpSelectionRevision(tx);
+          metadata.put(record, ONBOARDING_KEY);
+          done();
+        };
       };
     };
   });
