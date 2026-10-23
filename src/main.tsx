@@ -44,6 +44,7 @@ import {
   type ActionFrameSet,
   type PetAction,
   type PetProfile,
+  type FrameInspection,
   type PetSpecies,
   type StudioTab,
   type WorkshopTask
@@ -121,6 +122,8 @@ function StudioApp() {
   const [workshopTask, setWorkshopTask] = useState<WorkshopTask>("choose");
   const [repairPetId, setRepairPetId] = useState<string | null>(null);
   const [inspectAction, setInspectAction] = useState<PetAction>("idle");
+  const [frameInspection, setFrameInspection] = useState<FrameInspection | null>(null);
+  const [inspectingFrames, setInspectingFrames] = useState(false);
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [removedPets, setRemovedPets] = useState<RemovedPetRecord[]>([]);
   const [removalNotice, setRemovalNotice] = useState<RemovalNotice | null>(null);
@@ -1540,6 +1543,32 @@ function StudioApp() {
   }
 
   // Workshop - Import Preset
+  async function handleInspectFrames() {
+    if (!isTauri) {
+      showToast("目录预检需要桌面版；网页模式只提供实际支持的文件选择。", "info");
+      return;
+    }
+    setInspectingFrames(true);
+    try {
+      const rootDir = presetFrameDir.trim() || DEFAULT_PRESET_FRAME_DIR;
+      const report = await invoke<FrameInspection>("inspect_frame_directory", {
+        rootDir
+      });
+      setFrameInspection(report);
+      showToast(
+        report.valid
+          ? "预检通过：六个动作和容量都在限制内。"
+          : "预检发现缺项或图片问题，请按清单修正。",
+        report.valid ? "success" : "error"
+      );
+    } catch (err) {
+      setFrameInspection(null);
+      showToast(`预检失败：${formatError(err)}`, "error");
+    } finally {
+      setInspectingFrames(false);
+    }
+  }
+
   async function handleImportPreset() {
     setIsLoading(true);
     try {
@@ -1568,6 +1597,7 @@ function StudioApp() {
           await refreshList();
           setLocalError(null);
           setDisplayRetry(null);
+          setFrameInspection(null);
           setRepairPetId(null);
           setWorkshopTask("choose");
           showToast(`已更新「${updated.name}」的素材；显示/休息状态没有改变。`, "success");
@@ -1610,6 +1640,7 @@ function StudioApp() {
         await refreshList();
         setLocalError(null);
         setDisplayRetry(null);
+        setFrameInspection(null);
         setRepairPetId(null);
         setWorkshopTask("choose");
         showToast(`已更新「${updated.name}」的素材；显示/休息状态没有改变。`, "success");
@@ -2339,8 +2370,14 @@ function StudioApp() {
                   species={species}
                   onChangeSpecies={setSpecies}
                   presetDir={presetFrameDir}
-                  onChangePresetDir={setPresetFrameDir}
+                  onChangePresetDir={(value) => {
+                    setPresetFrameDir(value);
+                    setFrameInspection(null);
+                  }}
                   onImportPreset={handleImportPreset}
+                  frameInspection={frameInspection}
+                  inspectingFrames={inspectingFrames}
+                  onInspectFrames={handleInspectFrames}
                   manualFrames={manualFrames}
                   onChangeManualFrames={setManualFrames}
                   onSaveManualFrames={handleSaveManualFrames}

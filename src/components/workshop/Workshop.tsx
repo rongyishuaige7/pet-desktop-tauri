@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
-import { PET_ACTIONS, type ActionFrameSet, type PetAction, type PetSpecies } from "../../types";
+import { PET_ACTIONS, type ActionFrameSet, type FrameInspection, type PetAction, type PetSpecies } from "../../types";
 import { useToast } from "../ui/Toast";
 
 interface WorkshopProps {
@@ -15,6 +15,9 @@ interface WorkshopProps {
   presetDir: string;
   onChangePresetDir: (val: string) => void;
   onImportPreset: () => Promise<void>;
+  frameInspection: FrameInspection | null;
+  inspectingFrames: boolean;
+  onInspectFrames: () => Promise<void> | void;
   manualFrames: Partial<ActionFrameSet>;
   onChangeManualFrames: (frames: Partial<ActionFrameSet>) => void;
   onSaveManualFrames: () => Promise<void>;
@@ -49,6 +52,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
   presetDir,
   onChangePresetDir,
   onImportPreset,
+  frameInspection,
+  inspectingFrames,
+  onInspectFrames,
   manualFrames,
   onChangeManualFrames,
   onSaveManualFrames,
@@ -175,12 +181,20 @@ export const Workshop: React.FC<WorkshopProps> = ({
               />
             </div>
 
-            <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+            <div style={{ display: "flex", gap: "12px", marginTop: "8px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void onInspectFrames()}
+                disabled={busy || inspectingFrames}
+              >
+                {inspectingFrames ? "正在预检..." : "预检目录（只读）"}
+              </button>
               <button
                 type="button"
                 className="btn-primary"
                 onClick={onImportPreset}
-                disabled={busy}
+                disabled={busy || Boolean(frameInspection && !frameInspection.valid)}
               >
                 {isLoading
                   ? "正在导入..."
@@ -189,6 +203,73 @@ export const Workshop: React.FC<WorkshopProps> = ({
                     : "一键导入并保存到宠物架"}
               </button>
             </div>
+
+            {frameInspection && (
+              <div
+                className={`frame-inspection ${frameInspection.valid ? "is-valid" : "is-invalid"}`}
+                role="status"
+                aria-live="polite"
+              >
+                <div className="frame-inspection-head">
+                  <strong>
+                    {frameInspection.valid
+                      ? "预检通过：六个动作完整"
+                      : "预检发现需要修正的项目"}
+                  </strong>
+                  <span>
+                    {formatBytes(frameInspection.totalBytes)} 文件 /{" "}
+                    {formatBytes(frameInspection.decodedBytes)} 解码
+                  </span>
+                </div>
+                {frameInspection.thumbnail && (
+                  <img
+                    className="frame-inspection-thumb"
+                    src={frameInspection.thumbnail}
+                    alt="预检缩略图"
+                  />
+                )}
+                <div className="frame-inspection-actions">
+                  {frameInspection.actions.map((action) => {
+                    const label =
+                      PET_ACTIONS.find((entry) => entry.id === action.action)?.label ??
+                      action.action;
+                    return (
+                      <div
+                        key={action.action}
+                        className={`frame-inspection-action ${
+                          action.issues.length > 0 ? "has-issue" : ""
+                        }`}
+                      >
+                        <strong>{label}</strong>
+                        <span>
+                          {action.frames} / {action.minFrames}–{action.maxFrames} 帧
+                        </span>
+                        {action.issues.map((issue) => (
+                          <small key={issue}>{issue}</small>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+                {frameInspection.missingActions.length > 0 && (
+                  <p className="frame-inspection-note">
+                    缺少动作：
+                    {frameInspection.missingActions
+                      .map(
+                        (action) =>
+                          PET_ACTIONS.find((entry) => entry.id === action)?.label ??
+                          action
+                      )
+                      .join("、")}
+                  </p>
+                )}
+                {!frameInspection.valid && (
+                  <p className="frame-inspection-note">
+                    修正后重新预检；预检本身不会创建资料、切换伙伴或显示到桌面。
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -385,6 +466,12 @@ export const Workshop: React.FC<WorkshopProps> = ({
     </div>
   );
 };
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {

@@ -332,6 +332,17 @@ fn save_manual_frame_pack(
 }
 
 #[tauri::command]
+async fn inspect_frame_directory(root_dir: String) -> Result<native_pet::FrameInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let normalized = native_pet::normalize_frame_root(Some(root_dir));
+        let root = native_pet::resolve_frame_root(&normalized);
+        native_pet::inspect_frame_directory(&root)
+    })
+    .await
+    .map_err(|err| format!("预检任务失败：{err}"))?
+}
+
+#[tauri::command]
 fn load_preset_frame_pack(request: LoadPresetFramePackRequest) -> Result<PresetFramePack, String> {
     let root_dir = native_pet::normalize_frame_root(request.root_dir);
     let root = native_pet::resolve_frame_root(&root_dir);
@@ -464,6 +475,7 @@ pub fn run() {
             reset_native_pet_position,
             generate_minimax_image,
             upload_reference_image,
+            inspect_frame_directory,
             load_preset_frame_pack,
             save_manual_frame_pack
         ])

@@ -34,3 +34,22 @@ export const PET_CHANNEL = "desktop-sticker-pet-events";
 
 export type StudioTab = "stage" | "workshop" | "shelf";
 export type WorkshopTask = "choose" | "presets" | "import" | "frames" | "ai";
+
+export interface FrameInspectionAction {
+  action: PetAction;
+  frames: number;
+  minFrames: number;
+  maxFrames: number;
+  issues: string[];
+}
+
+export interface FrameInspection {
+  root: string;
+  actions: FrameInspectionAction[];
+  missingActions: PetAction[];
+  totalBytes: number;
+  decodedBytes: number;
+  valid: boolean;
+  issues: string[];
+  thumbnail: string | null;
+}

@@ -20,8 +20,8 @@ use stub as platform;
 
 pub(crate) use frame_pack::decode_frame;
 pub use frame_pack::{
-    encode_image_as_data_url, scan_action_frames, scan_pack, write_manual_frame_pack,
-    MIN_FRAMES_PER_ACTION,
+    encode_image_as_data_url, inspect_frame_directory, scan_action_frames, scan_pack,
+    write_manual_frame_pack, FrameInspection, MIN_FRAMES_PER_ACTION,
 };
 #[allow(unused_imports)]
 pub use model::{
