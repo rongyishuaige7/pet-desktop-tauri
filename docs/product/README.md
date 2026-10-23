@@ -101,7 +101,7 @@
 - 验证：46 项 Rust 测试、136 项前端单元测试、90 个隔离浏览器流程、生产构建通过。
 - 目录选择：接入官方 `tauri-plugin-dialog`，取消无副作用；工坊支持拖入目录，原生选择/拖入/手动路径共用只读预检。
 - 拖入回调增加 `disposed` 检查，离开导入页后迟到的拖入不会改路径。
-- 验证：93 个隔离浏览器流程、46 项 Rust 测试、136 项前端单元测试、生产构建通过。
+- 验证：93 个隔离浏览器流程、46 项 Rust 测试、136 项前端单元测试、生产构建通过；CI [39958636851](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39958636851) 通过。
 - 未完成：真实 macOS 文件对话框与 Finder 拖入的人工复核；A01 自动化实现完成，实机交互未标记通过。CI：[39955916196](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39955916196) 通过。CI：[39926572657](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39926572657) 通过。
 
 ## 首版决策
