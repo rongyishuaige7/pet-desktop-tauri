@@ -1,12 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ACTION_TIMING } from "../../config";
 import {
+  animationStatusText,
+  autonomousStatusText,
   canInteract,
   interactionHelp,
   reducedMotion,
   statusText
 } from "../../native-pet-state";
-import type { InteractionKind, NativePetState } from "../../native-pet-types";
+import type {
+  InteractionKind,
+  NativePetState,
+  SnoozeMinutes
+} from "../../native-pet-types";
 import { PET_ACTIONS, type PetAction, type PetProfile } from "../../types";
 import { CompanionControls } from "./CompanionControls";
 
@@ -31,7 +37,8 @@ interface CompanionPageProps {
   onSwitchAction: (action: PetAction) => void;
   onChangeZoom: (value: number) => void;
   onToggleVisibility: () => void;
-  onSnooze: () => void;
+  onSnooze: (minutes: SnoozeMinutes) => void;
+  onKeepHidden: () => void;
   onTogglePaused: () => void;
   onToggleAutonomous: () => void;
   onOpenSettings: () => void;
@@ -53,6 +60,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
   onChangeZoom,
   onToggleVisibility,
   onSnooze,
+  onKeepHidden,
   onTogglePaused,
   onToggleAutonomous,
   onOpenSettings,
@@ -138,6 +146,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
               showStatus={false}
               onToggleVisibility={onToggleVisibility}
               onSnooze={onSnooze}
+              onKeepHidden={onKeepHidden}
               onOpenSettings={onOpenSettings}
             />
           </div>
@@ -315,7 +324,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
               <label className="toggle-row" htmlFor="companion-paused">
                 <span>
                   <strong>暂停桌宠动画</strong>
-                  <small>伙伴留在原处，画面停下来</small>
+                  <small>{animationStatusText(state)}</small>
                 </span>
                 <input
                   id="companion-paused"
@@ -328,7 +337,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
               <label className="toggle-row" htmlFor="companion-autonomous">
                 <span>
                   <strong>自主活动</strong>
-                  <small>自动变换姿态，不移动桌面位置</small>
+                  <small>{autonomousStatusText(state)}</small>
                 </span>
                 <input
                   id="companion-autonomous"

@@ -12,6 +12,7 @@ const DB_NAME = "desktop-sticker-pet-db";
 const STORES = ["pet", "pets_collection", "metadata"];
 const ACTIVE_ID_KEY = "active_pet_id";
 const SELECTION_REVISION_KEY = "selection_revision_v1";
+const ONBOARDING_CHANNEL = "desktop-sticker-pet-onboarding";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -222,6 +223,23 @@ export async function setCurrentAction(action: PetAction, syncNative = true) {
   if (syncNative) await invoke("set_native_pet_action", { action });
 }
 
+export function notifyOnboardingChanged() {
+  if (typeof BroadcastChannel !== "undefined") {
+    const channel = new BroadcastChannel(ONBOARDING_CHANNEL);
+    channel.postMessage({ type: "onboarding-updated" });
+    channel.close();
+  }
+}
+
+export function subscribeOnboardingChanges(callback: () => void) {
+  if (typeof BroadcastChannel === "undefined") return () => {};
+  const channel = new BroadcastChannel(ONBOARDING_CHANNEL);
+  channel.onmessage = (event) => {
+    if (event.data?.type === "onboarding-updated") callback();
+  };
+  return () => channel.close();
+}
+
 export function notifyPetChanged() {
   if (typeof BroadcastChannel !== "undefined") {
     const channel = new BroadcastChannel(PET_CHANNEL);
@@ -296,6 +314,7 @@ export async function saveOnboardingRecord(record: OnboardingRecord): Promise<vo
       done();
     };
   });
+  notifyOnboardingChanged();
 }
 
 export interface AdoptionClaim {
@@ -327,7 +346,7 @@ export class OnboardingProgressError extends Error {
 export async function saveOnboardingProgress(
   record: OnboardingRecord
 ): Promise<OnboardingRecord> {
-  return transaction<OnboardingRecord>("readwrite", (tx, done, fail) => {
+  const saved = await transaction<OnboardingRecord>("readwrite", (tx, done, fail) => {
     const store = tx.objectStore("metadata");
     const current = store.get(ONBOARDING_KEY);
     current.onsuccess = () => {
@@ -371,6 +390,8 @@ export async function saveOnboardingProgress(
       done(next);
     };
   });
+  notifyOnboardingChanged();
+  return saved;
 }
 
 /**
@@ -389,6 +410,7 @@ export async function startNewAdoptionIntent(
     tx.objectStore("metadata").put(intent, ONBOARDING_KEY);
     done();
   });
+  notifyOnboardingChanged();
   return intent;
 }
 
@@ -399,7 +421,7 @@ export async function startNewAdoptionIntent(
 export async function confirmAdoptionDisplay(
   record: OnboardingRecord
 ): Promise<OnboardingRecord> {
-  return transaction<OnboardingRecord>("readwrite", (tx, done, fail) => {
+  const confirmed = await transaction<OnboardingRecord>("readwrite", (tx, done, fail) => {
     const store = tx.objectStore("metadata");
     const current = store.get(ONBOARDING_KEY);
     current.onsuccess = () => {
@@ -428,6 +450,8 @@ export async function confirmAdoptionDisplay(
       done(next);
     };
   });
+  notifyOnboardingChanged();
+  return confirmed;
 }
 
 /**
@@ -441,7 +465,7 @@ export async function claimAdoptionRecord(
   previousActivePetId: string | null,
   idFactory: () => string = () => crypto.randomUUID()
 ): Promise<AdoptionClaim> {
-  return transaction<AdoptionClaim>("readwrite", (tx, done, fail) => {
+  const claim = await transaction<AdoptionClaim>("readwrite", (tx, done, fail) => {
     const store = tx.objectStore("metadata");
     const current = store.get(ONBOARDING_KEY);
     current.onsuccess = () => {
@@ -498,6 +522,8 @@ export async function claimAdoptionRecord(
       done({ record: prepared, alreadyCommitted: false });
     };
   });
+  notifyOnboardingChanged();
+  return claim;
 }
 
 /**
@@ -548,4 +574,5 @@ export async function commitAdoptedPet(
   });
   localStorage.removeItem(STORAGE_KEY);
   notifyPetChanged();
+  notifyOnboardingChanged();
 }

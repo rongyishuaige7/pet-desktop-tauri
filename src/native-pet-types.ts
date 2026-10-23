@@ -1,6 +1,7 @@
 import type { PetAction } from "./types";
 
 export type VisibilityMode = "shown" | "hidden" | "snoozed";
+export type SnoozeMinutes = 15 | 30 | 60;
 export type MotionPreference = "system" | "reduce";
 export type Availability = "absent" | "loading" | "ready" | "error";
 export type InteractionKind = "pet" | "greet";
@@ -63,7 +64,7 @@ export interface NativeStateVersion {
 export type PreferenceRequest =
   | { kind: "show"; expectedPetId?: string; expectedState?: NativeStateVersion }
   | { kind: "hide" }
-  | { kind: "snooze"; expectedPetId?: string }
+  | { kind: "snooze"; durationMinutes?: SnoozeMinutes; expectedPetId?: string }
   | { kind: "setAnimationPaused"; value: boolean }
   | { kind: "setAutonomous"; value: boolean }
   | { kind: "setScale"; value: number }

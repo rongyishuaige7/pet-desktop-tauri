@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { NativePetState, PreferenceRequest } from "../../native-pet-types";
-import { reducedMotion } from "../../native-pet-state";
+import { motionPreferenceStatusText, reducedMotion } from "../../native-pet-state";
 import { useFocusTrap } from "../ui/useFocusTrap";
 
 interface PreferencesDrawerProps {
@@ -194,6 +194,7 @@ export const PreferencesDrawer: React.FC<PreferencesDrawerProps> = ({
               <option value="reduce">始终减少</option>
             </select>
           </div>
+          <p className="drawer-hint">{motionPreferenceStatusText(state)}</p>
 
           {!state.capabilities.systemReducedMotion && (
             <p className="drawer-hint">

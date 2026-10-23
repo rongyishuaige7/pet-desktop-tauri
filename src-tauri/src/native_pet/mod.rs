@@ -39,7 +39,8 @@ pub use state::{
     interaction_rejection, reduced_motion_active, target_conflict, AutostartState, Availability,
     Capabilities,
     InteractionKind, InteractionReason, InteractionResult, MotionPreference, NativePetState,
-    OperationError, PreferencesRequest, VisibilityMode, SNOOZE_DURATION_MS,
+    OperationError, PreferencesRequest, VisibilityMode, DEFAULT_SNOOZE_MINUTES,
+    SNOOZE_DURATIONS_MINUTES,
 };
 
 use std::path::PathBuf;
@@ -986,10 +987,24 @@ fn apply_preference(request: &PreferencesRequest) -> Result<bool, (String, Strin
             bump(&mut runtime);
             Ok(true)
         }
-        PreferencesRequest::Snooze { .. } => {
+        PreferencesRequest::Snooze {
+            duration_minutes, ..
+        } => {
+            let minutes = (*duration_minutes).unwrap_or(DEFAULT_SNOOZE_MINUTES);
+            let duration = state::snooze_duration_ms(minutes).ok_or_else(|| {
+                (
+                    "SNOOZE_DURATION_INVALID".to_string(),
+                    format!(
+                        "休息时长只能是 {}、{} 或 {} 分钟",
+                        SNOOZE_DURATIONS_MINUTES[0],
+                        SNOOZE_DURATIONS_MINUTES[1],
+                        SNOOZE_DURATIONS_MINUTES[2]
+                    ),
+                )
+            })?;
             let mut runtime = runtime().lock().map_err(|_| unavailable())?;
             runtime.visibility_mode = VisibilityMode::Snoozed;
-            runtime.snooze_until_ms = Some(state::now_ms().saturating_add(SNOOZE_DURATION_MS));
+            runtime.snooze_until_ms = Some(state::now_ms().saturating_add(duration));
             runtime.visible = false;
             runtime.next_behavior_at = None;
             bump(&mut runtime);

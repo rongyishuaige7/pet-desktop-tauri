@@ -2,7 +2,8 @@ import React from "react";
 import type { PetProfile } from "../../types";
 import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
 import { formatSnoozeTime } from "../../native-pet-state";
-import type { NativePetState } from "../../native-pet-types";
+import type { NativePetState, SnoozeMinutes } from "../../native-pet-types";
+import { SnoozeMenu } from "../stage/SnoozeMenu";
 
 interface PetShelfProps {
   pets: PetProfile[];
@@ -15,8 +16,8 @@ interface PetShelfProps {
   onDeletePet: (id: string) => Promise<void> | void;
   onRenamePet: (id: string, newName: string) => Promise<void> | void;
   onRecallPet: (pet: PetProfile) => Promise<void> | void;
-  onSnoozePet: (pet: PetProfile) => Promise<void> | void;
-  onAdjustSnooze: (pet: PetProfile) => Promise<void> | void;
+  onSnoozePet: (pet: PetProfile, minutes: SnoozeMinutes) => Promise<void> | void;
+  onKeepHiddenPet: (pet: PetProfile) => Promise<void> | void;
   onRetryDisplayPet: (petId: string) => Promise<void> | void;
   onRetryAssetPet: (petId: string) => Promise<void> | void;
   onResetPositionPet: (pet: PetProfile) => Promise<void> | void;
@@ -56,7 +57,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
   onRenamePet,
   onRecallPet,
   onSnoozePet,
-  onAdjustSnooze,
+  onKeepHiddenPet,
   onRetryDisplayPet,
   onRetryAssetPet,
   onResetPositionPet,
@@ -165,6 +166,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
             let status: CardStatus | null = null;
             let primary: CardAction;
             let secondary: CardAction | null = null;
+            let showSnoozeMenu = false;
 
             if (!isActive) {
               primary = { label: "派去桌面", run: () => onDeployPet(pet) };
@@ -211,7 +213,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                 tone: "snoozed"
               };
               primary = { label: "提前唤回", run: () => onRecallPet(pet) };
-              secondary = { label: "调整休息", run: () => onAdjustSnooze(pet) };
+              showSnoozeMenu = true;
             } else if (nativeState.visibilityMode === "hidden") {
               status = { label: "已收起", tone: "hidden" };
               primary = { label: "唤回伙伴", run: () => onRecallPet(pet) };
@@ -316,6 +318,19 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                     >
                       {pending ? "正在处理…" : primary.label}
                     </button>
+                    {showSnoozeMenu && (
+                      <SnoozeMenu
+                        snoozed
+                        compact
+                        busy={actionsDisabled}
+                        onSnooze={(minutes) =>
+                          void run(pet.id, () => onSnoozePet(pet, minutes))
+                        }
+                        onKeepHidden={() =>
+                          void run(pet.id, () => onKeepHiddenPet(pet))
+                        }
+                      />
+                    )}
                     {secondary && (
                       <button
                         type="button"

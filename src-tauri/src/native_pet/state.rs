@@ -80,6 +80,8 @@ pub enum PreferencesRequest {
     Snooze {
         #[serde(default)]
         expected_pet_id: Option<String>,
+        #[serde(default)]
+        duration_minutes: Option<u32>,
     },
     SetAnimationPaused {
         value: bool,
@@ -131,12 +133,11 @@ impl PreferencesRequest {
                 expected_pet_id: expected_pet_id.clone(),
                 expected_state: expected_state.clone(),
             },
-            Self::Snooze { expected_pet_id } | Self::ResetPosition { expected_pet_id } => {
-                RequestTarget {
-                    expected_pet_id: expected_pet_id.clone(),
-                    expected_state: None,
-                }
-            }
+            Self::Snooze { expected_pet_id, .. }
+            | Self::ResetPosition { expected_pet_id } => RequestTarget {
+                expected_pet_id: expected_pet_id.clone(),
+                expected_state: None,
+            },
             _ => RequestTarget::default(),
         }
     }
@@ -250,6 +251,18 @@ pub struct InteractionResult {
 /// Snooze longer than a week is treated as a corrupt timestamp.
 pub const MAX_SNOOZE_AHEAD_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 pub const SNOOZE_DURATION_MS: i64 = 60 * 60 * 1000;
+pub const DEFAULT_SNOOZE_MINUTES: u32 = 60;
+pub const SNOOZE_DURATIONS_MINUTES: [u32; 3] = [15, 30, 60];
+
+/// The interface may choose 15, 30 or 60 minutes; anything else is refused
+/// before the runtime is touched. The legacy request without a duration is 60.
+pub fn snooze_duration_ms(minutes: u32) -> Option<i64> {
+    match minutes {
+        15 | 30 => Some(i64::from(minutes) * 60_000),
+        60 => Some(SNOOZE_DURATION_MS),
+        _ => None,
+    }
+}
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -390,6 +403,49 @@ mod tests {
         assert!(valid_snooze_until(now - 1, now));
         assert!(!valid_snooze_until(0, now));
         assert!(!valid_snooze_until(now + MAX_SNOOZE_AHEAD_MS + 1, now));
+    }
+
+    #[test]
+    fn snooze_durations_are_limited_to_15_30_and_60_minutes() {
+        assert_eq!(snooze_duration_ms(15), Some(15 * 60_000));
+        assert_eq!(snooze_duration_ms(30), Some(30 * 60_000));
+        assert_eq!(snooze_duration_ms(60), Some(60 * 60_000));
+        for invalid in [0, 1, 14, 16, 45, 61, 120, u32::MAX] {
+            assert_eq!(snooze_duration_ms(invalid), None);
+        }
+    }
+
+    #[test]
+    fn snooze_requests_default_to_an_hour_and_reject_invalid_shapes() {
+        let legacy: PreferencesRequest =
+            serde_json::from_str(r#"{"kind":"snooze"}"#).unwrap();
+        match legacy {
+            PreferencesRequest::Snooze {
+                duration_minutes, ..
+            } => assert_eq!(duration_minutes, None),
+            _ => panic!("expected snooze"),
+        }
+        let thirty: PreferencesRequest =
+            serde_json::from_str(r#"{"kind":"snooze","durationMinutes":30}"#).unwrap();
+        match thirty {
+            PreferencesRequest::Snooze {
+                duration_minutes, ..
+            } => assert_eq!(duration_minutes, Some(30)),
+            _ => panic!("expected snooze"),
+        }
+        assert!(serde_json::from_str::<PreferencesRequest>(
+            r#"{"kind":"snooze","durationMinutes":-5}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<PreferencesRequest>(
+            r#"{"kind":"snooze","durationMinutes":999999999999}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<PreferencesRequest>(
+            r#"{"kind":"snooze","durationMinutes":"30"}"#
+        )
+        .is_err());
+        assert_eq!(snooze_duration_ms(0), None);
     }
 
     #[test]

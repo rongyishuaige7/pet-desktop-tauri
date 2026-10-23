@@ -478,6 +478,9 @@ struct TrayHandles {
     status: MenuItem<tauri::Wry>,
     visibility: MenuItem<tauri::Wry>,
     snooze: MenuItem<tauri::Wry>,
+    snooze_15: MenuItem<tauri::Wry>,
+    snooze_30: MenuItem<tauri::Wry>,
+    snooze_60: MenuItem<tauri::Wry>,
     animation: CheckMenuItem<tauri::Wry>,
     autonomous: CheckMenuItem<tauri::Wry>,
     reset: MenuItem<tauri::Wry>,
@@ -491,6 +494,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show_studio", "打开主界面", true, None::<&str>)?;
     let visibility_item = MenuItem::with_id(app, "toggle_visibility", "暂时收起", true, None::<&str>)?;
     let snooze_item = MenuItem::with_id(app, "toggle_snooze", "休息一小时", true, None::<&str>)?;
+    let snooze_15_item = MenuItem::with_id(app, "snooze_15", "15 分钟", true, None::<&str>)?;
+    let snooze_30_item = MenuItem::with_id(app, "snooze_30", "30 分钟", true, None::<&str>)?;
+    let snooze_60_item = MenuItem::with_id(app, "snooze_60", "60 分钟", true, None::<&str>)?;
+    let snooze_menu = SubmenuBuilder::new(app, "休息")
+        .item(&snooze_15_item)
+        .item(&snooze_30_item)
+        .item(&snooze_60_item)
+        .build()?;
     let autonomous_item = CheckMenuItem::with_id(
         app,
         "toggle_autonomous",
@@ -539,6 +550,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .item(&show_item)
         .item(&visibility_item)
         .item(&snooze_item)
+        .item(&snooze_menu)
         .separator()
         .item(&animation_item)
         .item(&autonomous_item)
@@ -555,6 +567,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             status: status_item,
             visibility: visibility_item,
             snooze: snooze_item,
+            snooze_15: snooze_15_item,
+            snooze_30: snooze_30_item,
+            snooze_60: snooze_60_item,
             animation: animation_item,
             autonomous: autonomous_item,
             reset: reset_item,
@@ -629,6 +644,9 @@ fn sync_tray(app: &tauri::AppHandle) {
     let _ = handles.autostart.set_checked(state.autostart.enabled);
     let _ = handles.visibility.set_enabled(has_pet);
     let _ = handles.snooze.set_enabled(has_pet && ready);
+    let _ = handles.snooze_15.set_enabled(has_pet && ready);
+    let _ = handles.snooze_30.set_enabled(has_pet && ready);
+    let _ = handles.snooze_60.set_enabled(has_pet && ready);
     let _ = handles.animation.set_enabled(has_pet);
     let _ = handles.autonomous.set_enabled(has_pet);
     let _ = handles.autostart.set_enabled(state.capabilities.autostart);
@@ -674,10 +692,32 @@ fn handle_tray_event(app: &tauri::AppHandle, id: &str) {
             } else {
                 native_pet::PreferencesRequest::Snooze {
                     expected_pet_id: None,
+                    duration_minutes: None,
                 }
             };
             native_pet::update_preferences(request).map(|_| ())
         }
+        "snooze_15" => native_pet::update_preferences(
+            native_pet::PreferencesRequest::Snooze {
+                expected_pet_id: None,
+                duration_minutes: Some(15),
+            },
+        )
+        .map(|_| ()),
+        "snooze_30" => native_pet::update_preferences(
+            native_pet::PreferencesRequest::Snooze {
+                expected_pet_id: None,
+                duration_minutes: Some(30),
+            },
+        )
+        .map(|_| ()),
+        "snooze_60" => native_pet::update_preferences(
+            native_pet::PreferencesRequest::Snooze {
+                expected_pet_id: None,
+                duration_minutes: Some(60),
+            },
+        )
+        .map(|_| ()),
         "toggle_animation" => native_pet::update_preferences(
             native_pet::PreferencesRequest::SetAnimationPaused {
                 value: !state.animation_paused,

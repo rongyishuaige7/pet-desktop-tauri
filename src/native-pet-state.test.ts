@@ -5,8 +5,14 @@ import {
   applyWebPreference,
   createWebState,
   expireWebSnooze,
+  animationStatusText,
+  autonomousStatusText,
   formatSnoozeTime,
+  isSnoozeMinutes,
   mergeStateEvent,
+  motionPreferenceStatusText,
+  snoozeDurationMs,
+  snoozeRemainingMinutes,
   pickNewestState,
   statusText,
   syncWebPet,
@@ -191,5 +197,88 @@ describe("status copy", () => {
     const hidden = applyWebPreference(state(), { kind: "hide" }, 1);
     expect(interactionHelp(hidden, false)).toContain("先唤回伙伴");
     expect(interactionHelp(state(), true)).toContain("网页演示");
+  });
+});
+
+describe("snooze durations and preference explanations", () => {
+  const now = 1_700_000_000_000;
+
+  it("applies 15, 30 and 60 minutes and keeps the legacy default", () => {
+    const base = state({ visibilityMode: "shown", snoozeUntilMs: null });
+    expect(applyWebPreference(base, { kind: "snooze", durationMinutes: 15 }, now).snoozeUntilMs)
+      .toBe(now + 15 * 60_000);
+    expect(applyWebPreference(base, { kind: "snooze", durationMinutes: 30 }, now).snoozeUntilMs)
+      .toBe(now + 30 * 60_000);
+    expect(applyWebPreference(base, { kind: "snooze", durationMinutes: 60 }, now).snoozeUntilMs)
+      .toBe(now + 60 * 60_000);
+    expect(applyWebPreference(base, { kind: "snooze" }, now).snoozeUntilMs)
+      .toBe(now + 60 * 60_000);
+    expect(isSnoozeMinutes(15)).toBe(true);
+    expect(isSnoozeMinutes(45)).toBe(false);
+    expect(snoozeDurationMs(30)).toBe(30 * 60_000);
+  });
+
+  it("refuses an invalid duration without changing the confirmed state", () => {
+    const base = state({ visibilityMode: "shown", snoozeUntilMs: null });
+    const invalid = applyWebPreference(
+      base,
+      { kind: "snooze", durationMinutes: 45 as never },
+      now
+    );
+    expect(invalid).toBe(base);
+  });
+
+  it("rounds remaining minutes up and reports zero after expiry", () => {
+    expect(snoozeRemainingMinutes(now + 60_000, now)).toBe(1);
+    expect(snoozeRemainingMinutes(now + 60_001, now)).toBe(2);
+    expect(snoozeRemainingMinutes(now, now)).toBe(0);
+    expect(snoozeRemainingMinutes(now - 1, now)).toBe(0);
+    expect(snoozeRemainingMinutes(null, now)).toBeNull();
+    const beforeMidnight = new Date("2026-10-22T23:50:00").getTime();
+    const afterMidnight = new Date("2026-10-23T00:05:00").getTime();
+    expect(snoozeRemainingMinutes(afterMidnight, beforeMidnight)).toBe(15);
+  });
+
+  it("explains the effective autonomous behaviour in priority order", () => {
+    const ready = state({
+      petId: "pet-a",
+      availability: "ready",
+      visible: true,
+      visibilityMode: "shown",
+      autonomous: true
+    });
+    expect(autonomousStatusText(ready)).toContain("会按节奏");
+    expect(autonomousStatusText({ ...ready, visibilityMode: "hidden", visible: false }))
+      .toBe("已开启，收起期间暂不切换姿态");
+    expect(autonomousStatusText({ ...ready, animationPaused: true }))
+      .toBe("已开启，动画暂停期间暂不切换姿态");
+    expect(autonomousStatusText({ ...ready, motionPreference: "reduce" }))
+      .toBe("已开启，当前因减少动态而暂停");
+    expect(autonomousStatusText({ ...ready, autonomous: false }))
+      .toBe("保持当前姿态，仍可手动互动");
+    expect(autonomousStatusText({ ...ready, availability: "error" }))
+      .toContain("等待素材或连接");
+  });
+
+  it("explains animation and motion preferences without rewriting them", () => {
+    const ready = state({
+      petId: "pet-a",
+      availability: "ready",
+      visible: true,
+      visibilityMode: "shown",
+      animationPaused: false,
+      motionPreference: "system",
+      systemReducedMotion: false
+    });
+    expect(animationStatusText(ready)).toBe("跟随系统，当前正常播放");
+    expect(animationStatusText({ ...ready, animationPaused: true, motionPreference: "reduce" }))
+      .toContain("关闭低动态不会自动恢复");
+    expect(animationStatusText({ ...ready, visibilityMode: "snoozed", visible: false }))
+      .toBe("收起或休息期间不播放动画");
+    expect(motionPreferenceStatusText(ready)).toContain("跟随系统，当前正常播放");
+    expect(motionPreferenceStatusText({ ...ready, motionPreference: "reduce" }))
+      .toContain("始终减少动态");
+    expect(motionPreferenceStatusText({ ...ready, systemReducedMotion: true }))
+      .toContain("系统当前已开启");
   });
 });

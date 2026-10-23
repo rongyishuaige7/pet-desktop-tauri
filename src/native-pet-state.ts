@@ -4,11 +4,32 @@ import type {
   InteractionReason,
   NativePetState,
   PreferenceRequest,
+  SnoozeMinutes,
   VisibilityMode
 } from "./native-pet-types";
 
 export const WEB_SESSION_ID = "web-demo";
 export const SNOOZE_DURATION_MS = 60 * 60 * 1000;
+export const SNOOZE_MINUTES: SnoozeMinutes[] = [15, 30, 60];
+
+export function isSnoozeMinutes(value: unknown): value is SnoozeMinutes {
+  return value === 15 || value === 30 || value === 60;
+}
+
+export function snoozeDurationMs(minutes: SnoozeMinutes = 60): number {
+  return minutes * 60 * 1000;
+}
+
+/** Minutes remaining, rounded up; null when there is no usable expiry. */
+export function snoozeRemainingMinutes(
+  untilMs: number | null,
+  now = Date.now()
+): number | null {
+  if (!untilMs || !Number.isFinite(untilMs)) return null;
+  const remaining = untilMs - now;
+  if (remaining <= 0) return 0;
+  return Math.max(1, Math.ceil(remaining / 60_000));
+}
 
 /** Newest event wins; a different session id always replaces an older process. */
 export function mergeStateEvent(
@@ -144,13 +165,18 @@ export function applyWebPreference(
     case "hide":
       next = { ...state, visibilityMode: "hidden", snoozeUntilMs: null };
       break;
-    case "snooze":
+    case "snooze": {
+      const minutes = request.durationMinutes ?? 60;
+      // The web adapter applies the same allow-list as Rust; an invalid
+      // duration leaves the confirmed state untouched.
+      if (!isSnoozeMinutes(minutes)) return state;
       next = {
         ...state,
         visibilityMode: "snoozed",
-        snoozeUntilMs: now + SNOOZE_DURATION_MS
+        snoozeUntilMs: now + snoozeDurationMs(minutes)
       };
       break;
+    }
     case "setAnimationPaused":
       next = { ...state, animationPaused: request.value };
       break;
@@ -272,6 +298,63 @@ export function statusText(state: NativePetState): string {
   if (reducedMotion(state)) return "安静陪着你 · 低动态";
   if (!state.autonomous) return "在桌面陪着你 · 固定姿态";
   return "正在桌面陪着你";
+}
+
+/** Explains what the animation toggle actually does right now. */
+export function animationStatusText(state: NativePetState): string {
+  if (!state.petId || state.availability !== "ready") {
+    return "等待素材或连接，暂不播放";
+  }
+  if (state.visibilityMode !== "shown" || !state.visible) {
+    return "收起或休息期间不播放动画";
+  }
+  if (state.animationPaused) {
+    return reducedMotion(state)
+      ? "已暂停；关闭低动态不会自动恢复播放"
+      : "已暂停；关闭后会恢复播放";
+  }
+  if (reducedMotion(state)) return "当前因减少动态而暂停";
+  return state.motionPreference === "system"
+    ? "跟随系统，当前正常播放"
+    : "正常播放";
+}
+
+/**
+ * Explains the effective autonomous behaviour without rewriting the user's
+ * preference. Order: material/connection, not shown, explicit pause,
+ * reduced motion, then the user's own off choice.
+ */
+export function autonomousStatusText(state: NativePetState): string {
+  if (!state.petId || state.availability !== "ready") {
+    return "等待素材或连接，暂不切换姿态";
+  }
+  if (state.visibilityMode !== "shown" || !state.visible) {
+    return state.autonomous
+      ? "已开启，收起期间暂不切换姿态"
+      : "保持当前姿态，仍可手动互动";
+  }
+  if (state.animationPaused) {
+    return state.autonomous
+      ? "已开启，动画暂停期间暂不切换姿态"
+      : "保持当前姿态，仍可手动互动";
+  }
+  if (reducedMotion(state)) {
+    return state.autonomous
+      ? "已开启，当前因减少动态而暂停"
+      : "保持当前姿态，仍可手动互动";
+  }
+  return state.autonomous
+    ? "已开启，会按节奏自动切换姿态"
+    : "保持当前姿态，仍可手动互动";
+}
+
+export function motionPreferenceStatusText(state: NativePetState): string {
+  if (state.motionPreference === "reduce") {
+    return "始终减少动态；关闭后不会自动恢复显式暂停。";
+  }
+  return state.systemReducedMotion
+    ? "跟随系统，系统当前已开启减少动态。"
+    : "跟随系统，当前正常播放。";
 }
 
 export function interactionHelp(state: NativePetState, webMode: boolean): string {

@@ -1344,6 +1344,62 @@ button {
   color: var(--text-tertiary);
 }
 
+/* Non-modal snooze duration picker */
+.snooze-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.snooze-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  min-width: 180px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.snooze-menu.is-compact .snooze-menu-popover {
+  right: 0;
+  left: auto;
+}
+
+.snooze-menu-title {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.snooze-menu-popover button {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.snooze-menu-popover button:hover:not(:disabled) {
+  background: rgba(45, 35, 25, 0.06);
+}
+
+.snooze-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-subtle);
+}
+
+.snooze-menu-keep {
+  color: var(--text-secondary);
+}
+
 /* Onboarding */
 .onboarding-backdrop {
   position: fixed;

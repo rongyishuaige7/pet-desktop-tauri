@@ -1,13 +1,16 @@
 import React from "react";
-import type { NativePetState } from "../../native-pet-types";
-import { statusText } from "../../native-pet-state";
+import type { NativePetState, SnoozeMinutes } from "../../native-pet-types";
+import { formatSnoozeTime, statusText } from "../../native-pet-state";
+import { useSnoozeRemaining } from "../../use-snooze-remaining";
+import { SnoozeMenu } from "./SnoozeMenu";
 
 interface CompanionControlsProps {
   state: NativePetState;
   webMode: boolean;
   busy?: boolean;
   onToggleVisibility: () => void;
-  onSnooze: () => void;
+  onSnooze: (minutes: SnoozeMinutes) => void;
+  onKeepHidden: () => void;
   onOpenSettings?: () => void;
   showStatus?: boolean;
 }
@@ -22,14 +25,16 @@ export const CompanionControls: React.FC<CompanionControlsProps> = ({
   busy = false,
   onToggleVisibility,
   onSnooze,
+  onKeepHidden,
   onOpenSettings,
   showStatus = true
 }) => {
-  const shown = state.visibilityMode === "shown";
   const snoozed = state.visibilityMode === "snoozed";
+  const shown = state.visibilityMode === "shown";
   const hasPet = Boolean(state.petId);
   const ready = state.availability === "ready";
   const disabled = busy || !hasPet || !ready;
+  const remaining = useSnoozeRemaining(state);
 
   return (
     <div className="section-card companion-controls" aria-label="陪伴控制">
@@ -52,17 +57,14 @@ export const CompanionControls: React.FC<CompanionControlsProps> = ({
           disabled={disabled}
           title={shown ? "隐藏桌面伙伴，但保留资料" : "把当前伙伴叫回桌面"}
         >
-          {shown ? "暂时收起" : "立即唤回"}
+          {snoozed ? "提前唤回" : shown ? "暂时收起" : "立即唤回"}
         </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={onSnooze}
-          disabled={disabled}
-          title={snoozed ? "提前结束休息并唤回伙伴" : "休息一小时，到期自动回来"}
-        >
-          {snoozed ? "提前唤回" : "休息一小时"}
-        </button>
+        <SnoozeMenu
+          snoozed={snoozed}
+          busy={disabled}
+          onSnooze={onSnooze}
+          onKeepHidden={onKeepHidden}
+        />
         {onOpenSettings && (
           <button type="button" className="btn-secondary" onClick={onOpenSettings}>
             ⚙️ 偏好设置
@@ -72,11 +74,11 @@ export const CompanionControls: React.FC<CompanionControlsProps> = ({
 
       <p className="companion-control-note">
         收起不会移除伙伴。你随时可以从菜单栏 / 托盘找回它。
-        {state.pending && " 正在同步…"}
       </p>
-      {state.visibilityMode === "snoozed" && state.snoozeUntilMs && (
+      {snoozed && state.snoozeUntilMs && (
         <p className="companion-control-note">
-          休息期间不播放动画，也不会自己醒来；到期后只恢复当前健康的伙伴。
+          到 {formatSnoozeTime(state.snoozeUntilMs)} 自动回来
+          {remaining !== null ? ` · 约剩 ${remaining} 分钟` : ""}。到期由系统处理，不会自动恢复已暂停的动画。
         </p>
       )}
     </div>

@@ -22,6 +22,7 @@ import {
   renamePet,
   updatePetAction,
   subscribePetChanges,
+  subscribeOnboardingChanges,
   isCollectionInitialized,
   loadOnboardingRecord,
   loadSelectionRevision,
@@ -70,7 +71,7 @@ import {
   type ActivationResult,
   type DisplayRetryContext
 } from "./pet-activation";
-import type { InteractionKind, PreferenceRequest } from "./native-pet-types";
+import type { InteractionKind, PreferenceRequest, SnoozeMinutes } from "./native-pet-types";
 import "./styles.css";
 
 const isTauri = typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ !== undefined;
@@ -128,6 +129,8 @@ function StudioApp() {
   const nameEditSeqRef = useRef(0);
   const intentWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const activePetRef = useRef<PetProfile | null>(null);
+  const onboardingRef = useRef<OnboardingRecord | null>(null);
+  onboardingRef.current = onboarding;
   const native = useNativePet({
     isTauri,
     pet: activePet,
@@ -589,6 +592,23 @@ function StudioApp() {
     });
     init.catch((err) => { if (!cancelled) showToast(`加载宠物失败：${formatError(err)}`, "error"); });
 
+    const unsubscribeOnboarding = subscribeOnboardingChanges(() => {
+      void serial(async () => {
+        if (cancelled) return;
+        const latest = await loadOnboardingRecord().catch(() => null);
+        const record = latest?.record;
+        const current = onboardingRef.current;
+        if (!record || !current || record.intentId !== current.intentId) return;
+        const finished =
+          record.state === "completed" ||
+          (record.phase === "committed" && record.displayConfirmed);
+        if (!finished) return;
+        setOnboarding(record);
+        setAdoptionDisplayPending(false);
+        setOnboardingOpen(record.state !== "completed");
+      }).catch(() => undefined);
+    });
+
     const unsubscribe = subscribePetChanges(() => {
       void serial(async () => {
         if (cancelled) return;
@@ -609,6 +629,7 @@ function StudioApp() {
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeOnboarding();
       unlistenError?.then((fn) => fn()).catch(() => undefined);
     };
   }, [showToast]);
@@ -746,23 +767,24 @@ function StudioApp() {
     }
   }
 
-  async function handleSnooze() {
-    if (native.state.visibilityMode === "snoozed") {
-      try {
-        await applyPreference({
-          kind: "show",
-          expectedPetId: activePetRef.current?.id
-        });
-        showToast("已提前唤回伙伴。", "success");
-      } catch {
-        // Reported by applyPreference.
-      }
-      return;
-    }
+  async function handleSnooze(minutes: SnoozeMinutes = 60) {
     try {
-      const next = await applyPreference({ kind: "snooze" });
-      const until = next?.snoozeUntilMs ?? Date.now() + 60 * 60 * 1000;
+      const next = await applyPreference({
+        kind: "snooze",
+        durationMinutes: minutes,
+        expectedPetId: activePetRef.current?.id
+      });
+      const until = next?.snoozeUntilMs ?? Date.now() + minutes * 60 * 1000;
       showToast(`伙伴休息到 ${formatSnoozeTime(until)}，到时自动回来。`, "success");
+    } catch {
+      // Reported by applyPreference.
+    }
+  }
+
+  async function handleKeepHidden() {
+    try {
+      await applyPreference({ kind: "hide" });
+      showToast("已保持收起，休息到期已取消。", "success");
     } catch {
       // Reported by applyPreference.
     }
@@ -1654,15 +1676,19 @@ function StudioApp() {
     announceActivation(result, `已把「${pet.name}」带回桌面。`);
   }
 
-  async function handleSnoozePet(pet: PetProfile, adjust: boolean) {
-    const next = await applyPreference({ kind: "snooze", expectedPetId: pet.id });
-    const until = next?.snoozeUntilMs ?? Date.now() + 60 * 60 * 1000;
-    showToast(
-      adjust
-        ? `已从现在的时刻重新计时，休息到 ${formatSnoozeTime(until)}。`
-        : `「${pet.name}」休息到 ${formatSnoozeTime(until)}，到时自动回来。`,
-      "success"
-    );
+  async function handleSnoozePet(pet: PetProfile, minutes: SnoozeMinutes) {
+    const next = await applyPreference({
+      kind: "snooze",
+      durationMinutes: minutes,
+      expectedPetId: pet.id
+    });
+    const until = next?.snoozeUntilMs ?? Date.now() + minutes * 60 * 1000;
+    showToast(`「${pet.name}」休息到 ${formatSnoozeTime(until)}，到时自动回来。`, "success");
+  }
+
+  async function handleKeepHiddenPet(pet: PetProfile) {
+    await applyPreference({ kind: "hide" });
+    showToast(`「${pet.name}」已保持收起，休息到期已取消。`, "success");
   }
 
   async function handleResetPositionPet(pet: PetProfile) {
@@ -1963,7 +1989,8 @@ function StudioApp() {
             onSwitchAction={handleSwitchAction}
             onChangeZoom={handleZoomChange}
             onToggleVisibility={() => void handleToggleVisibility()}
-            onSnooze={() => void handleSnooze()}
+            onSnooze={(minutes) => void handleSnooze(minutes)}
+            onKeepHidden={() => void handleKeepHidden()}
             onTogglePaused={() => void handleToggleNativePaused()}
             onToggleAutonomous={() => handleToggleAutonomous(!native.state.autonomous)}
             onOpenSettings={handleOpenSettings}
@@ -2063,8 +2090,8 @@ function StudioApp() {
             onDeletePet={handleDeletePet}
             onRenamePet={handleRenamePet}
             onRecallPet={handleRecallPet}
-            onSnoozePet={(pet) => handleSnoozePet(pet, false)}
-            onAdjustSnooze={(pet) => handleSnoozePet(pet, true)}
+            onSnoozePet={handleSnoozePet}
+            onKeepHiddenPet={handleKeepHiddenPet}
             onRetryDisplayPet={handleRetryDisplayPet}
             onRetryAssetPet={handleRetryAssetPet}
             onResetPositionPet={handleResetPositionPet}

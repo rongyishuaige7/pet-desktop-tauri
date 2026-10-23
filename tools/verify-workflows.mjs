@@ -12,6 +12,7 @@ const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function openCompanionDetails(page){const details=page.locator('.companion-details');if(await details.count()&&!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
 async function deleteCard(card){await card.locator('.pet-card-more > summary').click();await card.getByRole('button',{name:'移除宠物',exact:true}).click();}
 async function joinOrAdopt(page){const adopt=page.getByRole('button',{name:'领养并入住',exact:true});if(await adopt.count()){await adopt.click();return;}const finish=page.getByRole('button',{name:'完成见面',exact:true});if(await finish.count())await finish.click();}
+async function chooseSnooze(scope,minutes=60){await scope.getByRole('button',{name:/^(休息…|调整休息…)$/}).click();await scope.getByRole('menuitem',{name:`${minutes} 分钟`,exact:true}).click();}
 async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0,nativeMode='shown',viewport={width:1120,height:760}}={}) {
  const context=await browser.newContext({viewport});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
@@ -83,7 +84,14 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      }
      if(r.kind==='show'){n.visibilityMode='shown';n.snoozeUntilMs=null;n.actionRevision++;}
      if(r.kind==='hide'){n.visibilityMode='hidden';n.snoozeUntilMs=null;}
-     if(r.kind==='snooze'){n.visibilityMode='snoozed';n.snoozeUntilMs=Date.now()+3600000;}
+     if(r.kind==='snooze'){
+      if(r.durationMinutes!==undefined&&![15,30,60].includes(r.durationMinutes)){
+       n.lastOperationError={id:'mock-snooze-error',operation:'snooze',code:'SNOOZE_DURATION_INVALID',recoverable:true};
+       await state.emitNative();
+       throw new Error('SNOOZE_DURATION_INVALID: mock invalid duration');
+      }
+      n.visibilityMode='snoozed';n.snoozeUntilMs=Date.now()+(r.durationMinutes??60)*60000;
+     }
      if(r.kind==='setAnimationPaused')n.animationPaused=r.value;
      if(r.kind==='setAutonomous')n.autonomous=r.value;
      if(r.kind==='setScale')n.scale=r.value;
@@ -396,7 +404,7 @@ await record('visibility_snooze_and_pause_controls',async()=>{
   await controls.getByRole('button',{name:'立即唤回',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('正在桌面陪着你'));
   const shown=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,visible:window.__review.native.visible}));
-  await controls.getByRole('button',{name:'休息一小时',exact:true}).click();
+  await chooseSnooze(controls,60);
   await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent.includes('休息中'));
   const snoozed=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,visible:window.__review.native.visible}));
   await controls.getByRole('button',{name:'提前唤回',exact:true}).click();
@@ -783,7 +791,7 @@ await record('delete_active_pet_while_snoozed_keeps_expiry',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{
   await seed(page,{desktop:true,active:'A'});
-  await page.locator('.companion-control-buttons').getByRole('button',{name:'休息一小时',exact:true}).click();
+  await chooseSnooze(page.locator('.companion-control-buttons'),60);
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
   const before=await page.evaluate(()=>({until:window.__review.native.snoozeUntilMs}));
   await page.getByRole('button',{name:/我的伙伴/}).click();
@@ -1037,10 +1045,13 @@ await record('stale_meet_completion_does_not_overwrite_new_draft',async()=>{
   await second.keyboard.press('Tab');
   await second.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadOnboardingRecord()).record?.draftName==='乙';});
   const before=await second.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
-  await page.getByRole('button',{name:'完成见面',exact:true}).click();
+  const finishButton=page.getByRole('button',{name:'完成见面',exact:true});
+  const staleStillOpen=await finishButton.count()>0;
+  if(staleStillOpen)await finishButton.click();
   await page.waitForTimeout(500);
-  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent};});
-  return {passed:before?.draftName==='乙'&&after.record?.intentId===before?.intentId&&after.record?.draftName==='乙'&&after.record?.state==='in_progress'&&Boolean(after.error)&&errors.length===0,before,after,errors};
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {record:(await s.loadOnboardingRecord()).record,error:document.querySelector('.onboarding-error')?.textContent,title:document.querySelector('#onboarding-title')?.textContent,dialog:Boolean(document.querySelector('.onboarding-dialog'))};});
+  const handled=staleStillOpen?Boolean(after.error):!after.dialog;
+  return {passed:before?.draftName==='乙'&&after.record?.intentId===before?.intentId&&after.record?.draftName==='乙'&&after.record?.state==='in_progress'&&handled&&errors.length===0,before,after,staleStillOpen,handled,errors};
  }finally{await context.close();}
 });
 await record('shelf_deploy_show_failure_does_not_report_success',async()=>{
@@ -1201,12 +1212,12 @@ await record('compact_first_screen_controls_are_reachable',async()=>{
   const inView=(r)=>Boolean(r)&&r.top>=-0.5&&r.left>=-0.5&&r.bottom<=620.5&&r.right<=840.5;
   const buttonsOk=(state)=>state.buttons.length===3&&state.buttons.every(button=>inView(button)&&button.width>=40&&button.height>=40);
   const normal=await measure();
-  const normalOk=inView(normal.status)&&inView(normal.bar)&&buttonsOk(normal)&&normal.buttons.some(button=>button.text==='暂时收起')&&normal.buttons.some(button=>button.text==='休息一小时')&&normal.buttons.some(button=>button.text.includes('偏好设置'))&&normal.scrollTop===0&&normal.bars===1&&normal.scrollWidth<=normal.clientWidth;
+  const normalOk=inView(normal.status)&&inView(normal.bar)&&buttonsOk(normal)&&normal.buttons.some(button=>button.text==='暂时收起')&&normal.buttons.some(button=>button.text==='休息…')&&normal.buttons.some(button=>button.text.includes('偏好设置'))&&normal.scrollTop===0&&normal.bars===1&&normal.scrollWidth<=normal.clientWidth;
   await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
   const hidden=await measure();
   const hiddenOk=inView(hidden.status)&&buttonsOk(hidden)&&hidden.buttons.some(button=>button.text==='立即唤回')&&hidden.scrollTop===0;
-  await page.locator('.companion-control-buttons').getByRole('button',{name:'休息一小时',exact:true}).click();
+  await chooseSnooze(page.locator('.companion-control-buttons'),60);
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
   const snoozed=await measure();
   const snoozedOk=inView(snoozed.status)&&buttonsOk(snoozed)&&snoozed.buttons.some(button=>button.text==='提前唤回')&&snoozed.scrollTop===0;
@@ -1275,17 +1286,17 @@ await record('shelf_current_card_actions_follow_state',async()=>{
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='shown');
   const recalled=await read();
   await page.getByRole('button',{name:'回到陪伴',exact:true}).click();
-  await page.locator('.companion-control-buttons').getByRole('button',{name:'休息一小时',exact:true}).click();
+  await chooseSnooze(page.locator('.companion-control-buttons'),60);
   await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
   await page.getByRole('button',{name:/我的伙伴/}).click();
   const snoozed=await read();
   await page.screenshot({path:join(evidenceDir,'c02-shelf-actions.png')});
   const untilBefore=await page.evaluate(()=>window.__review.native.snoozeUntilMs);
-  await card.getByRole('button',{name:'调整休息',exact:true}).click();
+  await chooseSnooze(card,30);
   await page.waitForTimeout(300);
   const adjusted=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)}));
   const noDuplicate=snoozed.buttons.filter(text=>text?.includes('唤回')).length===1&&!snoozed.buttons.includes('立即唤回');
-  return {passed:shown.status?.includes('显示中')&&shown.primary==='回到陪伴'&&onStage&&hidden.status?.includes('已收起')&&hidden.primary==='唤回伙伴'&&recalled.status?.includes('显示中')&&snoozed.status?.includes('休息中')&&snoozed.primary==='提前唤回'&&snoozed.secondary==='调整休息'&&noDuplicate&&adjusted.mode==='snoozed'&&adjusted.until>untilBefore&&adjusted.toasts.some(text=>text?.includes('重新计时'))&&errors.length===0,shown,hidden,recalled,snoozed,noDuplicate,untilBefore,adjusted,errors};
+  return {passed:shown.status?.includes('显示中')&&shown.primary==='回到陪伴'&&onStage&&hidden.status?.includes('已收起')&&hidden.primary==='唤回伙伴'&&recalled.status?.includes('显示中')&&snoozed.status?.includes('休息中')&&snoozed.primary==='提前唤回'&&snoozed.secondary==='调整休息…'&&noDuplicate&&adjusted.mode==='snoozed'&&adjusted.until<untilBefore&&adjusted.until>Date.now()&&adjusted.toasts.some(text=>text?.includes('休息到'))&&errors.length===0,shown,hidden,recalled,snoozed,noDuplicate,untilBefore,adjusted,errors};
  }finally{await context.close();}
 });
 await record('shelf_current_card_recall_and_retry_stay_on_shelf',async()=>{
@@ -1359,6 +1370,97 @@ await record('shelf_position_recovery_does_not_wake_hidden_pet',async()=>{
   await card.locator('.pet-card-more > summary').click();
   const hiddenWhenUnsupported=await card.getByRole('button',{name:'找回位置',exact:true}).count()===0;
   return {passed:offered&&after.mode==='hidden'&&after.visible===false&&after.resetCalls===1&&after.toasts.some(text=>text?.includes('显示或休息状态没有改变'))&&hiddenWhenUnsupported&&errors.length===0,offered,after,hiddenWhenUnsupported,errors};
+ }finally{await context.close();}
+});
+await record('snooze_menu_durations_and_keyboard',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  const controls=page.locator('.companion-control-buttons');
+  await controls.getByRole('button',{name:'休息…',exact:true}).click();
+  const menuVisible=await page.getByRole('menu',{name:'选择休息时长'}).isVisible();
+  const before=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs}));
+  await page.keyboard.press('Escape');
+  const menuClosed=await page.getByRole('menu').count()===0;
+  const focusRestored=await page.evaluate(()=>document.activeElement?.textContent?.trim()==='休息…');
+  const unchanged=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs}));
+  await controls.getByRole('button',{name:'休息…',exact:true}).click();
+  await page.getByRole('menuitem',{name:'15 分钟',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
+  const fifteen=await page.evaluate(()=>({until:window.__review.native.snoozeUntilMs,now:Date.now(),status:document.querySelector('.status-chip')?.textContent,note:[...document.querySelectorAll('.companion-control-note')].map(node=>node.textContent).join(' ')}));
+  await controls.getByRole('button',{name:'调整休息…',exact:true}).click();
+  const keepVisible=await page.getByRole('menuitem',{name:'保持收起',exact:true}).isVisible();
+  await page.getByRole('menuitem',{name:'30 分钟',exact:true}).click();
+  await page.waitForTimeout(200);
+  const thirty=await page.evaluate(()=>({until:window.__review.native.snoozeUntilMs,now:Date.now()}));
+  await controls.getByRole('button',{name:'调整休息…',exact:true}).click();
+  await page.getByRole('menuitem',{name:'保持收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  const kept=await page.evaluate(()=>({mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs,status:document.querySelector('.status-chip')?.textContent,buttons:[...document.querySelectorAll('.companion-control-buttons button')].map(button=>button.textContent?.trim())}));
+  await controls.getByRole('button',{name:'休息…',exact:true}).click();
+  await page.waitForFunction(()=>document.activeElement?.textContent?.trim()==='15 分钟');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
+  const keyboard=await page.evaluate(()=>({until:window.__review.native.snoozeUntilMs,now:Date.now()}));
+  return {passed:menuVisible&&before.mode==='shown'&&before.until===null&&menuClosed&&focusRestored&&unchanged.mode==='shown'&&unchanged.until===null&&fifteen.status?.includes('休息中')&&fifteen.note.includes('约剩 15 分钟')&&fifteen.until-fifteen.now>=14*60000&&fifteen.until-fifteen.now<=15*60000&&keepVisible&&thirty.until-thirty.now>=29*60000&&thirty.until-thirty.now<=30*60000&&kept.mode==='hidden'&&kept.until===null&&kept.status?.includes('已收起')&&kept.buttons.includes('立即唤回')&&!kept.buttons.includes('提前唤回')&&keyboard.until-keyboard.now>=14*60000&&keyboard.until-keyboard.now<=15*60000&&errors.length===0,menuVisible,before,menuClosed,focusRestored,unchanged,fifteen,keepVisible,thirty,kept,keyboard,errors};
+ }finally{await context.close();}
+});
+await record('snooze_remaining_does_not_write_native',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await chooseSnooze(page.locator('.companion-control-buttons'),15);
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='snoozed');
+  const before=await page.evaluate(()=>window.__review.calls.filter(call=>call.cmd==='update_native_pet_preferences').length);
+  await page.waitForTimeout(2500);
+  const after=await page.evaluate(()=>({writes:window.__review.calls.filter(call=>call.cmd==='update_native_pet_preferences').length,note:[...document.querySelectorAll('.companion-control-note')].map(node=>node.textContent).join(' ')}));
+  return {passed:after.writes===before&&after.note.includes('约剩')&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('snooze_legacy_call_defaults_to_an_hour',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  const result=await page.evaluate(async()=>{
+   await window.__TAURI_INTERNALS__.invoke('update_native_pet_preferences',{request:{kind:'snooze'}});
+   return {until:window.__review.native.snoozeUntilMs,now:Date.now(),mode:window.__review.native.visibilityMode};
+  });
+  const invalid=await page.evaluate(async()=>{
+   const before={mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs};
+   try{
+    await window.__TAURI_INTERNALS__.invoke('update_native_pet_preferences',{request:{kind:'snooze',durationMinutes:45}});
+    return {rejected:false,before};
+   }catch(error){
+    return {rejected:true,message:String(error),before,after:{mode:window.__review.native.visibilityMode,until:window.__review.native.snoozeUntilMs}};
+   }
+  });
+  return {passed:result.mode==='snoozed'&&result.until-result.now>=59*60000&&result.until-result.now<=60*60000&&invalid.rejected&&invalid.message.includes('SNOOZE_DURATION_INVALID')&&invalid.after.mode===invalid.before.mode&&invalid.after.until===invalid.before.until&&errors.length===0,result,invalid,errors};
+ }finally{await context.close();}
+});
+await record('preference_explanations_follow_actual_state',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  const read=()=>page.locator('.companion-toggles').innerText();
+  const initial=await read();
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>window.__review.native.animationPaused===true);
+  const paused=await read();
+  await page.locator('.sidebar-settings').click();
+  await page.locator('#settings-motion').selectOption('reduce');
+  await page.waitForFunction(()=>window.__review.native.motionPreference==='reduce');
+  await page.keyboard.press('Escape');
+  const reducedPaused=await read();
+  await page.locator('#companion-paused').click();
+  await page.waitForFunction(()=>window.__review.native.animationPaused===false);
+  const reducedOnly=await read();
+  await page.locator('.companion-control-buttons').getByRole('button',{name:'暂时收起',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.native.visibilityMode==='hidden');
+  const hidden=await read();
+  await page.locator('#companion-autonomous').click();
+  await page.waitForFunction(()=>window.__review.native.autonomous===false);
+  const autonomousOff=await read();
+  return {passed:initial.includes('已开启，会按节奏自动切换姿态')&&initial.includes('跟随系统，当前正常播放')&&paused.includes('已开启，动画暂停期间暂不切换姿态')&&paused.includes('已暂停；关闭后会恢复播放')&&reducedPaused.includes('已开启，动画暂停期间暂不切换姿态')&&reducedPaused.includes('已暂停；关闭低动态不会自动恢复播放')&&reducedOnly.includes('已开启，当前因减少动态而暂停')&&reducedOnly.includes('当前因减少动态而暂停')&&hidden.includes('已开启，收起期间暂不切换姿态')&&hidden.includes('收起或休息期间不播放动画')&&autonomousOff.includes('保持当前姿态，仍可手动互动')&&errors.length===0,initial,paused,reducedPaused,reducedOnly,hidden,autonomousOff,errors};
  }finally{await context.close();}
 });
 }finally{
