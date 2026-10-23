@@ -99,7 +99,7 @@
 - 工坊导入任务新增“预检目录（只读）”；无效时禁用导入，路径变化清空报告。
 - 回归修正：0–4 帧统一判为不足；超过 60 帧保留真实数量并继续统计；全局容量原因显示；路径变化使旧预检结果/错误/pending 失效。
 - 验证：46 项 Rust 测试、136 项前端单元测试、90 个隔离浏览器流程、生产构建通过。
-- 未完成：原生目录选择对话框、拖入、取消路径；A01 仍为部分完成。CI：[39926572657](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39926572657) 通过。
+- 未完成：原生目录选择对话框、拖入、取消路径；A01 仍为部分完成。CI：[39940466677](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39940466677) 通过。CI：[39926572657](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39926572657) 通过。
 
 ## 首版决策
 
