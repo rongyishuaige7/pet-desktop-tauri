@@ -621,6 +621,22 @@ fn status_text(state: &native_pet::NativePetState) -> &'static str {
     }
 }
 
+fn tray_visibility_label(mode: native_pet::VisibilityMode) -> &'static str {
+    match mode {
+        native_pet::VisibilityMode::Shown => "暂时收起",
+        native_pet::VisibilityMode::Snoozed => "提前唤回",
+        native_pet::VisibilityMode::Hidden => "立即唤回",
+    }
+}
+
+fn tray_snooze_label(mode: native_pet::VisibilityMode) -> &'static str {
+    if mode == native_pet::VisibilityMode::Snoozed {
+        "保持收起"
+    } else {
+        "休息一小时"
+    }
+}
+
 fn sync_tray(app: &tauri::AppHandle) {
     let Some(handles) = TRAY.lock().ok().and_then(|tray| tray.clone()) else {
         return;
@@ -632,20 +648,14 @@ fn sync_tray(app: &tauri::AppHandle) {
         .unwrap_or_else(|| "贴贴宠物".to_string());
     let status = status_text(&state);
     let _ = handles.status.set_text(format!("{name} · {status}"));
-    let _ = handles.visibility.set_text(if state.visibility_mode
-        == native_pet::VisibilityMode::Shown
-    {
-        "暂时收起"
-    } else {
-        "立即唤回"
-    });
-    let _ = handles.snooze.set_text(if state.visibility_mode
-        == native_pet::VisibilityMode::Snoozed
-    {
-        "立即唤回"
-    } else {
-        "休息一小时"
-    });
+    let _ = handles
+        .visibility
+        .set_text(tray_visibility_label(state.visibility_mode));
+    // When snoozed, the legacy one-hour item becomes the single explicit
+    // keep-hidden action; the 15/30/60 submenu remains for adjusting rest.
+    let _ = handles
+        .snooze
+        .set_text(tray_snooze_label(state.visibility_mode));
     let has_pet = state.pet_id.is_some();
     let ready = state.availability == native_pet::Availability::Ready;
     let _ = handles.animation.set_checked(!state.animation_paused);
@@ -694,10 +704,9 @@ fn handle_tray_event(app: &tauri::AppHandle, id: &str) {
         }
         "toggle_snooze" => {
             let request = if state.visibility_mode == native_pet::VisibilityMode::Snoozed {
-                native_pet::PreferencesRequest::Show {
-                    expected_pet_id: None,
-                    expected_state: None,
-                }
+                // Snoozed: keep hidden and clear the expiry. The visibility
+                // item is the single recall action.
+                native_pet::PreferencesRequest::Hide
             } else {
                 native_pet::PreferencesRequest::Snooze {
                     expected_pet_id: None,
@@ -772,5 +781,34 @@ fn show_studio_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_offers_one_recall_and_one_keep_hidden_when_snoozed() {
+        assert_eq!(
+            tray_visibility_label(native_pet::VisibilityMode::Snoozed),
+            "提前唤回"
+        );
+        assert_eq!(
+            tray_snooze_label(native_pet::VisibilityMode::Snoozed),
+            "保持收起"
+        );
+        assert_eq!(
+            tray_visibility_label(native_pet::VisibilityMode::Hidden),
+            "立即唤回"
+        );
+        assert_eq!(
+            tray_snooze_label(native_pet::VisibilityMode::Hidden),
+            "休息一小时"
+        );
+        assert_eq!(
+            tray_visibility_label(native_pet::VisibilityMode::Shown),
+            "暂时收起"
+        );
     }
 }
