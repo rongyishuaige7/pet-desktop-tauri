@@ -31,8 +31,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
       <div className="toast-container">
         {toasts.map((toast) => (
-          <div key={toast.id} className={`toast-message ${toast.type}`}>
-            <span>{toast.type === "success" ? "✨" : toast.type === "error" ? "⚠️" : "💬"}</span>
+          <div
+            key={toast.id}
+            className={`toast-message ${toast.type}`}
+            role={toast.type === "error" ? "alert" : "status"}
+            aria-live={toast.type === "error" ? "assertive" : "polite"}
+          >
+            <span aria-hidden="true">
+              {toast.type === "success" ? "✨" : toast.type === "error" ? "⚠️" : "💬"}
+            </span>
             <span>{toast.message}</span>
           </div>
         ))}

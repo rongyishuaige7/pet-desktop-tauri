@@ -83,6 +83,14 @@ fn set_native_pet_scale(scale: f64) -> Result<native_pet::NativePetState, String
 }
 
 #[tauri::command]
+fn hide_studio_window(app: tauri::AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("studio") else {
+        return Err("主窗口不可用".to_string());
+    };
+    window.hide().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn get_native_pet_settings() -> native_pet::NativePetSettings {
     native_pet::current_settings()
 }
@@ -452,6 +460,7 @@ pub fn run() {
             set_native_pet_scale,
             set_native_pet_visible,
             get_native_pet_settings,
+            hide_studio_window,
             reset_native_pet_position,
             generate_minimax_image,
             upload_reference_image,

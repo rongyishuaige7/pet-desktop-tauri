@@ -24,7 +24,8 @@ interface PetShelfProps {
   onShowRecovery: () => void;
   onGoToCompanion: () => void;
   onStartAdoption: () => void;
-  onGoToWorkshop: () => void;
+  onCreatePet: () => void;
+  onImportPet: () => void;
 }
 
 type CardTone = "live" | "hidden" | "snoozed" | "warning" | "syncing";
@@ -64,7 +65,8 @@ export const PetShelf: React.FC<PetShelfProps> = ({
   onShowRecovery,
   onGoToCompanion,
   onStartAdoption,
-  onGoToWorkshop
+  onCreatePet,
+  onImportPet
 }) => {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState("");
@@ -109,7 +111,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
           type="button"
           className="btn-primary"
           style={{ height: "38px" }}
-          onClick={onGoToWorkshop}
+          onClick={onCreatePet}
         >
           ➕ 制作新宠物
         </button>
@@ -139,7 +141,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
             <button type="button" className="btn-primary" onClick={onStartAdoption}>
               去领养
             </button>
-            <button type="button" className="btn-secondary" onClick={onGoToWorkshop}>
+            <button type="button" className="btn-secondary" onClick={onImportPet}>
               导入已有伙伴
             </button>
           </div>

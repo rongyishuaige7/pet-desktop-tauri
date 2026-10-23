@@ -43,7 +43,7 @@ interface CompanionPageProps {
   onToggleAutonomous: () => void;
   onOpenSettings: () => void;
   onStartAdoption: () => void;
-  onGoToWorkshop: () => void;
+  onImportPet: () => void;
   onRenamePet: (id: string, name: string) => void;
 }
 
@@ -65,7 +65,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
   onToggleAutonomous,
   onOpenSettings,
   onStartAdoption,
-  onGoToWorkshop,
+  onImportPet,
   onRenamePet
 }) => {
   const action = pet?.currentAction ?? "idle";
@@ -373,7 +373,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
             <button type="button" className="btn-primary" onClick={onStartAdoption}>
               去领养
             </button>
-            <button type="button" className="btn-secondary" onClick={onGoToWorkshop}>
+            <button type="button" className="btn-secondary" onClick={onImportPet}>
               导入已有伙伴
             </button>
           </div>

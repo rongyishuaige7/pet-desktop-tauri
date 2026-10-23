@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { withCurrentAction, withRenamedPet } from "./pet-logic";
-import { PET_CHANNEL, STORAGE_KEY, type PetAction, type PetProfile } from "./types";
+import { PET_CHANNEL, STORAGE_KEY, type ActionFrameSet, type PetAction, type PetProfile } from "./types";
 import {
   ONBOARDING_KEY,
   normalizeOnboardingRecord,
@@ -214,6 +214,24 @@ export function renamePet(id: string, name: string) {
 
 export function updatePetAction(id: string, action: PetAction) {
   return updateExistingPet(id, (pet) => withCurrentAction(pet, action));
+}
+
+/** Repair an existing profile's material without creating or activating one. */
+export function replacePetAssets(
+  id: string,
+  frameRoot: string,
+  sourceImage: string,
+  actions: ActionFrameSet,
+  thumbnailImage?: string
+): Promise<PetProfile | null> {
+  return updateExistingPet(id, (pet) => ({
+    ...pet,
+    frameRoot,
+    storageMode: "preset-root",
+    sourceImage,
+    thumbnailImage: thumbnailImage ?? sourceImage,
+    actions
+  }));
 }
 
 export async function setCurrentAction(action: PetAction, syncNative = true) {

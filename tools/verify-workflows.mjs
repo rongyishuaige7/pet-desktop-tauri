@@ -13,6 +13,7 @@ async function openCompanionDetails(page){const details=page.locator('.companion
 async function deleteCard(card){await card.locator('.pet-card-more > summary').click();await card.getByRole('button',{name:'移除宠物',exact:true}).click();}
 async function joinOrAdopt(page){const adopt=page.getByRole('button',{name:'领养并入住',exact:true});if(await adopt.count()){await adopt.click();return;}const finish=page.getByRole('button',{name:'完成见面',exact:true});if(await finish.count())await finish.click();}
 async function chooseSnooze(scope,minutes=60){await scope.getByRole('button',{name:/^(休息…|调整休息…)$/}).click();await scope.getByRole('menuitem',{name:`${minutes} 分钟`,exact:true}).click();}
+async function openWorkshopTask(page,label){await page.getByRole('button',{name:/领养与制作/}).click();const task=page.getByRole('button',{name:new RegExp('^'+label)});if(await task.count())await task.click();}
 async function newCase({desktop=false,settingsAction='idle',missing=false,packDelay=0,onboarding='dismiss',failStateReads=0,nativeMode='shown',viewport={width:1120,height:760}}={}) {
  const context=await browser.newContext({viewport});
  await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
@@ -62,6 +63,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      if(state.emitOnSet)setTimeout(()=>{state.action='walk';state.native.action='walk';state.native.actionRevision++;void state.emitNative();},30);
      return state.native;
     }
+    if(cmd==='hide_studio_window'){state.hideStudio=(state.hideStudio??0)+1;return;}
     if(cmd==='detach_native_pet'){if(args.expectedPetId&&args.expectedPetId!==state.native.petId)throw new Error('TARGET_CHANGED: mock target changed');Object.assign(state.native,{petId:null,petName:null,availability:'absent',visible:false});state.visible=false;state.emitNative();return;}
     if(cmd==='set_native_pet_name'){state.native.petName=args.name;state.emitNative();return;}
     if(cmd==='set_native_pet_action'){state.action=args.action;state.native.action=args.action;state.native.actionRevision++;state.emitNative();return {action:args.action,petId:state.native.petId,revision:state.native.actionRevision};}
@@ -120,6 +122,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='upload_reference_image')return 'https://example.test/mock-reference.png';
     if(cmd==='generate_minimax_image'){
      state.generations++;
+     if(state.generationDelay)await new Promise(resolve=>setTimeout(resolve,state.generationDelay));
      if(state.generations===state.failGenerationAt)throw new Error('mock temporary generation failure');
      return state.makeImage(args.request.aspectRatio==='3:2');
     }
@@ -169,8 +172,7 @@ async function record(name,fn){
  catch(e){const result={name,harnessError:e.message};results.push(result);console.log(JSON.stringify(result));}
 }
 async function openAI(page){
- await page.getByRole('button',{name:/领养与制作/}).click();
- await page.getByRole('button',{name:/AI 照片转宠物/}).click();
+ await openWorkshopTask(page,'用照片制作');
  await page.locator('input[type=password]').fill('mock-key');
  await page.getByPlaceholder('https://your-domain.example/upload').fill('https://example.test/upload');
  const data=await page.evaluate(()=>window.__review.makeImage().split(',')[1]);
@@ -181,8 +183,7 @@ try{
  await record('manual_upload_errors_and_recovery',async()=>{
   const {context,page,errors}=await newCase();
   try{
-   await page.getByRole('button',{name:/领养与制作/}).click();
-   await page.getByRole('button',{name:/动作帧装配台/}).click();
+   await openWorkshopTask(page,'装配动作帧');
    const input=page.locator('input[type=file]');
    await input.setInputFiles({name:'wrong.pdf',mimeType:'application/pdf',buffer:Buffer.from('not a picture')});
    await page.locator('.toast-message.error').filter({hasText:'读取动作帧失败'}).waitFor();
@@ -498,7 +499,7 @@ await record('onboarding_commit_failure_rolls_back_and_retries',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{
   await seed(page,{desktop:true});
-  await page.getByRole('button',{name:/领养与制作/}).click();
+  await openWorkshopTask(page,'领养现成伙伴');
   await page.getByRole('button',{name:'再领养一只',exact:true}).click();
   await page.locator('#onboarding-name').fill('团子');
   await page.evaluate(()=>{
@@ -986,7 +987,7 @@ await record('old_record_new_adoption_draft_saves',async()=>{
   await seed(page,{desktop:true,active:'A'});
   await page.evaluate(async()=>{const s=await import('/src/storage.ts');const o=await import('/src/onboarding.ts');await s.saveOnboardingRecord(o.createOnboardingRecord({state:'completed',step:'meet',phase:'committed',confirmedPetId:'A',pendingPetId:'A',intentId:null,displayConfirmed:true,updatedAt:new Date().toISOString()}));});
   await page.reload({waitUntil:'domcontentloaded'});
-  await page.getByRole('button',{name:/领养与制作/}).click();
+  await openWorkshopTask(page,'领养现成伙伴');
   await page.getByRole('button',{name:'再领养一只',exact:true}).click();
   await page.locator('#onboarding-name').fill('新伙伴');
   const afterStart=await page.evaluate(async()=>(await (await import('/src/storage.ts')).loadOnboardingRecord()).record);
@@ -1039,7 +1040,7 @@ await record('stale_meet_completion_does_not_overwrite_new_draft',async()=>{
   if(!meetButton)return {passed:false,reason:'second not on meet',debug:await second.evaluate(()=>({title:document.querySelector('#onboarding-title')?.textContent,body:document.querySelector('.onboarding-body')?.textContent}))};
   await second.getByRole('button',{name:'稍后熟悉',exact:true}).click();
   await second.locator('.onboarding-dialog').waitFor({state:'detached'});
-  await second.getByRole('button',{name:/领养与制作/}).click();
+  await openWorkshopTask(second,'领养现成伙伴');
   await second.getByRole('button',{name:'再领养一只',exact:true}).click();
   await second.locator('#onboarding-name').fill('乙');
   await second.keyboard.press('Tab');
@@ -1076,8 +1077,7 @@ await record('shelf_deploy_show_failure_does_not_report_success',async()=>{
 await record('import_show_failure_retries_display_only',async()=>{
  const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
  try{
-  await page.getByRole('button',{name:/领养与制作/}).click();
-  await page.getByRole('button',{name:/本地帧包导入/}).click();
+  await openWorkshopTask(page,'导入已有伙伴');
   await page.evaluate(()=>{window.__review.failPreference=true;});
   await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
   await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
@@ -1094,8 +1094,7 @@ await record('import_show_failure_retries_display_only',async()=>{
 await record('assembly_show_failure_retries_display_only',async()=>{
  const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
  try{
-  await page.getByRole('button',{name:/领养与制作/}).click();
-  await page.getByRole('button',{name:/动作帧装配台/}).click();
+  await openWorkshopTask(page,'装配动作帧');
   const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
   const file={name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')};
   for(const label of ['待机','坐下','睡觉','开心','走路','跳跃']){
@@ -1192,8 +1191,7 @@ await record('display_retry_is_not_replayed_after_reload',async()=>{
 await record('web_import_reports_preview_not_desktop',async()=>{
  const {context,page,errors}=await newCase();
  try{
-  await page.getByRole('button',{name:/领养与制作/}).click();
-  await page.getByRole('button',{name:/本地帧包导入/}).click();
+  await openWorkshopTask(page,'导入已有伙伴');
   await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
   await page.locator('.toast-message.success').filter({hasText:'可在网页预览'}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.status-chip')?.textContent?.includes('网页演示'));
@@ -1461,6 +1459,135 @@ await record('preference_explanations_follow_actual_state',async()=>{
   await page.waitForFunction(()=>window.__review.native.autonomous===false);
   const autonomousOff=await read();
   return {passed:initial.includes('已开启，会按节奏自动切换姿态')&&initial.includes('跟随系统，当前正常播放')&&paused.includes('已开启，动画暂停期间暂不切换姿态')&&paused.includes('已暂停；关闭后会恢复播放')&&reducedPaused.includes('已开启，动画暂停期间暂不切换姿态')&&reducedPaused.includes('已暂停；关闭低动态不会自动恢复播放')&&reducedOnly.includes('已开启，当前因减少动态而暂停')&&reducedOnly.includes('当前因减少动态而暂停')&&hidden.includes('已开启，收起期间暂不切换姿态')&&hidden.includes('收起或休息期间不播放动画')&&autonomousOff.includes('保持当前姿态，仍可手动互动')&&errors.length===0,initial,paused,reducedPaused,reducedOnly,hidden,autonomousOff,errors};
+ }finally{await context.close();}
+});
+await record('workshop_task_direct_entries',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.locator('.shelf-empty').getByRole('button',{name:'导入已有伙伴',exact:true}).click();
+  const importHeading=await page.locator('#workshop-task-title').innerText();
+  const importButton=await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).count();
+  const galleryOnImport=await page.locator('.preset-gallery').count();
+  await page.getByRole('button',{name:/返回任务选择/}).click();
+  const taskCards=await page.locator('.workshop-task-card').count();
+  const taskNames=await page.locator('.workshop-task-card strong').allTextContents();
+  await page.getByRole('button',{name:/领养现成伙伴/}).click();
+  const galleryVisible=await page.locator('.preset-gallery').isVisible();
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.getByRole('button',{name:/制作新宠物/}).click();
+  const chooserVisible=await page.locator('.workshop-task-card').count()===4;
+  await page.getByRole('button',{name:/用照片制作/}).click();
+  const aiVisible=await page.locator('#workshop-api-key').isVisible();
+  const aiHeading=await page.locator('#workshop-task-title').innerText();
+  return {passed:importHeading.includes('导入已有伙伴')&&importButton===1&&galleryOnImport===0&&taskCards===4&&taskNames.join(',')==='领养现成伙伴,导入已有伙伴,装配动作帧,用照片制作'&&galleryVisible&&chooserVisible&&aiVisible&&aiHeading.includes('用照片制作')&&errors.length===0,importHeading,importButton,galleryOnImport,taskCards,taskNames,galleryVisible,chooserVisible,aiVisible,aiHeading,errors};
+ }finally{await context.close();}
+});
+await record('workshop_session_inputs_survive_page_switch',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.locator('#workshop-name').fill('保留测试');
+  await page.locator('#workshop-preset-dir').fill('/tmp/keep-frames');
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  const importKept={heading:await page.locator('#workshop-task-title').innerText(),name:await page.locator('#workshop-name').inputValue(),dir:await page.locator('#workshop-preset-dir').inputValue()};
+  await page.getByRole('button',{name:/返回任务选择/}).click();
+  await page.getByRole('button',{name:/装配动作帧/}).click();
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  const file={name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')};
+  await page.locator('.frame-add-card input[type=file]').setInputFiles(Array.from({length:5},(_,i)=>({...file,name:`keep-${i}.png`})));
+  await page.waitForFunction(()=>document.querySelectorAll('.frame-thumb-img').length===5);
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  const framesKept={heading:await page.locator('#workshop-task-title').innerText(),count:await page.locator('.frame-thumb-img').count(),active:await page.locator('.seg-tab-btn.active').innerText()};
+  await page.getByRole('button',{name:/返回任务选择/}).click();
+  await page.getByRole('button',{name:/用照片制作/}).click();
+  await page.locator('#workshop-api-key').fill('keep-key');
+  await page.locator('#workshop-upload-url').fill('https://example.test/keep');
+  await page.locator('#workshop-notes').fill('保留描述');
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  const aiKept={heading:await page.locator('#workshop-task-title').innerText(),key:await page.locator('#workshop-api-key').inputValue(),url:await page.locator('#workshop-upload-url').inputValue(),notes:await page.locator('#workshop-notes').inputValue()};
+  return {passed:importKept.heading.includes('导入已有伙伴')&&importKept.name==='保留测试'&&importKept.dir==='/tmp/keep-frames'&&framesKept.heading.includes('装配动作帧')&&framesKept.count===5&&framesKept.active.includes('待机')&&aiKept.heading.includes('用照片制作')&&aiKept.key==='keep-key'&&aiKept.url==='https://example.test/keep'&&aiKept.notes==='保留描述'&&errors.length===0,importKept,framesKept,aiKept,errors};
+ }finally{await context.close();}
+});
+await record('workshop_task_labels_and_keyboard',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'用照片制作');
+  const labels=await page.evaluate(()=>({name:document.querySelector('label[for="workshop-name"]')?.textContent?.trim(),species:document.querySelector('label[for="workshop-species"]')?.textContent?.trim(),api:document.querySelector('label[for="workshop-api-key"]')?.textContent?.trim(),upload:document.querySelector('label[for="workshop-upload-url"]')?.textContent?.trim(),photo:document.querySelector('label[for="workshop-photo"]')?.textContent?.trim(),notes:document.querySelector('label[for="workshop-notes"]')?.textContent?.trim()}));
+  await page.getByRole('button',{name:/返回任务选择/}).click();
+  const names=await page.locator('.workshop-task-card').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')));
+  const first=page.locator('.workshop-task-card').first();
+  await first.focus();
+  await page.keyboard.press('Enter');
+  const presetsVisible=await page.locator('.preset-gallery').isVisible();
+  const headingFocus=await page.evaluate(()=>document.activeElement?.id);
+  await page.getByRole('button',{name:/返回任务选择/}).click();
+  const second=page.locator('.workshop-task-card').nth(1);
+  await second.focus();
+  await page.keyboard.press('Enter');
+  const inputFocus=await page.evaluate(()=>document.activeElement?.id);
+  return {passed:labels.name==='宠物名称'&&labels.species==='宠物种类'&&labels.api==='Minimax API Key'&&labels.upload==='公网参考图上传服务地址'&&labels.photo==='宠物照片'&&labels.notes==='特征描述（可选）'&&names.every(name=>name&&name.includes('：'))&&presetsVisible&&headingFocus==='workshop-task-title'&&inputFocus==='workshop-name'&&errors.length===0,labels,names,presetsVisible,headingFocus,inputFocus,errors};
+ }finally{await context.close();}
+});
+await record('tutorial_desktop_practice_is_optional',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.sidebar-settings').click();
+  await page.getByRole('button',{name:'查看教学',exact:true}).click();
+  await page.locator('.onboarding-dialog').waitFor();
+  const practice=page.getByRole('button',{name:'去桌面看看',exact:true});
+  const visible=await practice.isVisible();
+  const skippable=await page.getByRole('button',{name:'稍后熟悉',exact:true}).isVisible();
+  await practice.click();
+  await page.waitForTimeout(200);
+  const hiddenCalls=await page.evaluate(()=>window.__review.calls.filter(call=>call.cmd==='hide_studio_window').length);
+  const dialogStill=await page.locator('.onboarding-dialog').isVisible();
+  await page.keyboard.press('Escape');
+  const web=await newCase();
+  try{
+   await seed(web.page);
+   await web.page.locator('.sidebar-settings').click();
+   await web.page.getByRole('button',{name:'查看教学',exact:true}).click();
+   const webPractice=await web.page.getByRole('button',{name:'去桌面看看',exact:true}).count();
+   return {passed:visible&&skippable&&hiddenCalls===1&&dialogStill&&webPractice===0&&errors.length===0&&web.errors.length===0,visible,skippable,hiddenCalls,dialogStill,webPractice,errors,webErrors:web.errors};
+  }finally{await web.context.close();}
+ }finally{await context.close();}
+});
+await record('workshop_repair_import_updates_existing_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,missing:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.locator('.recovery-notice').waitFor();
+  await page.getByRole('button',{name:'修复素材',exact:true}).click();
+  const heading=await page.locator('#workshop-task-title').innerText();
+  const banner=await page.locator('.workshop-repair-note').innerText();
+  await page.evaluate(()=>{window.__review.missing=false;});
+  await page.getByRole('button',{name:'更新素材并保留当前伙伴',exact:true}).click();
+  await page.locator('.toast-message.success').filter({hasText:'已更新'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:await s.loadAllPets(),active:(await s.loadPet())?.id,recovery:Boolean(document.querySelector('.recovery-notice'))};});
+  const names=state.pets.map(pet=>pet.name).sort();
+  return {passed:heading.includes('修复「测试甲」')&&banner.includes('不会新建伙伴')&&state.pets.length===2&&state.active==='A'&&!state.recovery&&names.join(',')==='测试乙,测试甲'&&errors.length===0,heading,banner,state,names,errors};
+ }finally{await context.close();}
+});
+await record('workshop_long_task_survives_page_switch',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.generationDelay=250;});
+  await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).click();
+  await page.waitForTimeout(120);
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.waitForTimeout(180);
+  await page.getByRole('button',{name:/领养与制作/}).click();
+  const during=await page.evaluate(()=>({heading:document.querySelector('#workshop-task-title')?.textContent,button:[...document.querySelectorAll('button')].map(node=>node.textContent?.trim()).find(text=>text?.includes('AI 生成中'))??null}));
+  await page.locator('.companion-title').waitFor({timeout:15000});
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,generations:window.__review.generations,saves:window.__review.saves,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  return {passed:during.heading?.includes('用照片制作')&&Boolean(during.button)&&after.pets===1&&after.generations===7&&after.saves===1&&!after.toasts.some(text=>text?.includes('已取消'))&&errors.length===0,during,after,errors};
  }finally{await context.close();}
 });
 }finally{

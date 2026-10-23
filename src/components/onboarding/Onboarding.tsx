@@ -23,6 +23,7 @@ interface OnboardingProps {
   onFinish: () => void;
   onMeetPet: () => void;
   onRetry: () => void;
+  onPracticeDesktop?: () => void;
 }
 
 export const Onboarding: React.FC<OnboardingProps> = ({
@@ -42,7 +43,8 @@ export const Onboarding: React.FC<OnboardingProps> = ({
   onUseDefault,
   onFinish,
   onMeetPet,
-  onRetry
+  onRetry,
+  onPracticeDesktop
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -218,6 +220,20 @@ export const Onboarding: React.FC<OnboardingProps> = ({
                   ? "关闭这个窗口后，我仍会在桌面。需要我时，从菜单栏 / 托盘打开。"
                   : "这是网页演示，桌面能力需在应用内体验。"}
               </div>
+              {isTauri && onPracticeDesktop && (
+                <div className="walkthrough onboarding-practice">
+                  <strong>可选的桌面练习</strong>
+                  先关闭主窗口，再从菜单栏 / 托盘把它打开。这个练习可以跳过，不会改变伙伴状态。
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={onPracticeDesktop}
+                    disabled={busy}
+                  >
+                    去桌面看看
+                  </button>
+                </div>
+              )}
               <div className="onboarding-actions">
                 <button type="button" className="btn-secondary" onClick={onFinish} disabled={busy}>
                   稍后熟悉

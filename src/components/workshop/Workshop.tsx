@@ -1,9 +1,13 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
 import { PET_ACTIONS, type ActionFrameSet, type PetAction, type PetSpecies } from "../../types";
 import { useToast } from "../ui/Toast";
 
 interface WorkshopProps {
+  task: "import" | "frames" | "ai";
+  repairPetName?: string | null;
+  inspectAction: PetAction;
+  onInspectActionChange: (action: PetAction) => void;
   name: string;
   onChangeName: (val: string) => void;
   species: PetSpecies;
@@ -34,6 +38,10 @@ interface WorkshopProps {
 }
 
 export const Workshop: React.FC<WorkshopProps> = ({
+  task,
+  repairPetName,
+  inspectAction,
+  onInspectActionChange,
   name,
   onChangeName,
   species,
@@ -61,15 +69,18 @@ export const Workshop: React.FC<WorkshopProps> = ({
   onGenerateAI,
   onCancelAI
 }) => {
-  const [activeTab, setActiveTab] = useState<"preset" | "frames" | "ai">("preset");
-  const [activeInspectAction, setActiveInspectAction] = useState<PetAction>("idle");
   const [readingFrames, setReadingFrames] = useState(false);
   const readingRef = useRef(false);
+  const nameRef = useRef<HTMLInputElement>(null);
   const { showToast } = useToast();
   const busy = aiRunning || isLoading || readingFrames;
 
+  useEffect(() => {
+    nameRef.current?.focus({ preventScroll: true });
+  }, [task]);
+
   // Read frames for current action
-  const currentActionFrames = manualFrames[activeInspectAction] ?? [];
+  const currentActionFrames = manualFrames[inspectAction] ?? [];
 
   async function handleAddFrames(action: PetAction, files: FileList | null) {
     if (!files?.length || busy || readingRef.current) return;
@@ -106,39 +117,14 @@ export const Workshop: React.FC<WorkshopProps> = ({
 
   return (
     <div className="workshop-shell">
-      <div className="segmented-tabs">
-        <button
-          type="button"
-          className={`seg-tab-btn ${activeTab === "preset" ? "active" : ""}`}
-          disabled={busy}
-          onClick={() => setActiveTab("preset")}
-        >
-          📁 本地帧包导入
-        </button>
-        <button
-          type="button"
-          className={`seg-tab-btn ${activeTab === "frames" ? "active" : ""}`}
-          disabled={busy}
-          onClick={() => setActiveTab("frames")}
-        >
-          🎞️ 动作帧装配台
-        </button>
-        <button
-          type="button"
-          className={`seg-tab-btn ${activeTab === "ai" ? "active" : ""}`}
-          disabled={busy}
-          onClick={() => setActiveTab("ai")}
-        >
-          ✨ AI 照片转宠物
-        </button>
-      </div>
-
       <div className="workshop-body">
         {/* Basic Pet Info */}
         <div className="input-row-2">
           <div className="input-group">
-            <label>宠物名称</label>
+            <label htmlFor="workshop-name">宠物名称</label>
             <input
+              ref={nameRef}
+              id="workshop-name"
               type="text"
               className="input-control"
               maxLength={20}
@@ -149,8 +135,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
             />
           </div>
           <div className="input-group">
-            <label>宠物种类</label>
+            <label htmlFor="workshop-species">宠物种类</label>
             <select
+              id="workshop-species"
               disabled={busy}
               className="input-control"
               value={species}
@@ -162,17 +149,24 @@ export const Workshop: React.FC<WorkshopProps> = ({
           </div>
         </div>
 
-        {/* Tab 1: Preset pack */}
-        {activeTab === "preset" && (
+        {/* Task: import an existing frame pack */}
+        {task === "import" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {repairPetName && (
+              <div className="workshop-repair-note" role="status">
+                正在修复「{repairPetName}」的素材。保存只会更新这一位，不会新建伙伴；
+                名字、当前选择和显示/休息状态保持不变。
+              </div>
+            )}
             <p style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>
               应用会自动读取目录内的 <code>idle/sit/sleep/happy/walk/jump</code> 6
-              个动作子目录（每个动作至少 5 张透明 PNG 图片）。
+              个动作子目录（每个动作至少 5 张透明 PNG 图片，单图不超过 16 MiB / 2048×2048）。
             </p>
 
             <div className="input-group">
-              <label>本地帧包目录</label>
+              <label htmlFor="workshop-preset-dir">本地帧包目录</label>
               <input
+                id="workshop-preset-dir"
                 type="text"
                 className="input-control"
                 value={presetDir}
@@ -188,14 +182,18 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 onClick={onImportPreset}
                 disabled={busy}
               >
-                {isLoading ? "正在导入..." : "一键导入并保存到宠物架"}
+                {isLoading
+                  ? "正在导入..."
+                  : repairPetName
+                    ? "更新素材并保留当前伙伴"
+                    : "一键导入并保存到宠物架"}
               </button>
             </div>
           </div>
         )}
 
-        {/* Tab 2: Filmstrip / Frame sequencer */}
-        {activeTab === "frames" && (
+        {/* Task: assemble frames */}
+        {task === "frames" && (
           <div className="filmstrip-container">
             <div className="filmstrip-header">
               <div className="segmented-tabs" style={{ background: "rgba(45,35,25,0.03)" }}>
@@ -205,8 +203,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
                     <button
                       key={act.id}
                       type="button"
-                      className={`seg-tab-btn ${activeInspectAction === act.id ? "active" : ""}`}
-                      onClick={() => setActiveInspectAction(act.id)}
+                      className={`seg-tab-btn ${inspectAction === act.id ? "active" : ""}`}
+                      onClick={() => onInspectActionChange(act.id)}
+                      aria-pressed={inspectAction === act.id}
                     >
                       {act.label} ({count}/5)
                     </button>
@@ -216,7 +215,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
             </div>
 
             <p style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
-              正在检视「{PET_ACTIONS.find((a) => a.id === activeInspectAction)?.label}
+              正在检视「{PET_ACTIONS.find((a) => a.id === inspectAction)?.label}
               」动作的连续帧，可单帧删除或追加上传。每动作至少 5 帧。
             </p>
 
@@ -230,7 +229,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                   <button
                     type="button"
                     className="frame-delete-btn"
-                    onClick={() => handleDeleteFrame(activeInspectAction, idx)}
+                    onClick={() => handleDeleteFrame(inspectAction, idx)}
                     disabled={busy}
                     title="删除此帧"
                   >
@@ -247,7 +246,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                   multiple
                   disabled={busy}
                   accept="image/png,image/jpeg,image/webp"
-                  onChange={(e) => handleAddFrames(activeInspectAction, e.target.files)}
+                  onChange={(e) => handleAddFrames(inspectAction, e.target.files)}
                 />
               </label>
             </div>
@@ -265,8 +264,8 @@ export const Workshop: React.FC<WorkshopProps> = ({
           </div>
         )}
 
-        {/* Tab 3: AI Generation */}
-        {activeTab === "ai" && (
+        {/* Task: photo generation */}
+        {task === "ai" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <p style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>
               基于 Minimax 图生图模型，上传真实宠物照片生成 Q 版角色模型图及 30 帧连续动作帧包。
@@ -274,8 +273,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
 
             <div className="input-row-2">
               <div className="input-group">
-                <label>Minimax API Key</label>
+                <label htmlFor="workshop-api-key">Minimax API Key</label>
                 <input
+                  id="workshop-api-key"
                   type="password"
                   disabled={busy}
                   className="input-control"
@@ -285,8 +285,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 />
               </div>
               <div className="input-group">
-                <label>公网参考图上传服务地址</label>
+                <label htmlFor="workshop-upload-url">公网参考图上传服务地址</label>
                 <input
+                  id="workshop-upload-url"
                   type="text"
                   className="input-control"
                   value={uploadUrl}
@@ -298,8 +299,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
             </div>
 
             <div className="input-group">
-              <label>宠物照片</label>
+              <label htmlFor="workshop-photo">宠物照片</label>
               <input
+                id="workshop-photo"
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
                 disabled={busy}
@@ -322,8 +324,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
             </div>
 
             <div className="input-group">
-              <label>特征描述（可选）</label>
+              <label htmlFor="workshop-notes">特征描述（可选）</label>
               <textarea
+                id="workshop-notes"
                 className="input-control"
                 style={{ height: "64px", paddingTop: "8px" }}
                 maxLength={420}
@@ -353,11 +356,14 @@ export const Workshop: React.FC<WorkshopProps> = ({
             {(aiRunning || canResumeAI) && (
               <p style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
                 已完成的图片仅在本次打开期间保留。取消会在当前步骤返回后停止，继续时会复用已完成内容。
+                切换页面不会取消本次生成，返回后仍可看到进度。
               </p>
             )}
 
             {aiLog.length > 0 && (
               <div
+                role="status"
+                aria-live="polite"
                 style={{
                   background: "rgba(0,0,0,0.03)",
                   padding: "12px",

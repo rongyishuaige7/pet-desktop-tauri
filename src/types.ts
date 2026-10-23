@@ -33,4 +33,4 @@ export const STORAGE_KEY = "desktop-sticker-pet:v1";
 export const PET_CHANNEL = "desktop-sticker-pet-events";
 
 export type StudioTab = "stage" | "workshop" | "shelf";
-export type WorkshopMode = "presets" | "frames" | "manual" | "ai";
+export type WorkshopTask = "choose" | "presets" | "import" | "frames" | "ai";

@@ -20,6 +20,7 @@ import {
   setActivePetId,
   deletePet,
   renamePet,
+  replacePetAssets,
   updatePetAction,
   subscribePetChanges,
   subscribeOnboardingChanges,
@@ -40,12 +41,18 @@ import {
   type PetAction,
   type PetProfile,
   type PetSpecies,
-  type StudioTab
+  type StudioTab,
+  type WorkshopTask
 } from "./types";
 import { ToastProvider, useToast } from "./components/ui/Toast";
 import { AppSidebar } from "./components/shell/AppSidebar";
 import { CompanionPage } from "./components/stage/CompanionPage";
 import { Workshop } from "./components/workshop/Workshop";
+import {
+  WORKSHOP_TASK_LABELS,
+  WorkshopTaskChooser,
+  WorkshopTaskHeader
+} from "./components/workshop/WorkshopTasks";
 import { PetShelf } from "./components/shelf/PetShelf";
 import { PresetGallery } from "./components/workshop/PresetGallery";
 import { PreferencesDrawer } from "./components/settings/PreferencesDrawer";
@@ -97,6 +104,9 @@ interface SavedManualFramePack {
 function StudioApp() {
   const { showToast } = useToast();
   const [currentTab, setCurrentTab] = useState<StudioTab>("stage");
+  const [workshopTask, setWorkshopTask] = useState<WorkshopTask>("choose");
+  const [repairPetId, setRepairPetId] = useState<string | null>(null);
+  const [inspectAction, setInspectAction] = useState<PetAction>("idle");
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [activePet, setActivePetState] = useState<PetProfile | null>(null);
   const [initialized, setInitialized] = useState(false);
@@ -130,6 +140,7 @@ function StudioApp() {
   const intentWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const activePetRef = useRef<PetProfile | null>(null);
   const onboardingRef = useRef<OnboardingRecord | null>(null);
+  const practicePendingRef = useRef(false);
   onboardingRef.current = onboarding;
   const native = useNativePet({
     isTauri,
@@ -888,6 +899,17 @@ function StudioApp() {
     setTutorialOpen(true);
   }
 
+  async function handlePracticeDesktop() {
+    if (!isTauri) return;
+    practicePendingRef.current = true;
+    try {
+      await invoke("hide_studio_window");
+    } catch (err) {
+      practicePendingRef.current = false;
+      showToast(`暂时不能收起主窗口：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleRetryConnection() {
     try {
       await native.refresh();
@@ -922,6 +944,16 @@ function StudioApp() {
   useEffect(() => () => {
     if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current);
     if (scaleTimerRef.current !== null) window.clearTimeout(scaleTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible" || !practicePendingRef.current) return;
+      practicePendingRef.current = false;
+      setOnboardingSpeech("欢迎回来；伙伴仍在桌面。");
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
   async function rollbackAdoption() {
@@ -1503,6 +1535,25 @@ function StudioApp() {
             (idx) => `/frame-pack/${act}/${String(idx).padStart(3, "0")}.png`
           );
         }
+        if (repairPetId) {
+          const updated = await replacePetAssets(
+            repairPetId,
+            rootDir,
+            loadedActions.idle[0],
+            loadedActions
+          );
+          if (!updated) throw new Error("要修复的伙伴已被移除");
+          if (activePetRef.current?.id === repairPetId) {
+            setActivePet(await ensurePetHydrated(updated));
+          }
+          await refreshList();
+          setLocalError(null);
+          setDisplayRetry(null);
+          setRepairPetId(null);
+          setWorkshopTask("choose");
+          showToast(`已更新「${updated.name}」的素材；显示/休息状态没有改变。`, "success");
+          return;
+        }
         const newPet = createManualPet({
           name: name.trim() || "咕唧 (萌宠小怪兽)",
           species,
@@ -1520,6 +1571,31 @@ function StudioApp() {
       const pack = await invoke<PresetFramePack>("load_preset_frame_pack", {
         request: { rootDir }
       });
+
+      if (repairPetId) {
+        const updated = await replacePetAssets(
+          repairPetId,
+          rootDir,
+          pack.sourceImage,
+          pack.actions
+        );
+        if (!updated) throw new Error("要修复的伙伴已被移除");
+        if (activePetRef.current?.id === repairPetId) {
+          const full = await ensurePetHydrated(updated);
+          setActivePet(full);
+          if (full.frameRoot) {
+            // Attaching preserves the confirmed hidden/snoozed intent.
+            await native.attach(full.frameRoot, full.id, full.name);
+          }
+        }
+        await refreshList();
+        setLocalError(null);
+        setDisplayRetry(null);
+        setRepairPetId(null);
+        setWorkshopTask("choose");
+        showToast(`已更新「${updated.name}」的素材；显示/休息状态没有改变。`, "success");
+        return;
+      }
 
       const newPet = createManualPet({
         name: name.trim() || (species === "cat" ? "糖宝" : "大黄"),
@@ -1715,6 +1791,21 @@ function StudioApp() {
     setCurrentTab("stage");
   }
 
+  function openWorkshopTask(
+    task: Exclude<WorkshopTask, "choose">,
+    repairId: string | null = null
+  ) {
+    setWorkshopTask(task);
+    setRepairPetId(repairId);
+    setCurrentTab("workshop");
+  }
+
+  function openWorkshopChooser(repairId: string | null = null) {
+    setWorkshopTask("choose");
+    setRepairPetId(repairId);
+    setCurrentTab("workshop");
+  }
+
   async function handleDeletePet(id: string) {
     const pet = pets.find((p) => p.id === id);
     if (!pet || !confirm(`确定要从宠物架移除「${pet.name}」吗？`)) return;
@@ -1770,6 +1861,10 @@ function StudioApp() {
   const operationError = native.state.lastOperationError;
   const assetErrorPetId =
     localError?.code === "ASSET_NOT_FOUND" ? localError.petId ?? null : null;
+  const repairPet = repairPetId
+    ? pets.find((pet) => pet.id === repairPetId) ??
+      (activePet?.id === repairPetId ? activePet : null)
+    : null;
 
   const assetRecovery = {
     title: `暂时找不到${activePet?.name ?? "伙伴"}的动作素材，资料仍在`,
@@ -1779,7 +1874,11 @@ function StudioApp() {
     actions: [
       { label: "重试加载", primary: true, onClick: () => void handleRetryAsset() },
       { label: "选择已有伙伴", onClick: () => setCurrentTab("shelf") },
-      { label: "打开制作", onClick: () => setCurrentTab("workshop") }
+      {
+        label: "修复素材",
+        onClick: () =>
+          openWorkshopTask("import", assetErrorPetId ?? activePet?.id ?? null)
+      }
     ]
   };
 
@@ -1853,7 +1952,7 @@ function StudioApp() {
         actions: [
           { label: "重试连接", primary: true, onClick: () => void handleRetryAsset() },
           { label: "查看已有伙伴", onClick: () => setCurrentTab("shelf") },
-          { label: "打开制作", onClick: () => setCurrentTab("workshop") }
+          { label: "打开制作", onClick: () => openWorkshopChooser() }
         ]
       };
     }
@@ -1995,65 +2094,85 @@ function StudioApp() {
             onToggleAutonomous={() => handleToggleAutonomous(!native.state.autonomous)}
             onOpenSettings={handleOpenSettings}
             onStartAdoption={handleStartAdoption}
-            onGoToWorkshop={() => setCurrentTab("workshop")}
+            onImportPet={() => openWorkshopTask("import")}
             onRenamePet={handleRenamePet}
           />
         )}
 
         {currentTab === "workshop" && (
-          <>
-            <PresetGallery
-              activePet={activePet}
-              onAdopt={handleStartAdoption}
-              onViewCompanion={() => setCurrentTab("stage")}
+          workshopTask === "choose" ? (
+            <WorkshopTaskChooser
+              activePetName={activePet?.name}
+              repairPetName={repairPet?.name ?? null}
+              onSelect={(task) =>
+                openWorkshopTask(task, task === "import" ? repairPetId : null)
+              }
+              onCancelRepair={() => setRepairPetId(null)}
             />
-            <details className="advanced-maker" open>
-              <summary>高级制作：本地导入、动作装配与照片定制</summary>
-              <Workshop
-            name={name}
-            onChangeName={setName}
-            species={species}
-            onChangeSpecies={setSpecies}
-            presetDir={presetFrameDir}
-            onChangePresetDir={setPresetFrameDir}
-            onImportPreset={handleImportPreset}
-            manualFrames={manualFrames}
-            onChangeManualFrames={setManualFrames}
-            onSaveManualFrames={handleSaveManualFrames}
-            isLoading={isLoading}
-            isTauri={isTauri}
-            apiKey={apiKey}
-            onChangeApiKey={setApiKey}
-            uploadUrl={uploadUrl}
-            onChangeUploadUrl={(val) => {
-              setUploadUrl(val);
-              localStorage.setItem(UPLOAD_URL_STORAGE, val);
-            }}
-            referencePhoto={referencePhoto}
-            onSelectReferencePhoto={async (files) => {
-              const file = files?.[0];
-              if (!file || aiCancelRef.current || isLoading) return;
-              setIsLoading(true);
-              try {
-                if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 16 * 1024 * 1024) {
-                  throw new Error("请选择不超过 16 MiB 的 PNG、JPEG 或 WebP 图片");
-                }
-                const dataUrl = await readFileAsDataUrl(file);
-                setReferencePhoto(dataUrl);
-              } catch (err) { showToast(formatError(err), "error"); }
-              finally { setIsLoading(false); }
-            }}
-            appearanceNotes={appearanceNotes}
-            onChangeAppearanceNotes={setAppearanceNotes}
-            aiRunning={aiRunning}
-            aiCommitting={aiCommitting}
-            canResumeAI={canResumeAI}
-            aiLog={aiLog}
-                onGenerateAI={handleGenerateAI}
-                onCancelAI={handleCancelAI}
+          ) : (
+            <>
+              <WorkshopTaskHeader
+                task={workshopTask}
+                repairPetName={repairPet?.name ?? null}
+                onBack={() => openWorkshopChooser(repairPetId)}
               />
-            </details>
-          </>
+              {workshopTask === "presets" ? (
+                <PresetGallery
+                  activePet={activePet}
+                  onAdopt={handleStartAdoption}
+                  onViewCompanion={() => setCurrentTab("stage")}
+                />
+              ) : (
+                <Workshop
+                  task={workshopTask}
+                  repairPetName={repairPet?.name ?? null}
+                  inspectAction={inspectAction}
+                  onInspectActionChange={setInspectAction}
+                  name={name}
+                  onChangeName={setName}
+                  species={species}
+                  onChangeSpecies={setSpecies}
+                  presetDir={presetFrameDir}
+                  onChangePresetDir={setPresetFrameDir}
+                  onImportPreset={handleImportPreset}
+                  manualFrames={manualFrames}
+                  onChangeManualFrames={setManualFrames}
+                  onSaveManualFrames={handleSaveManualFrames}
+                  isLoading={isLoading}
+                  isTauri={isTauri}
+                  apiKey={apiKey}
+                  onChangeApiKey={setApiKey}
+                  uploadUrl={uploadUrl}
+                  onChangeUploadUrl={(val) => {
+                    setUploadUrl(val);
+                    localStorage.setItem(UPLOAD_URL_STORAGE, val);
+                  }}
+                  referencePhoto={referencePhoto}
+                  onSelectReferencePhoto={async (files) => {
+                    const file = files?.[0];
+                    if (!file || aiCancelRef.current || isLoading) return;
+                    setIsLoading(true);
+                    try {
+                      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 16 * 1024 * 1024) {
+                        throw new Error("请选择不超过 16 MiB 的 PNG、JPEG 或 WebP 图片");
+                      }
+                      const dataUrl = await readFileAsDataUrl(file);
+                      setReferencePhoto(dataUrl);
+                    } catch (err) { showToast(formatError(err), "error"); }
+                    finally { setIsLoading(false); }
+                  }}
+                  appearanceNotes={appearanceNotes}
+                  onChangeAppearanceNotes={setAppearanceNotes}
+                  aiRunning={aiRunning}
+                  aiCommitting={aiCommitting}
+                  canResumeAI={canResumeAI}
+                  aiLog={aiLog}
+                  onGenerateAI={handleGenerateAI}
+                  onCancelAI={handleCancelAI}
+                />
+              )}
+            </>
+          )
         )}
 
         {onboardingOpen && onboarding && (
@@ -2075,6 +2194,7 @@ function StudioApp() {
             onFinish={() => void handleOnboardingFinish()}
             onMeetPet={() => void handleMeetPet()}
             onRetry={() => void handleOnboardingRetry()}
+            onPracticeDesktop={() => void handlePracticeDesktop()}
           />
         )}
 
@@ -2098,7 +2218,8 @@ function StudioApp() {
             onShowRecovery={handleShowRecovery}
             onGoToCompanion={handleGoToCompanion}
             onStartAdoption={handleStartAdoption}
-            onGoToWorkshop={() => setCurrentTab("workshop")}
+            onCreatePet={() => openWorkshopChooser()}
+            onImportPet={() => openWorkshopTask("import")}
           />
         )}
 
@@ -2119,6 +2240,7 @@ function StudioApp() {
             onFinish={() => setTutorialOpen(false)}
             onMeetPet={() => void handleMeetPet()}
             onRetry={() => undefined}
+            onPracticeDesktop={() => void handlePracticeDesktop()}
           />
         )}
 

@@ -593,6 +593,110 @@ button {
   border-color: var(--accent-amber-hover);
 }
 
+/* Workshop task entry */
+.workshop-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.workshop-tasks-head h2 {
+  font-size: 22px;
+}
+
+.workshop-tasks-head p {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.workshop-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.workshop-task-card {
+  min-height: 150px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--bg-glass-card);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.workshop-task-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: var(--accent-amber);
+  box-shadow: var(--shadow-md);
+}
+
+.workshop-task-icon {
+  font-size: 28px;
+}
+
+.workshop-task-card strong {
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.workshop-task-card span:last-child {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.workshop-task-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.workshop-task-header .btn-secondary {
+  flex: none;
+  height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.workshop-task-header h2 {
+  font-size: 22px;
+}
+
+.workshop-task-header h2:focus {
+  outline: 3px solid #7f4d22;
+  outline-offset: 3px;
+}
+
+.workshop-task-header p {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.workshop-repair-note {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid #e8c9a4;
+  border-radius: var(--radius-md);
+  background: #fff4e3;
+  color: #7a4a1f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 /* Workshop View */
 .workshop-shell {
   display: flex;
@@ -1555,6 +1659,20 @@ button {
 .walkthrough strong {
   display: block;
   color: var(--text-primary);
+}
+
+.onboarding-practice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  background: #fdf6e8;
+}
+
+.onboarding-practice .btn-secondary {
+  height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 
 .onboarding-error {
