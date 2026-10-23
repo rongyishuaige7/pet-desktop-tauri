@@ -499,21 +499,25 @@ mod tests {
 
     #[test]
     fn inspection_rejects_one_to_four_frames_per_action() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        write_pack(dir.path(), 3);
+        for count in 1..=4 {
+            let dir = tempfile::tempdir().expect("temp dir");
+            write_pack(dir.path(), count);
 
-        let report = inspect_frame_directory(dir.path()).expect("inspect");
+            let report = inspect_frame_directory(dir.path()).expect("inspect");
 
-        assert!(!report.valid);
-        assert!(report.missing_actions.is_empty());
-        assert!(report.actions.iter().all(|action| action.frames == 3));
-        assert!(report
-            .actions
-            .iter()
-            .all(|action| action
-                .issues
-                .iter()
-                .any(|issue| issue.contains("至少需要 5 帧，当前只有 3 帧"))));
+            assert!(!report.valid, "count {count}");
+            assert!(report.missing_actions.is_empty(), "count {count}");
+            assert!(
+                report.actions.iter().all(|action| action.frames == count),
+                "count {count}"
+            );
+            assert!(
+                report.actions.iter().all(|action| action.issues.iter().any(
+                    |issue| issue.contains(&format!("至少需要 5 帧，当前只有 {count} 帧"))
+                )),
+                "count {count}"
+            );
+        }
     }
 
     #[test]
