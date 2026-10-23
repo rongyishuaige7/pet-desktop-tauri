@@ -139,6 +139,7 @@ function StudioApp() {
     let unlisten: (() => void) | undefined;
     getCurrentWebview()
       .onDragDropEvent((event) => {
+        if (disposed) return;
         if (event.payload.type !== "drop") return;
         if (currentTab !== "workshop" || workshopTask !== "import") return;
         const path = event.payload.paths.find((entry) => entry.trim());

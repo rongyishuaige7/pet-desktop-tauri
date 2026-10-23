@@ -42,7 +42,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
    transformCallback:(fn)=>{const id=seq++;callbacks.set(id,fn);return id;},
    invoke:async(cmd,args={})=>{
     state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
-    if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);return id;}
+    if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);if(state.dragLeaveDelay&&args.event==='tauri://drag-leave')await new Promise(resolve=>setTimeout(resolve,state.dragLeaveDelay));return id;}
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
     if(cmd==='get_native_pet_state'){if(state.failStateReads>0){state.failStateReads--;throw new Error('mock state read failed');}return state.native;}
@@ -1858,6 +1858,24 @@ await record('workshop_directory_drop_sets_path',async()=>{
   await page.waitForFunction(()=>document.querySelector('#workshop-preset-dir')?.value==='/tmp/dropped');
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {value:document.querySelector('#workshop-preset-dir')?.value,reports:document.querySelectorAll('.frame-inspection').length,pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,inspects:window.__review.calls.filter(c=>c.cmd==='inspect_frame_directory').length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   return {passed:state.value==='/tmp/dropped'&&state.reports===0&&state.pets===2&&state.active==='A'&&state.inspects===0&&state.toasts.some(text=>text?.includes('已收到目录'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('workshop_drag_drop_ignored_after_leaving_import',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.evaluate(()=>{window.__review.dragLeaveDelay=800;});
+  await openWorkshopTask(page,'导入已有伙伴');
+  const input=page.locator('#workshop-preset-dir');
+  const before=await input.inputValue();
+  await page.waitForTimeout(150);
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.waitForTimeout(100);
+  await page.evaluate(async()=>{await window.__review.emit({type:'drop',paths:['/tmp/late-drop'],position:{x:10,y:10}},'tauri://drag-drop');});
+  await page.waitForTimeout(1000);
+  await openWorkshopTask(page,'导入已有伙伴');
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {value:document.querySelector('#workshop-preset-dir')?.value,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent),pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id};});
+  return {passed:after.value===before&&after.value!=='/tmp/late-drop'&&!after.toasts.some(text=>text?.includes('已收到目录'))&&after.pets===2&&after.active==='A'&&errors.length===0,before,after,errors};
  }finally{await context.close();}
 });
 }finally{
