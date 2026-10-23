@@ -762,6 +762,25 @@ button {
   border-color: #e8c9c4;
 }
 
+.frame-inspection-global {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #e8c9c4;
+  background: var(--bg-card-solid);
+  font-size: 12px;
+}
+
+.frame-inspection-global strong {
+  font-size: 12px;
+}
+
+.frame-inspection-global small {
+  color: #7f2f24;
+}
+
 .frame-inspection-note {
   font-size: 12px;
   line-height: 1.6;

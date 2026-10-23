@@ -251,6 +251,14 @@ export const Workshop: React.FC<WorkshopProps> = ({
                     );
                   })}
                 </div>
+                {frameInspection.globalIssues.length > 0 && (
+                  <div className="frame-inspection-global">
+                    <strong>容量或全局限制</strong>
+                    {frameInspection.globalIssues.map((issue) => (
+                      <small key={issue}>{issue}</small>
+                    ))}
+                  </div>
+                )}
                 {frameInspection.missingActions.length > 0 && (
                   <p className="frame-inspection-note">
                     缺少动作：

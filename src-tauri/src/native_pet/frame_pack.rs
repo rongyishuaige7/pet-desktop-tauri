@@ -67,7 +67,7 @@ pub fn is_supported_image(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub fn scan_action_frames(root: &Path, action: &str) -> Result<Vec<PathBuf>, String> {
+fn enumerate_action_frames(root: &Path, action: &str) -> Result<Vec<PathBuf>, String> {
     let action_dir = root.join(action);
     let mut paths = std::fs::read_dir(&action_dir)
         .map_err(|err| format!("读取动作目录失败 {}：{err}", action_dir.display()))?
@@ -76,8 +76,16 @@ pub fn scan_action_frames(root: &Path, action: &str) -> Result<Vec<PathBuf>, Str
         .collect::<Vec<_>>();
 
     paths.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+    Ok(paths)
+}
+
+pub fn scan_action_frames(root: &Path, action: &str) -> Result<Vec<PathBuf>, String> {
+    let paths = enumerate_action_frames(root, action)?;
     if paths.len() > MAX_FRAMES_PER_ACTION {
-        return Err(format!("{action} 超过 60 帧"));
+        return Err(format!(
+            "{action} 超过 60 帧（当前 {} 帧）",
+            paths.len()
+        ));
     }
     Ok(paths)
 }
@@ -102,6 +110,7 @@ pub struct FrameInspection {
     pub decoded_bytes: u64,
     pub valid: bool,
     pub issues: Vec<String>,
+    pub global_issues: Vec<String>,
     pub thumbnail: Option<String>,
 }
 
@@ -114,27 +123,37 @@ pub fn inspect_frame_directory(root: &Path) -> Result<FrameInspection, String> {
     let mut actions = Vec::new();
     let mut missing_actions = Vec::new();
     let mut issues = Vec::new();
+    let mut global_issues = Vec::new();
     let mut total_bytes = 0usize;
     let mut decoded_bytes = 0u64;
     let mut thumbnail: Option<String> = None;
 
     for (action, _) in ACTIONS {
         let mut action_issues = Vec::new();
-        let frames = match scan_action_frames(root, action) {
+        let mut enumerated = true;
+        let frames = match enumerate_action_frames(root, action) {
             Ok(frames) => frames,
             Err(err) => {
+                enumerated = false;
                 action_issues.push(err);
                 Vec::new()
             }
         };
-        if frames.is_empty() {
+        let frame_count = frames.len();
+        if frame_count == 0 {
             missing_actions.push(action.to_string());
         }
-        if !frames.is_empty() && frames.len() < MIN_FRAMES_PER_ACTION {
+        if enumerated && frame_count < MIN_FRAMES_PER_ACTION {
             action_issues.push(format!(
                 "至少需要 {} 帧，当前只有 {} 帧",
                 MIN_FRAMES_PER_ACTION,
-                frames.len()
+                frame_count
+            ));
+        }
+        if frame_count > MAX_FRAMES_PER_ACTION {
+            action_issues.push(format!(
+                "超过 {} 帧（当前 {} 帧）",
+                MAX_FRAMES_PER_ACTION, frame_count
             ));
         }
         for path in &frames {
@@ -168,7 +187,7 @@ pub fn inspect_frame_directory(root: &Path) -> Result<FrameInspection, String> {
         issues.extend(action_issues.iter().cloned());
         actions.push(ActionInspection {
             action: action.to_string(),
-            frames: frames.len(),
+            frames: frame_count,
             min_frames: MIN_FRAMES_PER_ACTION,
             max_frames: MAX_FRAMES_PER_ACTION,
             issues: action_issues,
@@ -176,11 +195,12 @@ pub fn inspect_frame_directory(root: &Path) -> Result<FrameInspection, String> {
     }
 
     if total_bytes > MAX_PACK_BYTES {
-        issues.push("帧包文件总量超过 128 MiB".to_string());
+        global_issues.push("帧包文件总量超过 128 MiB".to_string());
     }
     if decoded_bytes > MAX_DECODED_PACK_BYTES {
-        issues.push("帧包解码总量超过 256 MiB".to_string());
+        global_issues.push("帧包解码总量超过 256 MiB".to_string());
     }
+    issues.extend(global_issues.iter().cloned());
 
     Ok(FrameInspection {
         root: root.display().to_string(),
@@ -190,6 +210,7 @@ pub fn inspect_frame_directory(root: &Path) -> Result<FrameInspection, String> {
         decoded_bytes,
         valid: issues.is_empty(),
         issues,
+        global_issues,
         thumbnail,
     })
 }
@@ -467,8 +488,80 @@ mod tests {
             .iter()
             .find(|action| action.action == "idle")
             .expect("idle");
-        assert_eq!(idle.frames, 0);
-        assert!(idle.issues.iter().any(|issue| issue.contains("超过 60 帧")));
+        assert_eq!(idle.frames, 61);
+        assert!(!report.missing_actions.contains(&"idle".to_string()));
+        assert!(idle
+            .issues
+            .iter()
+            .any(|issue| issue.contains("超过 60 帧（当前 61 帧）")));
+        assert!(report.total_bytes > 0);
+    }
+
+    #[test]
+    fn inspection_rejects_one_to_four_frames_per_action() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write_pack(dir.path(), 3);
+
+        let report = inspect_frame_directory(dir.path()).expect("inspect");
+
+        assert!(!report.valid);
+        assert!(report.missing_actions.is_empty());
+        assert!(report.actions.iter().all(|action| action.frames == 3));
+        assert!(report
+            .actions
+            .iter()
+            .all(|action| action
+                .issues
+                .iter()
+                .any(|issue| issue.contains("至少需要 5 帧，当前只有 3 帧"))));
+    }
+
+    #[test]
+    fn inspection_rejects_six_present_but_empty_action_directories() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for (action, _) in ACTIONS {
+            std::fs::create_dir_all(dir.path().join(action)).expect("create dir");
+        }
+
+        let report = inspect_frame_directory(dir.path()).expect("inspect");
+
+        assert!(!report.valid);
+        assert_eq!(report.missing_actions.len(), ACTIONS.len());
+        assert_eq!(report.actions.len(), ACTIONS.len());
+        assert!(report
+            .actions
+            .iter()
+            .all(|action| action.frames == 0
+                && action
+                    .issues
+                    .iter()
+                    .any(|issue| issue.contains("至少需要 5 帧"))));
+        assert!(report.issues.iter().any(|issue| issue.contains("至少需要 5 帧")));
+    }
+
+    #[test]
+    fn inspection_reports_decoded_capacity_as_a_global_issue() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let image = DynamicImage::new_rgba8(2048, 2048);
+        let mut buffer = Cursor::new(Vec::new());
+        image.write_to(&mut buffer, ImageFormat::Png).unwrap();
+        let bytes = buffer.into_inner();
+        for (action, _) in ACTIONS {
+            for index in 0..5 {
+                let path = dir.path().join(action).join(format!("{index:03}.png"));
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, &bytes).unwrap();
+            }
+        }
+
+        let report = inspect_frame_directory(dir.path()).expect("inspect");
+
+        assert!(!report.valid);
+        assert!(report.decoded_bytes > MAX_DECODED_PACK_BYTES);
+        assert!(report
+            .global_issues
+            .iter()
+            .any(|issue| issue.contains("256 MiB")));
     }
 
     #[test]

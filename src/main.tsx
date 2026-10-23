@@ -124,6 +124,7 @@ function StudioApp() {
   const [inspectAction, setInspectAction] = useState<PetAction>("idle");
   const [frameInspection, setFrameInspection] = useState<FrameInspection | null>(null);
   const [inspectingFrames, setInspectingFrames] = useState(false);
+  const inspectionRequestRef = useRef(0);
   const [pets, setPets] = useState<PetProfile[]>([]);
   const [removedPets, setRemovedPets] = useState<RemovedPetRecord[]>([]);
   const [removalNotice, setRemovalNotice] = useState<RemovalNotice | null>(null);
@@ -1548,12 +1549,14 @@ function StudioApp() {
       showToast("目录预检需要桌面版；网页模式只提供实际支持的文件选择。", "info");
       return;
     }
+    const requestId = ++inspectionRequestRef.current;
     setInspectingFrames(true);
+    const rootDir = presetFrameDir.trim() || DEFAULT_PRESET_FRAME_DIR;
     try {
-      const rootDir = presetFrameDir.trim() || DEFAULT_PRESET_FRAME_DIR;
       const report = await invoke<FrameInspection>("inspect_frame_directory", {
         rootDir
       });
+      if (requestId !== inspectionRequestRef.current) return;
       setFrameInspection(report);
       showToast(
         report.valid
@@ -1562,10 +1565,13 @@ function StudioApp() {
         report.valid ? "success" : "error"
       );
     } catch (err) {
+      if (requestId !== inspectionRequestRef.current) return;
       setFrameInspection(null);
       showToast(`预检失败：${formatError(err)}`, "error");
     } finally {
-      setInspectingFrames(false);
+      if (requestId === inspectionRequestRef.current) {
+        setInspectingFrames(false);
+      }
     }
   }
 
@@ -2371,8 +2377,10 @@ function StudioApp() {
                   onChangeSpecies={setSpecies}
                   presetDir={presetFrameDir}
                   onChangePresetDir={(value) => {
+                    inspectionRequestRef.current += 1;
                     setPresetFrameDir(value);
                     setFrameInspection(null);
+                    setInspectingFrames(false);
                   }}
                   onImportPreset={handleImportPreset}
                   frameInspection={frameInspection}

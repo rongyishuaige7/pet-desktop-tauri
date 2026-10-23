@@ -46,9 +46,9 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
     if(cmd==='get_native_pet_state'){if(state.failStateReads>0){state.failStateReads--;throw new Error('mock state read failed');}return state.native;}
     if(cmd==='inspect_frame_directory'){
-     if(state.frameInspection)return state.frameInspection;
-     const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));
-     return {root:args.rootDir,actions,missingActions:[],totalBytes:6*5*1024,decodedBytes:6*5*512*512*4,valid:true,issues:[],thumbnail:null};
+     const report=state.frameInspection??(()=>{const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));return {root:args.rootDir,actions,missingActions:[],totalBytes:6*5*1024,decodedBytes:6*5*512*512*4,valid:true,issues:[],globalIssues:[],thumbnail:null};})();
+     if(state.inspectDelay)await new Promise(resolve=>setTimeout(resolve,state.inspectDelay));
+     return report;
     }
     if(cmd==='load_preset_frame_pack'){
      const root=args.request.rootDir;
@@ -1778,19 +1778,54 @@ await record('workshop_preflight_is_read_only',async()=>{
   const before=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,loads:window.__review.calls.filter(c=>c.cmd==='load_preset_frame_pack').length,attaches:window.__review.calls.filter(c=>c.cmd==='set_native_pet_frame_root').length};});
   await page.evaluate(()=>{
    const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:action==='walk'?0:5,minFrames:5,maxFrames:60,issues:action==='walk'?['至少需要 5 帧，当前只有 0 帧']:[]}));
-   window.__review.frameInspection={root:'/tmp/incomplete',actions,missingActions:['walk'],totalBytes:5120,decodedBytes:1024,valid:false,issues:['walk：至少需要 5 帧'],thumbnail:null};
+   window.__review.frameInspection={root:'/tmp/incomplete',actions,missingActions:['walk'],totalBytes:5120,decodedBytes:1024,valid:false,issues:['walk：至少需要 5 帧'],globalIssues:[],thumbnail:null};
   });
   await page.getByRole('button',{name:'预检目录（只读）',exact:true}).click();
   await page.locator('.frame-inspection.is-invalid').waitFor();
   const invalid=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {text:document.querySelector('.frame-inspection')?.textContent??'',importDisabled:[...document.querySelectorAll('button')].some(button=>button.textContent?.includes('一键导入并保存到宠物架')&&button.disabled),pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,loads:window.__review.calls.filter(c=>c.cmd==='load_preset_frame_pack').length,attaches:window.__review.calls.filter(c=>c.cmd==='set_native_pet_frame_root').length};});
   await page.evaluate(()=>{
    const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));
-   window.__review.frameInspection={root:'/tmp/complete',actions,missingActions:[],totalBytes:5120,decodedBytes:1024,valid:true,issues:[],thumbnail:null};
+   window.__review.frameInspection={root:'/tmp/complete',actions,missingActions:[],totalBytes:5120,decodedBytes:1024,valid:true,issues:[],globalIssues:[],thumbnail:null};
   });
   await page.getByRole('button',{name:'预检目录（只读）',exact:true}).click();
   await page.locator('.frame-inspection.is-valid').waitFor();
   const valid=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {text:document.querySelector('.frame-inspection')?.textContent??'',importDisabled:[...document.querySelectorAll('button')].some(button=>button.textContent?.includes('一键导入并保存到宠物架')&&button.disabled),pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,loads:window.__review.calls.filter(c=>c.cmd==='load_preset_frame_pack').length,attaches:window.__review.calls.filter(c=>c.cmd==='set_native_pet_frame_root').length};});
   return {passed:before.pets===2&&before.active==='A'&&invalid.text.includes('预检发现')&&invalid.text.includes('缺少动作')&&invalid.importDisabled&&invalid.pets===2&&invalid.active==='A'&&invalid.loads===before.loads&&invalid.attaches===before.attaches&&valid.text.includes('预检通过')&&!valid.importDisabled&&valid.pets===2&&valid.active==='A'&&valid.loads===before.loads&&valid.attaches===before.attaches&&errors.length===0,before,invalid,valid,errors};
+ }finally{await context.close();}
+});
+await record('workshop_preflight_stale_result_is_ignored',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.evaluate(()=>{
+   const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));
+   window.__review.inspectDelay=700;
+   window.__review.frameInspection={root:'/tmp/A',actions,missingActions:[],totalBytes:5120,decodedBytes:1024,valid:true,issues:[],globalIssues:[],thumbnail:null};
+  });
+  const input=page.locator('#workshop-preset-dir');
+  await input.fill('/tmp/A');
+  await page.getByRole('button',{name:'预检目录（只读）',exact:true}).click();
+  await input.fill('/tmp/B');
+  await page.waitForTimeout(1000);
+  const state=await page.evaluate(()=>({reports:document.querySelectorAll('.frame-inspection').length,button:[...document.querySelectorAll('button')].find(button=>button.textContent?.includes('预检目录'))?.textContent,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent),calls:window.__review.calls.filter(c=>c.cmd==='inspect_frame_directory').map(c=>c.root)}));
+  return {passed:state.reports===0&&state.button?.includes('预检目录（只读）')&&!state.toasts.some(text=>text?.includes('预检通过'))&&state.calls.includes('/tmp/A')&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('workshop_preflight_shows_global_capacity_issue',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.evaluate(()=>{
+   const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));
+   const issue='帧包解码总量超过 256 MiB';
+   window.__review.frameInspection={root:'/tmp/capacity',actions,missingActions:[],totalBytes:30*2048,decodedBytes:30*2048*2048*4,valid:false,issues:[issue],globalIssues:[issue],thumbnail:null};
+  });
+  await page.getByRole('button',{name:'预检目录（只读）',exact:true}).click();
+  await page.locator('.frame-inspection.is-invalid').waitFor();
+  const state=await page.evaluate(()=>({text:document.querySelector('.frame-inspection')?.textContent??'',disabled:[...document.querySelectorAll('button')].some(button=>button.textContent?.includes('一键导入并保存到宠物架')&&button.disabled)}));
+  return {passed:state.text.includes('超过 256 MiB')&&state.text.includes('容量或全局限制')&&state.disabled&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

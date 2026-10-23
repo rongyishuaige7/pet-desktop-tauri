@@ -51,5 +51,6 @@ export interface FrameInspection {
   decodedBytes: number;
   valid: boolean;
   issues: string[];
+  globalIssues: string[];
   thumbnail: string | null;
 }
