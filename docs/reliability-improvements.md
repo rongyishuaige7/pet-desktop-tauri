@@ -179,6 +179,16 @@
 
 验证：136 项前端单元测试、38 项 Rust 测试（本批未改 Rust）、87 个隔离浏览器流程、TypeScript/Vite 生产构建通过；macOS / Linux CI 通过：[CI 39895848515](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39895848515)。真实桌面上的移除/撤销、素材目录失败和安装升级仍待 C06 实机验收。
 
+## v0.3 C06 部分执行记录（2026-10-23）
+
+实现提交 `6ab5348`（C05）之后开始 C06。只完成 macOS arm64 本地构建与隔离启动，未通过真实桌面验收。
+
+- 构建：`CARGO_TARGET_DIR=/tmp/pet-v03-release-target npm run tauri:build -- --bundles app` 退出 0；产物 20 MB、arm64 thin、版本 0.1.0，二进制 SHA-256 `004790b993204ecc63eeda41d71674dfd884bdeb30df7e18531815a216c47a92`。
+- 签名：ad-hoc / linker-signed，无 TeamIdentifier；`codesign --verify --deep --strict` 失败；本机只有 Apple Development 身份，没有 Developer ID 与公证。
+- 隔离启动：用同一代码构建 `local.pet.desktop.sticker.c06` 测试包，避免触碰现有用户数据；观察到主窗口、内置伙伴领养、桌面宠物窗口、见面练习隐藏/重开主窗口、重启后陪伴页与控制栏；测试后正常退出并删除测试数据目录。
+- 未执行：托盘菜单与 15/30/60 休息、睡眠/唤醒、拖拽/穿透、多屏、真实移除/撤销、干净安装/升级、DMG、签名/公证、5 分钟资源量测、Linux、用户观察。
+- 结论：C06 未通过，不能标记 macOS 或 v0.3 可发布。证据截图见 `docs/screenshots/v0.3-c06-*.jpg`。
+
 ## 本轮之外的依赖维护
 
 只读 `npm audit` 发现开发工具链 6 项告警（3 high / 3 moderate）：Vite 8.1.4 的编辑器启动接口、Vitest / @vitest/mocker 4.1.10 的测试服务路径读取，以及 PostCSS、nanoid、source-map-js 的传递依赖告警。`npm audit --omit=dev` 返回 0 项，不能据此忽略开发环境风险。本轮保持既有依赖版本，未执行 `audit fix` 或升级；应在独立的工具链更新中调整锁文件并验证插件兼容性。
