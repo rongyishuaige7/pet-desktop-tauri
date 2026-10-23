@@ -187,7 +187,7 @@
 - 签名：Apple Development（TeamIdentifier `QQ472M9NLL`），`codesign --verify --deep --strict` 通过；`spctl --assess` 仍 rejected，没有 Developer ID 与公证，分发门槛未满足。
 - 隔离启动：用 `local.pet.desktop.sticker.c06` 测试包和独立数据目录，观察到主窗口、内置伙伴领养、桌面宠物、见面练习隐藏/重开主窗口、重启后陪伴页与控制栏；测试后正常退出并删除测试数据，原有用户数据未改动。
 - 托盘：通过辅助功能点击真实状态项，验证打开主界面、收起/唤回、15/30/60 休息、保持收起、重置位置和退出应用。休息态曾出现两个“立即唤回”，`b44f9ed` 改为“提前唤回”+“保持收起”，并新增 Rust 标签测试。
-- 资源：显示与“收起且管理窗口关闭”各 5 分钟、30 个 `top` 样本；top CPU 均为 0.0，MEM 85–87 MB；`ps` 平均 CPU 0.3%、RSS 约 28 MB。采样分辨率下无可测 CPU 差异，不声称省电；低动态与帧/调度计数未量测。
+- 资源：显示与“收起且管理窗口关闭”各 5 分钟，使用 `top -l 31 -s 10` 固定主进程和三个 WebKit 辅助进程、丢弃首个样本；总 CPU 平均 2.607% / 0.437%，总 MEM 229.9 / 182.8 MB。收起后约降 2.17 个百分点、47 MB；低动态与帧/调度计数未量测。
 - 未完成：真实睡眠/唤醒与系统时钟、拖拽/单击/右键/透明穿透、多屏/缩放、真实移除撤销、干净安装/升级、低动态资源、公证、用户观察；Linux 本轮不执行。
 - 托盘修复 `b44f9ed` 的 macOS / Linux CI 通过：[CI 39917162018](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39917162018)。
 - 结论：C06 未通过，不能标记 macOS 或 v0.3 可发布。截图见 `docs/screenshots/v0.3-c06-*.jpg`。
