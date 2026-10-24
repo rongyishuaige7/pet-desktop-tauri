@@ -4,6 +4,7 @@ use ai_transport::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::{
     menu::{CheckMenuItem, MenuBuilder, MenuItem, SubmenuBuilder},
@@ -332,6 +333,62 @@ fn save_manual_frame_pack(
 }
 
 #[tauri::command]
+async fn export_pet_package(
+    parent_dir: String,
+    name: String,
+    species: String,
+    style: String,
+    created_at: String,
+    frame_root: String,
+) -> Result<native_pet::ExportedPetPackage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = native_pet::resolve_frame_root(&native_pet::normalize_frame_root(Some(
+            frame_root,
+        )));
+        native_pet::export_pet_package(
+            Path::new(&parent_dir),
+            &name,
+            &species,
+            &style,
+            &created_at,
+            &root,
+        )
+    })
+    .await
+    .map_err(|err| format!("导出伙伴包任务失败：{err}"))?
+}
+
+#[tauri::command]
+async fn inspect_pet_package(root_dir: String) -> Result<native_pet::PackageSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        native_pet::inspect_pet_package(Path::new(&root_dir))
+    })
+    .await
+    .map_err(|err| format!("检查伙伴包任务失败：{err}"))?
+}
+
+#[tauri::command]
+async fn import_pet_package(
+    app: tauri::AppHandle,
+    package_dir: String,
+    asset_id: String,
+) -> Result<native_pet::ImportedPetPackage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_data = app
+            .path()
+            .app_data_dir()
+            .map_err(|err| format!("读取应用数据目录失败：{err}"))?;
+        native_pet::import_pet_package(
+            Path::new(&package_dir),
+            &app_data.join("assets"),
+            &asset_id,
+        )
+    })
+    .await
+    .map_err(|err| format!("导入伙伴包任务失败：{err}"))?
+}
+
+#[tauri::command]
 async fn copy_to_managed_asset(
     app: tauri::AppHandle,
     source_dir: String,
@@ -510,6 +567,9 @@ pub fn run() {
             generate_minimax_image,
             upload_reference_image,
             inspect_frame_directory,
+            export_pet_package,
+            inspect_pet_package,
+            import_pet_package,
             copy_to_managed_asset,
             delete_managed_asset,
             load_preset_frame_pack,

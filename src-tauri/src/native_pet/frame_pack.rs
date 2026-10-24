@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use super::model::ACTIONS;
 
 pub const MIN_FRAMES_PER_ACTION: usize = 5;
-const MAX_FRAMES_PER_ACTION: usize = 60;
-const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
-const MAX_PACK_BYTES: usize = 128 * 1024 * 1024;
-const MAX_DECODED_PACK_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const MAX_FRAMES_PER_ACTION: usize = 60;
+pub(crate) const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_PACK_BYTES: usize = 128 * 1024 * 1024;
+pub(crate) const MAX_DECODED_PACK_BYTES: u64 = 256 * 1024 * 1024;
 
 pub fn decode_frame(bytes: &[u8]) -> Result<DynamicImage, String> {
     if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
@@ -36,7 +36,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<DynamicImage, String> {
         .map_err(|err| format!("帧图解码失败（最大 2048×2048）：{err}"))
 }
 
-fn read_frame_bytes(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read_frame_bytes(path: &Path) -> Result<Vec<u8>, String> {
     let size = std::fs::metadata(path)
         .map_err(|err| format!("读取帧图属性失败：{err}"))?
         .len();

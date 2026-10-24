@@ -41,12 +41,15 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
    metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},
    transformCallback:(fn)=>{const id=seq++;callbacks.set(id,fn);return id;},
    invoke:async(cmd,args={})=>{
-    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,sourceDir:args.sourceDir,assetId:args.assetId,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
+    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,sourceDir:args.sourceDir,assetId:args.assetId,parentDir:args.parentDir,name:args.name,exportFrameRoot:args.frameRoot,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
     if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);if(state.dragLeaveDelay&&args.event==='tauri://drag-leave')await new Promise(resolve=>setTimeout(resolve,state.dragLeaveDelay));return id;}
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
     if(cmd==='get_native_pet_state'){if(state.failStateReads>0){state.failStateReads--;throw new Error('mock state read failed');}return state.native;}
     if(cmd==='plugin:dialog|open')return state.dialogPath??null;
+    if(cmd==='export_pet_package')return {root:'/exports/'+args.name+'-pet-package'};
+    if(cmd==='inspect_pet_package')return state.packageSummary??{name:'包伙伴',species:'dog',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',actions:{idle:5,sit:5,sleep:5,happy:5,walk:5,jump:5},thumbnail:null};
+    if(cmd==='import_pet_package')return {assetId:args.assetId,root:'/managed/'+args.assetId,name:'包伙伴',species:'dog',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',thumbnail:null};
     if(cmd==='delete_managed_asset'){(state.deletedAssets??=[]).push(args.assetId);return;}
     if(cmd==='copy_to_managed_asset'){
      if(state.failManagedCopy)throw new Error('mock managed copy failed');
@@ -2016,6 +2019,34 @@ await record('relocate_attach_failure_keeps_new_reference_and_retries_load',asyn
   await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return pet?.frameRoot===window.__review.root&&!document.querySelector('.recovery-notice');});
   const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,nativeRoot:window.__review.root,recovery:Boolean(document.querySelector('.recovery-notice'))};});
   return {passed:failed.root?.startsWith('/managed/')&&failed.mode==='managed'&&failed.nativeRoot==='/review/A'&&failed.recovery.includes('资料已更新，桌面待同步')&&retried.root===retried.nativeRoot&&!retried.recovery&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('export_pet_package_from_shelf',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.dialogPath='/tmp/exports';});
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'导出完整伙伴包',exact:true}).click();
+  await page.locator('.toast-message').filter({hasText:'已导出完整伙伴包'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,exports:window.__review.calls.filter(c=>c.cmd==='export_pet_package').map(c=>({parent:c.parentDir,name:c.name,root:c.exportFrameRoot}))};});
+  return {passed:state.pets===2&&state.active==='A'&&state.exports.length===1&&state.exports[0].parent==='/tmp/exports'&&state.exports[0].name==='测试甲'&&state.exports[0].root==='/review/A'&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('import_pet_package_saves_without_switching',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  const showsBefore=await page.evaluate(()=>window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length);
+  await page.evaluate(()=>{window.__review.dialogPath='/tmp/package';window.__review.packageSummary={name:'包伙伴',species:'dog',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',actions:{idle:5,sit:5,sleep:5,happy:5,walk:5,jump:5},thumbnail:null};});
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'导入完整伙伴包…',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===3;});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const all=await s.loadAllPets();const active=await s.loadPet();const imported=all.find(p=>p.name==='包伙伴');return {pets:all.length,active:active?.id,importedRoot:imported?.frameRoot,importedMode:imported?.assetMode,importedId:imported?.id,native:window.__review.native.petId,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,imports:window.__review.calls.filter(c=>c.cmd==='import_pet_package').length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  return {passed:state.pets===3&&state.active==='A'&&state.importedRoot?.startsWith('/managed/')&&state.importedMode==='managed'&&state.importedId&&state.native==='A'&&state.shows===showsBefore&&state.imports===1&&state.toasts.some(text=>text?.includes('当前伙伴未改变'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

@@ -1,6 +1,7 @@
 mod frame_pack;
 mod model;
 mod playback;
+mod pet_package;
 mod settings;
 mod state;
 
@@ -19,6 +20,10 @@ use macos as platform;
 use stub as platform;
 
 pub(crate) use frame_pack::decode_frame;
+pub use pet_package::{
+    export_pet_package, import_pet_package, inspect_pet_package, ExportedPetPackage,
+    ImportedPetPackage, PackageSummary,
+};
 pub use frame_pack::{
     encode_image_as_data_url, inspect_frame_directory, scan_action_frames, scan_pack,
     write_manual_frame_pack, copy_to_managed_asset, remove_managed_asset, FrameInspection, ManagedAsset,

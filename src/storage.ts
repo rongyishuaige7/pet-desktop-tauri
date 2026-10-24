@@ -169,6 +169,22 @@ export async function savePet(pet: PetProfile, _broadcastPet: PetProfile = pet) 
   notifyPetChanged();
 }
 
+export async function savePetProfile(pet: PetProfile): Promise<void> {
+  await transaction<void>("readwrite", (tx, done, fail) => {
+    const removed = tx.objectStore("removed_pets").get(pet.id);
+    removed.onsuccess = () => {
+      if (removed.result) {
+        fail(new Error("该伙伴在最近移除中，请先恢复"));
+        return;
+      }
+      tx.objectStore("pets_collection").put(pet);
+      done();
+    };
+  });
+  localStorage.removeItem(STORAGE_KEY);
+  notifyPetChanged();
+}
+
 export async function setActivePetId(id: string): Promise<PetProfile | null> {
   const pet = await transaction<PetProfile | null>("readwrite", (tx, done) => {
     const req = tx.objectStore("pets_collection").get(id);

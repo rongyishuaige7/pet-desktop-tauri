@@ -45,6 +45,29 @@ export interface FrameInspectionAction {
   issues: string[];
 }
 
+export interface ExportedPetPackage {
+  root: string;
+}
+
+export interface PackageSummary {
+  name: string;
+  species: PetSpecies;
+  style: "q-sticker";
+  createdAt: string;
+  actions: Record<string, number>;
+  thumbnail: string | null;
+}
+
+export interface ImportedPetPackage {
+  assetId: string;
+  root: string;
+  name: string;
+  species: PetSpecies;
+  style: "q-sticker";
+  createdAt: string;
+  thumbnail: string | null;
+}
+
 export interface ManagedAsset {
   assetId: string;
   root: string;

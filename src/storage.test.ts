@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference, savePetProfile } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -821,6 +821,15 @@ describe("recent removals", () => {
     expect(current?.frameRoot).toBe("/review/A");
     expect(current?.assetMode).toBe("external");
     expect(current?.assetId).toBeUndefined();
+  });
+
+  it("saves a profile without changing the active selection", async () => {
+    await savePet(pet("A"));
+    const revision = await loadSelectionRevision();
+    await savePetProfile({ ...pet("B"), name: "乙" });
+    expect((await loadPet())?.id).toBe("A");
+    expect((await loadAllPets()).length).toBe(2);
+    expect(await loadSelectionRevision()).toBe(revision);
   });
 
   it("does not let a late rename or action update rebuild a removed profile", async () => {

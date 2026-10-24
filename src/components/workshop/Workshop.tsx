@@ -19,6 +19,7 @@ interface WorkshopProps {
   inspectingFrames: boolean;
   onInspectFrames: () => Promise<void> | void;
   onChoosePresetDir: () => Promise<void> | void;
+  onImportPetPackage: () => Promise<void> | void;
   keepExternalReference: boolean;
   onChangeKeepExternalReference: (value: boolean) => void;
   manualFrames: Partial<ActionFrameSet>;
@@ -59,6 +60,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
   inspectingFrames,
   onInspectFrames,
   onChoosePresetDir,
+  onImportPetPackage,
   keepExternalReference,
   onChangeKeepExternalReference,
   manualFrames,
@@ -219,6 +221,14 @@ export const Workshop: React.FC<WorkshopProps> = ({
             </p>
 
             <div style={{ display: "flex", gap: "12px", marginTop: "8px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void onImportPetPackage()}
+                disabled={busy}
+              >
+                导入完整伙伴包…
+              </button>
               <button
                 type="button"
                 className="btn-secondary"

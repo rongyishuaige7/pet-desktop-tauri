@@ -18,6 +18,7 @@ import {
   loadPet,
   loadAllPets,
   savePet,
+  savePetProfile,
   setActivePetId,
   deletePet,
   renamePet,
@@ -46,8 +47,11 @@ import {
   type ActionFrameSet,
   type PetAction,
   type PetProfile,
+  type ExportedPetPackage,
   type FrameInspection,
+  type ImportedPetPackage,
   type ManagedAsset,
+  type PackageSummary,
   type PetSpecies,
   type StudioTab,
   type WorkshopTask
@@ -1792,6 +1796,105 @@ function StudioApp() {
     }
   }
 
+  async function handleExportPetPackage(pet: PetProfile) {
+    if (!isTauri || !pet.frameRoot) {
+      showToast("只有带素材目录的桌面版伙伴可以导出完整包。", "info");
+      return;
+    }
+    try {
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          directory: true,
+          multiple: false,
+          title: "选择伙伴包导出位置"
+        }
+      });
+      const parentDir = Array.isArray(selected) ? selected[0] : selected;
+      if (!parentDir) {
+        showToast("已取消导出，没有创建任何文件。", "info");
+        return;
+      }
+      const exported = await invoke<ExportedPetPackage>("export_pet_package", {
+        parentDir,
+        name: pet.name,
+        species: pet.species,
+        style: pet.style,
+        createdAt: pet.createdAt,
+        frameRoot: pet.frameRoot
+      });
+      showToast(`已导出完整伙伴包：${exported.root}`, "success");
+    } catch (err) {
+      showToast(`导出伙伴包失败：${formatError(err)}`, "error");
+    }
+  }
+
+  async function handleImportPetPackage() {
+    if (!isTauri) {
+      showToast("伙伴包导入需要桌面版。", "info");
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          directory: true,
+          multiple: false,
+          title: "选择伙伴包目录"
+        }
+      });
+      const packageDir = Array.isArray(selected) ? selected[0] : selected;
+      if (!packageDir) {
+        showToast("已取消导入，伙伴架没有变化。", "info");
+        return;
+      }
+      const summary = await invoke<PackageSummary>("inspect_pet_package", {
+        rootDir: packageDir
+      });
+      if (
+        !window.confirm(
+          `将把「${summary.name}」导入为一位新伙伴，分配本机新 id，不改变当前桌面伙伴。确认继续？`
+        )
+      ) {
+        return;
+      }
+      const assetId = crypto.randomUUID();
+      const imported = await invoke<ImportedPetPackage>("import_pet_package", {
+        packageDir,
+        assetId
+      });
+      try {
+        const pack = await invoke<PresetFramePack>("load_preset_frame_pack", {
+          request: { rootDir: imported.root }
+        });
+        const newPet = createManualPet({
+          id: assetId,
+          name: imported.name,
+          species: imported.species,
+          sourceImage: pack.sourceImage,
+          manualFrames: pack.actions,
+          frameRoot: imported.root,
+          storageMode: "preset-root",
+          assetMode: "managed",
+          assetId: imported.assetId
+        });
+        await savePetProfile(toPersistedPet(newPet));
+        await refreshList();
+        setCurrentTab("shelf");
+        showToast(
+          `已把「${newPet.name}」导入伙伴架，当前伙伴未改变。`,
+          "success"
+        );
+      } catch (err) {
+        await cleanupUnreferencedManagedAsset(assetId);
+        throw err;
+      }
+    } catch (err) {
+      showToast(`导入伙伴包失败：${formatError(err)}`, "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function handleImportPreset() {
     setIsLoading(true);
     let pendingAssetId: string | undefined;
@@ -2643,6 +2746,7 @@ function StudioApp() {
                   inspectingFrames={inspectingFrames}
                   onInspectFrames={handleInspectFrames}
                   onChoosePresetDir={handleChooseFrameDir}
+                  onImportPetPackage={handleImportPetPackage}
                   keepExternalReference={keepExternalReference}
                   onChangeKeepExternalReference={setKeepExternalReference}
                   manualFrames={manualFrames}
@@ -2720,6 +2824,7 @@ function StudioApp() {
             onDeployPet={handleDeployPet}
             onRemovePet={handleRemovePet}
             onManagePet={handleManagePetAsset}
+            onExportPet={handleExportPetPackage}
             onRelocatePet={handleRelocatePet}
             onRestoreRemoved={handleRestoreRemoved}
             onRenamePet={handleRenamePet}
