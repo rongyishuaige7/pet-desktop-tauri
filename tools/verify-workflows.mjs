@@ -47,6 +47,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
     if(cmd==='get_native_pet_state'){if(state.failStateReads>0){state.failStateReads--;throw new Error('mock state read failed');}return state.native;}
     if(cmd==='plugin:dialog|open')return state.dialogPath??null;
+    if(cmd==='delete_managed_asset'){(state.deletedAssets??=[]).push(args.assetId);return;}
     if(cmd==='copy_to_managed_asset'){
      if(state.failManagedCopy)throw new Error('mock managed copy failed');
      if(state.copyDelay)await new Promise(resolve=>setTimeout(resolve,state.copyDelay));
@@ -1976,8 +1977,9 @@ await record('relocate_asset_rejects_removed_target',async()=>{
   await page.waitForTimeout(150);
   await page.evaluate(async()=>{await (await import('/src/storage.ts')).softRemovePet('A');});
   await page.locator('.toast-message.error').filter({hasText:'目标伙伴已被移除'}).waitFor();
-  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,roots:(await s.loadAllPets()).map(p=>p.frameRoot)};});
-  return {passed:state.pets===1&&state.active==='B'&&state.removed===1&&!state.roots.some(root=>root?.startsWith('/managed/'))&&errors.length===0,state,errors};
+  await page.waitForFunction(()=>Array.isArray(window.__review.deletedAssets)&&window.__review.deletedAssets.length>0);
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,roots:(await s.loadAllPets()).map(p=>p.frameRoot),deleted:window.__review.deletedAssets??[]};});
+  return {passed:state.pets===1&&state.active==='B'&&state.removed===1&&!state.roots.some(root=>root?.startsWith('/managed/'))&&state.deleted.length===1&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

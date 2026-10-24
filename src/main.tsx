@@ -1643,17 +1643,34 @@ function StudioApp() {
     }
   }
 
+  async function cleanupUnreferencedManagedAsset(assetId: string) {
+    if (!isTauri) return;
+    try {
+      const [pets, removed] = await Promise.all([loadAllPets(), loadRemovedPets()]);
+      const referenced = [...pets, ...removed.map((record) => record.pet)].some(
+        (entry) => entry.assetId === assetId
+      );
+      if (!referenced) {
+        await invoke("delete_managed_asset", { assetId });
+      }
+    } catch {
+      // Cleanup is best effort; an orphan can be collected later.
+    }
+  }
+
   async function handleManagePetAsset(pet: PetProfile) {
     if (!isTauri || pet.storageMode !== "preset-root" || !pet.frameRoot) {
       showToast("只有桌面版的外部目录伙伴可以交给应用保管。", "info");
       return;
     }
+    let pendingAssetId: string | undefined;
     try {
       const copyId = `${pet.id}-${Date.now()}`;
       const copied = await invoke<ManagedAsset>("copy_to_managed_asset", {
         sourceDir: pet.frameRoot,
         assetId: copyId
       });
+      pendingAssetId = copied.assetId;
       const updated = await updatePetAssetReference(
         pet.id,
         copied.root,
@@ -1661,6 +1678,7 @@ function StudioApp() {
         copied.assetId
       );
       if (!updated) throw new Error("伙伴已被移除");
+      pendingAssetId = undefined;
       await refreshList();
       if (activePetRef.current?.id === pet.id) {
         const full = await ensurePetHydrated(updated);
@@ -1684,6 +1702,7 @@ function StudioApp() {
       }
       showToast(`已把「${pet.name}」交给应用保管，原目录不再依赖。`, "success");
     } catch (err) {
+      if (pendingAssetId) void cleanupUnreferencedManagedAsset(pendingAssetId);
       showToast(`交给应用保管失败：${formatError(err)}`, "error");
     }
   }
@@ -1693,6 +1712,7 @@ function StudioApp() {
       showToast("只有桌面版的外部目录伙伴可以重新定位。", "info");
       return;
     }
+    let pendingAssetId: string | undefined;
     try {
       const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
         options: {
@@ -1721,6 +1741,7 @@ function StudioApp() {
         sourceDir: path,
         assetId: copyId
       });
+      pendingAssetId = copied.assetId;
       const current = (await loadAllPets()).find((entry) => entry.id === pet.id);
       if (!current) {
         throw new Error("目标伙伴已被移除，未替换素材");
@@ -1739,6 +1760,7 @@ function StudioApp() {
         { frameRoot: originalRoot, assetId: originalAssetId }
       );
       if (!updated) throw new Error("目标伙伴已被移除或素材已变化");
+      pendingAssetId = undefined;
       await refreshList();
       if (activePetRef.current?.id === pet.id) {
         const full = await ensurePetHydrated(updated);
@@ -1749,12 +1771,14 @@ function StudioApp() {
       }
       showToast(`已重新定位「${pet.name}」的素材。`, "success");
     } catch (err) {
+      if (pendingAssetId) void cleanupUnreferencedManagedAsset(pendingAssetId);
       showToast(`重新定位失败：${formatError(err)}`, "error");
     }
   }
 
   async function handleImportPreset() {
     setIsLoading(true);
+    let pendingAssetId: string | undefined;
     try {
       const rootDir = presetFrameDir.trim() || DEFAULT_PRESET_FRAME_DIR;
       localStorage.setItem(PRESET_FRAME_DIR_STORAGE, rootDir);
@@ -1815,6 +1839,7 @@ function StudioApp() {
         packRoot = copied.root;
         assetMode = "managed";
         managedAssetId = copied.assetId;
+        pendingAssetId = copied.assetId;
       }
       const pack = await invoke<PresetFramePack>("load_preset_frame_pack", {
         request: { rootDir: packRoot }
@@ -1831,6 +1856,7 @@ function StudioApp() {
           managedAssetId
         );
         if (!updated) throw new Error("要修复的伙伴已被移除");
+        pendingAssetId = undefined;
         if (activePetRef.current?.id === repairPetId) {
           const full = await ensurePetHydrated(updated);
           setActivePet(full);
@@ -1862,9 +1888,11 @@ function StudioApp() {
       });
 
       const result = await activatePet(newPet, true);
+      pendingAssetId = undefined;
       announceActivation(result, `已成功导入「${newPet.name}」并同步至桌面！`);
       setCurrentTab("stage");
     } catch (err) {
+      if (pendingAssetId) void cleanupUnreferencedManagedAsset(pendingAssetId);
       showToast(`导入失败：${formatError(err)}`, "error");
     } finally {
       setIsLoading(false);

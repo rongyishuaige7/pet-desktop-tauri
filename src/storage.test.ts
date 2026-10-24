@@ -787,6 +787,39 @@ describe("recent removals", () => {
     );
   });
 
+  it("keeps the old asset reference when the update transaction aborts", async () => {
+    await savePet({
+      ...pet("A"),
+      storageMode: "preset-root",
+      frameRoot: "/review/A",
+      assetMode: "external"
+    });
+    const put = IDBObjectStore.prototype.put;
+    const spy = vi
+      .spyOn(IDBObjectStore.prototype, "put")
+      .mockImplementation(function (
+        this: IDBObjectStore,
+        ...args: Parameters<typeof put>
+      ) {
+        const req = put.apply(this, args);
+        if (this.name === "pets_collection") {
+          queueMicrotask(() => this.transaction.abort());
+        }
+        return req;
+      });
+    try {
+      await expect(
+        updatePetAssetReference("A", "/managed/A", "managed", "A-1")
+      ).rejects.toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+    const current = await loadPet();
+    expect(current?.frameRoot).toBe("/review/A");
+    expect(current?.assetMode).toBe("external");
+    expect(current?.assetId).toBeUndefined();
+  });
+
   it("does not let a late rename or action update rebuild a removed profile", async () => {
     await savePet(pet("A"));
     await softRemovePet("A");

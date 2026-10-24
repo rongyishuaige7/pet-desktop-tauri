@@ -352,6 +352,19 @@ async fn copy_to_managed_asset(
 }
 
 #[tauri::command]
+async fn delete_managed_asset(app: tauri::AppHandle, asset_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_data = app
+            .path()
+            .app_data_dir()
+            .map_err(|err| format!("读取应用数据目录失败：{err}"))?;
+        native_pet::remove_managed_asset(&app_data.join("assets"), &asset_id)
+    })
+    .await
+    .map_err(|err| format!("删除素材任务失败：{err}"))?
+}
+
+#[tauri::command]
 async fn inspect_frame_directory(root_dir: String) -> Result<native_pet::FrameInspection, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let normalized = native_pet::normalize_frame_root(Some(root_dir));
@@ -498,6 +511,7 @@ pub fn run() {
             upload_reference_image,
             inspect_frame_directory,
             copy_to_managed_asset,
+            delete_managed_asset,
             load_preset_frame_pack,
             save_manual_frame_pack
         ])

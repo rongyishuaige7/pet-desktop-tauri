@@ -240,6 +240,15 @@ pub fn copy_to_managed_asset(
     assets_root: &Path,
     asset_id: &str,
 ) -> Result<ManagedAsset, String> {
+    copy_to_managed_asset_inner(source, assets_root, asset_id, None)
+}
+
+fn copy_to_managed_asset_inner(
+    source: &Path,
+    assets_root: &Path,
+    asset_id: &str,
+    fail_after_files: Option<usize>,
+) -> Result<ManagedAsset, String> {
     if !valid_asset_id(asset_id) {
         return Err("素材 id 只能包含字母、数字、- 和 _".into());
     }
@@ -266,6 +275,7 @@ pub fn copy_to_managed_asset(
 
     let result = (|| -> Result<u64, String> {
         let mut total_bytes = 0u64;
+        let mut copied_files = 0usize;
         for (action, _) in ACTIONS {
             let frames = actions
                 .get(action)
@@ -274,6 +284,9 @@ pub fn copy_to_managed_asset(
             std::fs::create_dir_all(&dest_dir)
                 .map_err(|err| format!("创建暂存动作目录失败：{err}"))?;
             for path in frames {
+                if fail_after_files == Some(copied_files) {
+                    return Err("模拟复制中断".into());
+                }
                 let name = path
                     .file_name()
                     .ok_or_else(|| format!("帧文件没有文件名：{}", path.display()))?;
@@ -283,6 +296,7 @@ pub fn copy_to_managed_asset(
                 total_bytes += std::fs::metadata(&dest)
                     .map_err(|err| format!("读取暂存帧属性失败：{err}"))?
                     .len();
+                copied_files += 1;
             }
         }
         let copied = inspect_frame_directory(&staging)?;
@@ -305,6 +319,26 @@ pub fn copy_to_managed_asset(
             Err(err)
         }
     }
+}
+
+/// Removes a managed asset by id. Callers must first prove no profile still
+/// references it; this only guards the path shape inside the assets root.
+pub fn remove_managed_asset(assets_root: &Path, asset_id: &str) -> Result<(), String> {
+    if !valid_asset_id(asset_id) {
+        return Err("素材 id 只能包含字母、数字、- 和 _".into());
+    }
+    let root = assets_root.join(asset_id);
+    if !root.exists() {
+        return Ok(());
+    }
+    if root
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("拒绝删除符号链接形式的素材目录".into());
+    }
+    std::fs::remove_dir_all(&root).map_err(|err| format!("删除未引用素材失败：{err}"))
 }
 
 fn image_mime(path: &Path) -> &'static str {
@@ -727,6 +761,41 @@ mod tests {
         assert!(result.is_err());
         assert!(source.path().join("idle").join("000.png").is_file());
         assert!(!blocked.join("pet-1").exists());
+    }
+
+    #[test]
+    fn interrupted_managed_copy_removes_staging_and_keeps_source() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+
+        let result = copy_to_managed_asset_inner(source.path(), assets.path(), "pet-1", Some(1));
+
+        assert!(result.is_err());
+        assert!(!assets.path().join("pet-1").exists());
+        assert_eq!(
+            std::fs::read_dir(assets.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".staging-"))
+                .count(),
+            0
+        );
+        assert!(source.path().join("idle").join("000.png").is_file());
+    }
+
+    #[test]
+    fn removes_only_a_valid_managed_asset() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+        copy_to_managed_asset(source.path(), assets.path(), "pet-1").expect("copy");
+
+        remove_managed_asset(assets.path(), "pet-1").expect("remove");
+
+        assert!(!assets.path().join("pet-1").exists());
+        assert!(source.path().join("idle").join("000.png").is_file());
+        assert!(remove_managed_asset(assets.path(), "../escape").is_err());
     }
 
     #[test]

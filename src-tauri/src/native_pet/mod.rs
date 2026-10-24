@@ -21,7 +21,7 @@ use stub as platform;
 pub(crate) use frame_pack::decode_frame;
 pub use frame_pack::{
     encode_image_as_data_url, inspect_frame_directory, scan_action_frames, scan_pack,
-    write_manual_frame_pack, copy_to_managed_asset, FrameInspection, ManagedAsset,
+    write_manual_frame_pack, copy_to_managed_asset, remove_managed_asset, FrameInspection, ManagedAsset,
     MIN_FRAMES_PER_ACTION,
 };
 #[allow(unused_imports)]
