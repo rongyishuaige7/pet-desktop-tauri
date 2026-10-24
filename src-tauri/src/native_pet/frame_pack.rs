@@ -715,6 +715,21 @@ mod tests {
     }
 
     #[test]
+    fn managed_copy_fails_cleanly_when_the_assets_root_is_a_file() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+        let blocked = assets.path().join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+
+        let result = copy_to_managed_asset(source.path(), &blocked, "pet-1");
+
+        assert!(result.is_err());
+        assert!(source.path().join("idle").join("000.png").is_file());
+        assert!(!blocked.join("pet-1").exists());
+    }
+
+    #[test]
     fn managed_copy_rejects_unsafe_asset_ids() {
         let source = tempfile::tempdir().expect("source");
         let assets = tempfile::tempdir().expect("assets");

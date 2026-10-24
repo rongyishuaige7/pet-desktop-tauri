@@ -49,6 +49,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='plugin:dialog|open')return state.dialogPath??null;
     if(cmd==='copy_to_managed_asset'){
      if(state.failManagedCopy)throw new Error('mock managed copy failed');
+     if(state.copyDelay)await new Promise(resolve=>setTimeout(resolve,state.copyDelay));
      return {assetId:args.assetId,root:'/managed/'+args.assetId,totalBytes:30*1024};
     }
     if(cmd==='inspect_frame_directory'){
@@ -1944,6 +1945,39 @@ await record('managed_takeover_failure_keeps_external',async()=>{
   await page.locator('.toast-message.error').filter({hasText:'交给应用保管失败'}).waitFor();
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,pets:(await s.loadAllPets()).length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').length,nativeRoot:window.__review.root};});
   return {passed:state.pets===2&&state.root==='/review/A'&&state.mode!=='managed'&&state.copies===1&&state.nativeRoot==='/review/A'&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('relocate_asset_preserves_hidden_and_source_reference',async()=>{
+ const {context,page,errors}=await newCase({desktop:true,nativeMode:'hidden'});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const before=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length};});
+  await page.evaluate(()=>{window.__review.dialogPath='/tmp/relocated';});
+  page.once('dialog',dialog=>dialog.accept());
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'重新定位素材',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return Boolean((await s.loadPet())?.frameRoot?.startsWith('/managed/'));});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,assetId:pet?.assetId,active:(await s.loadPet())?.id,native:window.__review.native.petId,visibility:window.__review.native.visibilityMode,visible:window.__review.native.visible,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').map(c=>c.sourceDir)};});
+  return {passed:before.root==='/review/A'&&state.active==='A'&&state.mode==='managed'&&state.root?.startsWith('/managed/')&&state.native==='A'&&state.visibility==='hidden'&&state.visible===false&&state.shows===before.shows&&state.copies.includes('/tmp/relocated')&&errors.length===0,before,state,errors};
+ }finally{await context.close();}
+});
+await record('relocate_asset_rejects_removed_target',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.dialogPath='/tmp/relocate-stale';window.__review.copyDelay=700;});
+  page.once('dialog',dialog=>dialog.accept());
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'重新定位素材',exact:true}).click();
+  await page.waitForTimeout(150);
+  await page.evaluate(async()=>{await (await import('/src/storage.ts')).softRemovePet('A');});
+  await page.locator('.toast-message.error').filter({hasText:'目标伙伴已被移除'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,roots:(await s.loadAllPets()).map(p=>p.frameRoot)};});
+  return {passed:state.pets===1&&state.active==='B'&&state.removed===1&&!state.roots.some(root=>root?.startsWith('/managed/'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

@@ -17,6 +17,7 @@ interface PetShelfProps {
   onDeployPet: (pet: PetProfile) => Promise<void> | void;
   onRemovePet: (pet: PetProfile) => Promise<void> | void;
   onManagePet: (pet: PetProfile) => Promise<void> | void;
+  onRelocatePet: (pet: PetProfile) => Promise<void> | void;
   onRestoreRemoved: (
     id: string,
     removalId: string,
@@ -65,6 +66,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
   onDeployPet,
   onRemovePet,
   onManagePet,
+  onRelocatePet,
   onRestoreRemoved,
   onRenamePet,
   onRecallPet,
@@ -468,6 +470,18 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                             交给应用保管
                           </button>
                         )}
+                      {pet.storageMode === "preset-root" && pet.frameRoot && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            closeMenu(event);
+                            void run(pet.id, () => onRelocatePet(pet));
+                          }}
+                          disabled={actionsDisabled}
+                        >
+                          重新定位素材
+                        </button>
+                      )}
                       {hasRecovery && (
                         <button
                           type="button"

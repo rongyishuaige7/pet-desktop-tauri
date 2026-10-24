@@ -367,12 +367,16 @@ export async function restoreRemovedPet(
   return result;
 }
 
-async function updateExistingPet(id: string, update: (pet: PetProfile) => PetProfile): Promise<PetProfile | null> {
+async function updateExistingPet(
+  id: string,
+  update: (pet: PetProfile) => PetProfile,
+  accept?: (pet: PetProfile) => boolean
+): Promise<PetProfile | null> {
   const pet = await transaction<PetProfile | null>("readwrite", (tx, done) => {
     const collection = tx.objectStore("pets_collection");
     const req = collection.get(id);
     req.onsuccess = () => {
-      if (!req.result) return done(null);
+      if (!req.result || (accept && !accept(req.result))) return done(null);
       const next = update(req.result);
       collection.put(next);
       const active = tx.objectStore("metadata").get(ACTIVE_ID_KEY);
@@ -421,15 +425,23 @@ export function updatePetAssetReference(
   id: string,
   frameRoot: string,
   assetMode: "managed" | "external",
-  assetId?: string
+  assetId?: string,
+  expected?: { frameRoot?: string; assetId?: string }
 ): Promise<PetProfile | null> {
-  return updateExistingPet(id, (pet) => ({
-    ...pet,
-    frameRoot,
-    storageMode: "preset-root",
-    assetMode,
-    assetId
-  }));
+  return updateExistingPet(
+    id,
+    (pet) => ({
+      ...pet,
+      frameRoot,
+      storageMode: "preset-root",
+      assetMode,
+      assetId
+    }),
+    expected
+      ? (pet) =>
+          pet.frameRoot === expected.frameRoot && pet.assetId === expected.assetId
+      : undefined
+  );
 }
 
 export async function setCurrentAction(action: PetAction, syncNative = true) {

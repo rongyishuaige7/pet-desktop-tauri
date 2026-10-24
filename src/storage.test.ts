@@ -773,6 +773,18 @@ describe("recent removals", () => {
     expect((await loadPet())?.id).toBe(before);
     expect(await loadSelectionRevision()).toBe(revision);
     expect((await loadAllPets()).length).toBe(2);
+
+    const stale = await updatePetAssetReference(
+      "A",
+      "/managed/A2",
+      "managed",
+      "A-2",
+      { frameRoot: "/managed/not-A", assetId: "not-A" }
+    );
+    expect(stale).toBeNull();
+    expect((await loadAllPets()).find((entry) => entry.id === "A")?.frameRoot).toBe(
+      "/managed/A"
+    );
   });
 
   it("does not let a late rename or action update rebuild a removed profile", async () => {

@@ -1688,6 +1688,71 @@ function StudioApp() {
     }
   }
 
+  async function handleRelocatePet(pet: PetProfile) {
+    if (!isTauri || pet.storageMode !== "preset-root" || !pet.frameRoot) {
+      showToast("只有桌面版的外部目录伙伴可以重新定位。", "info");
+      return;
+    }
+    try {
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          directory: true,
+          multiple: false,
+          title: "选择新的帧包目录",
+          defaultPath: pet.frameRoot
+        }
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path) {
+        showToast("已取消重新定位，素材引用没有变化。", "info");
+        return;
+      }
+      if (
+        !window.confirm(
+          `将用「${path}」替换「${pet.name}」的素材引用。原目录不会被修改，确认继续？`
+        )
+      ) {
+        return;
+      }
+      const originalRoot = pet.frameRoot;
+      const originalAssetId = pet.assetId;
+      const copyId = `${pet.id}-${Date.now()}`;
+      const copied = await invoke<ManagedAsset>("copy_to_managed_asset", {
+        sourceDir: path,
+        assetId: copyId
+      });
+      const current = (await loadAllPets()).find((entry) => entry.id === pet.id);
+      if (!current) {
+        throw new Error("目标伙伴已被移除，未替换素材");
+      }
+      if (
+        current.frameRoot !== originalRoot ||
+        current.assetId !== originalAssetId
+      ) {
+        throw new Error("目标伙伴的素材已变化，未替换");
+      }
+      const updated = await updatePetAssetReference(
+        pet.id,
+        copied.root,
+        "managed",
+        copied.assetId,
+        { frameRoot: originalRoot, assetId: originalAssetId }
+      );
+      if (!updated) throw new Error("目标伙伴已被移除或素材已变化");
+      await refreshList();
+      if (activePetRef.current?.id === pet.id) {
+        const full = await ensurePetHydrated(updated);
+        setActivePet(full);
+        if (full.frameRoot) {
+          await native.attach(full.frameRoot, full.id, full.name);
+        }
+      }
+      showToast(`已重新定位「${pet.name}」的素材。`, "success");
+    } catch (err) {
+      showToast(`重新定位失败：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleImportPreset() {
     setIsLoading(true);
     try {
@@ -2598,6 +2663,7 @@ function StudioApp() {
             onDeployPet={handleDeployPet}
             onRemovePet={handleRemovePet}
             onManagePet={handleManagePetAsset}
+            onRelocatePet={handleRelocatePet}
             onRestoreRemoved={handleRestoreRemoved}
             onRenamePet={handleRenamePet}
             onRecallPet={handleRecallPet}
