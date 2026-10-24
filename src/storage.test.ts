@@ -770,6 +770,9 @@ describe("recent removals", () => {
     expect(updated?.frameRoot).toBe("/managed/A");
     expect(updated?.assetMode).toBe("managed");
     expect(updated?.assetId).toBe("A-1");
+    expect(updated?.sourceImage).toBe("");
+    expect(updated?.thumbnailImage).toBeUndefined();
+    expect(updated?.actions.idle).toEqual([]);
     expect((await loadPet())?.id).toBe(before);
     expect(await loadSelectionRevision()).toBe(revision);
     expect((await loadAllPets()).length).toBe(2);

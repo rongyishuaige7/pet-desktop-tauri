@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { withCurrentAction, withRenamedPet } from "./pet-logic";
-import { PET_CHANNEL, STORAGE_KEY, type ActionFrameSet, type PetAction, type PetProfile } from "./types";
+import { PET_ACTIONS, PET_CHANNEL, STORAGE_KEY, type ActionFrameSet, type PetAction, type PetProfile } from "./types";
 import {
   ONBOARDING_KEY,
   normalizeOnboardingRecord,
@@ -367,6 +367,10 @@ export async function restoreRemovedPet(
   return result;
 }
 
+function emptyActionFrames(): ActionFrameSet {
+  return Object.fromEntries(PET_ACTIONS.map(({ id }) => [id, []])) as unknown as ActionFrameSet;
+}
+
 async function updateExistingPet(
   id: string,
   update: (pet: PetProfile) => PetProfile,
@@ -430,13 +434,23 @@ export function updatePetAssetReference(
 ): Promise<PetProfile | null> {
   return updateExistingPet(
     id,
-    (pet) => ({
-      ...pet,
-      frameRoot,
-      storageMode: "preset-root",
-      assetMode,
-      assetId
-    }),
+    (pet) => {
+      const rootChanged = pet.frameRoot !== frameRoot;
+      return {
+        ...pet,
+        frameRoot,
+        storageMode: "preset-root",
+        assetMode,
+        assetId,
+        ...(rootChanged
+          ? {
+              sourceImage: "",
+              thumbnailImage: undefined,
+              actions: emptyActionFrames()
+            }
+          : {})
+      };
+    },
     expected
       ? (pet) =>
           pet.frameRoot === expected.frameRoot && pet.assetId === expected.assetId

@@ -1664,6 +1664,8 @@ function StudioApp() {
       return;
     }
     let pendingAssetId: string | undefined;
+    const originalRoot = pet.frameRoot;
+    const originalAssetId = pet.assetId;
     try {
       const copyId = `${pet.id}-${Date.now()}`;
       const copied = await invoke<ManagedAsset>("copy_to_managed_asset", {
@@ -1675,9 +1677,10 @@ function StudioApp() {
         pet.id,
         copied.root,
         "managed",
-        copied.assetId
+        copied.assetId,
+        { frameRoot: originalRoot, assetId: originalAssetId }
       );
-      if (!updated) throw new Error("伙伴已被移除");
+      if (!updated) throw new Error("目标伙伴已被移除或素材已变化");
       pendingAssetId = undefined;
       await refreshList();
       if (activePetRef.current?.id === pet.id) {
@@ -1766,7 +1769,20 @@ function StudioApp() {
         const full = await ensurePetHydrated(updated);
         setActivePet(full);
         if (full.frameRoot) {
-          await native.attach(full.frameRoot, full.id, full.name);
+          try {
+            await native.attach(full.frameRoot, full.id, full.name);
+          } catch {
+            setLocalError({
+              id: `asset-${full.id}`,
+              petId: full.id,
+              title: "资料已更新，桌面待同步",
+              body: "新的素材引用已经保存；桌面仍在用旧素材。可以只重试加载，不需要重新复制。",
+              operation: "set_frame_root",
+              code: "ASSET_NOT_FOUND"
+            });
+            showToast("资料已更新，桌面待同步。", "info");
+            return;
+          }
         }
       }
       showToast(`已重新定位「${pet.name}」的素材。`, "success");
@@ -1862,7 +1878,20 @@ function StudioApp() {
           setActivePet(full);
           if (full.frameRoot) {
             // Attaching preserves the confirmed hidden/snoozed intent.
-            await native.attach(full.frameRoot, full.id, full.name);
+            try {
+              await native.attach(full.frameRoot, full.id, full.name);
+            } catch {
+              setLocalError({
+                id: `asset-${full.id}`,
+                petId: full.id,
+                title: "资料已更新，桌面待同步",
+                body: "新的素材引用已经保存；桌面仍在用旧素材。可以只重试加载，不需要重新复制。",
+                operation: "set_frame_root",
+                code: "ASSET_NOT_FOUND"
+              });
+              showToast("资料已更新，桌面待同步。", "info");
+              return;
+            }
           }
         }
         await refreshList();

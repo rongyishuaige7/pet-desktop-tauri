@@ -1960,8 +1960,8 @@ await record('relocate_asset_preserves_hidden_and_source_reference',async()=>{
   await card.locator('summary').click();
   await card.getByRole('button',{name:'重新定位素材',exact:true}).click();
   await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return Boolean((await s.loadPet())?.frameRoot?.startsWith('/managed/'));});
-  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,assetId:pet?.assetId,active:(await s.loadPet())?.id,native:window.__review.native.petId,visibility:window.__review.native.visibilityMode,visible:window.__review.native.visible,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').map(c=>c.sourceDir)};});
-  return {passed:before.root==='/review/A'&&state.active==='A'&&state.mode==='managed'&&state.root?.startsWith('/managed/')&&state.native==='A'&&state.visibility==='hidden'&&state.visible===false&&state.shows===before.shows&&state.copies.includes('/tmp/relocated')&&errors.length===0,before,state,errors};
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,assetId:pet?.assetId,sourceImage:pet?.sourceImage,actionFrames:pet?.actions.idle.length,active:(await s.loadPet())?.id,native:window.__review.native.petId,visibility:window.__review.native.visibilityMode,visible:window.__review.native.visible,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').map(c=>c.sourceDir)};});
+  return {passed:before.root==='/review/A'&&state.active==='A'&&state.mode==='managed'&&state.root?.startsWith('/managed/')&&state.sourceImage===''&&state.actionFrames===0&&state.native==='A'&&state.visibility==='hidden'&&state.visible===false&&state.shows===before.shows&&state.copies.includes('/tmp/relocated')&&errors.length===0,before,state,errors};
  }finally{await context.close();}
 });
 await record('relocate_asset_rejects_removed_target',async()=>{
@@ -1980,6 +1980,42 @@ await record('relocate_asset_rejects_removed_target',async()=>{
   await page.waitForFunction(()=>Array.isArray(window.__review.deletedAssets)&&window.__review.deletedAssets.length>0);
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,removed:(await s.loadRemovedPets()).length,roots:(await s.loadAllPets()).map(p=>p.frameRoot),deleted:window.__review.deletedAssets??[]};});
   return {passed:state.pets===1&&state.active==='B'&&state.removed===1&&!state.roots.some(root=>root?.startsWith('/managed/'))&&state.deleted.length===1&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('managed_takeover_rejects_stale_reference',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.copyDelay=700;});
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'交给应用保管',exact:true}).click();
+  await page.waitForTimeout(150);
+  await page.evaluate(async()=>{await (await import('/src/storage.ts')).updatePetAssetReference('A','/managed/newer','managed','newer');});
+  await page.locator('.toast-message.error').filter({hasText:'交给应用保管失败'}).waitFor();
+  await page.waitForFunction(()=>Array.isArray(window.__review.deletedAssets)&&window.__review.deletedAssets.length>0);
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,assetId:pet?.assetId,mode:pet?.assetMode,deleted:window.__review.deletedAssets??[],copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').map(c=>c.assetId)};});
+  return {passed:state.root==='/managed/newer'&&state.assetId==='newer'&&state.mode==='managed'&&state.deleted.length===1&&state.deleted[0]===state.copies[0]&&state.deleted[0]!==state.assetId&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('relocate_attach_failure_keeps_new_reference_and_retries_load',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.dialogPath='/tmp/relocate-attach';window.__review.failAttach=true;});
+  page.once('dialog',dialog=>dialog.accept());
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'重新定位素材',exact:true}).click();
+  await page.locator('.recovery-notice').filter({hasText:'资料已更新，桌面待同步'}).waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,nativeRoot:window.__review.root,recovery:document.querySelector('.recovery-notice')?.textContent??''};});
+  await page.evaluate(()=>{window.__review.failAttach=false;});
+  await page.getByRole('button',{name:'重试加载',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return pet?.frameRoot===window.__review.root&&!document.querySelector('.recovery-notice');});
+  const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,nativeRoot:window.__review.root,recovery:Boolean(document.querySelector('.recovery-notice'))};});
+  return {passed:failed.root?.startsWith('/managed/')&&failed.mode==='managed'&&failed.nativeRoot==='/review/A'&&failed.recovery.includes('资料已更新，桌面待同步')&&retried.root===retried.nativeRoot&&!retried.recovery&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
 }finally{
