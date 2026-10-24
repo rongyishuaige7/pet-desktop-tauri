@@ -401,15 +401,34 @@ export function replacePetAssets(
   frameRoot: string,
   sourceImage: string,
   actions: ActionFrameSet,
-  thumbnailImage?: string
+  thumbnailImage?: string,
+  assetMode: PetProfile["assetMode"] = "external",
+  assetId?: string
 ): Promise<PetProfile | null> {
   return updateExistingPet(id, (pet) => ({
     ...pet,
     frameRoot,
     storageMode: "preset-root",
+    assetMode,
+    assetId,
     sourceImage,
     thumbnailImage: thumbnailImage ?? sourceImage,
     actions
+  }));
+}
+
+export function updatePetAssetReference(
+  id: string,
+  frameRoot: string,
+  assetMode: "managed" | "external",
+  assetId?: string
+): Promise<PetProfile | null> {
+  return updateExistingPet(id, (pet) => ({
+    ...pet,
+    frameRoot,
+    storageMode: "preset-root",
+    assetMode,
+    assetId
   }));
 }
 

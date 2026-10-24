@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -757,6 +757,22 @@ describe("recent removals", () => {
     expect((await loadAllPets()).map((entry) => entry.id).sort()).toEqual(["A", "B"]);
     expect(await loadRemovedPets()).toEqual([]);
     expect(await loadSelectionRevision()).toBe(revision);
+  });
+
+  it("updates a managed asset reference without changing selection", async () => {
+    await savePet(pet("A"));
+    await savePet(pet("B"));
+    const revision = await loadSelectionRevision();
+    const before = (await loadPet())?.id;
+
+    const updated = await updatePetAssetReference("A", "/managed/A", "managed", "A-1");
+
+    expect(updated?.frameRoot).toBe("/managed/A");
+    expect(updated?.assetMode).toBe("managed");
+    expect(updated?.assetId).toBe("A-1");
+    expect((await loadPet())?.id).toBe(before);
+    expect(await loadSelectionRevision()).toBe(revision);
+    expect((await loadAllPets()).length).toBe(2);
   });
 
   it("does not let a late rename or action update rebuild a removed profile", async () => {

@@ -19,6 +19,8 @@ interface WorkshopProps {
   inspectingFrames: boolean;
   onInspectFrames: () => Promise<void> | void;
   onChoosePresetDir: () => Promise<void> | void;
+  keepExternalReference: boolean;
+  onChangeKeepExternalReference: (value: boolean) => void;
   manualFrames: Partial<ActionFrameSet>;
   onChangeManualFrames: (frames: Partial<ActionFrameSet>) => void;
   onSaveManualFrames: () => Promise<void>;
@@ -57,6 +59,8 @@ export const Workshop: React.FC<WorkshopProps> = ({
   inspectingFrames,
   onInspectFrames,
   onChoosePresetDir,
+  keepExternalReference,
+  onChangeKeepExternalReference,
   manualFrames,
   onChangeManualFrames,
   onSaveManualFrames,
@@ -195,6 +199,24 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 也可以把帧包目录拖进窗口；选择和拖入都会走同一套只读预检。
               </p>
             </div>
+
+            {isTauri && (
+              <label className="frame-inspection-note" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={keepExternalReference}
+                  onChange={(event) => onChangeKeepExternalReference(event.target.checked)}
+                />
+                继续引用外部目录（高级）
+              </label>
+            )}
+            <p className="frame-inspection-note">
+              {isTauri
+                ? keepExternalReference
+                  ? "只保存目录引用；移动或删除原目录后素材会失效。"
+                  : "默认复制到应用管理目录，原目录不会被修改；复制失败不会创建伙伴。"
+                : "网页预览不复制素材；桌面版默认由应用保管。"}
+            </p>
 
             <div style={{ display: "flex", gap: "12px", marginTop: "8px", flexWrap: "wrap" }}>
               <button

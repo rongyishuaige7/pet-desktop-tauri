@@ -215,6 +215,98 @@ pub fn inspect_frame_directory(root: &Path) -> Result<FrameInspection, String> {
     })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedAsset {
+    pub asset_id: String,
+    pub root: String,
+    pub total_bytes: u64,
+}
+
+fn valid_asset_id(asset_id: &str) -> bool {
+    !asset_id.is_empty()
+        && asset_id.len() <= 80
+        && asset_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+/// Copies a validated pack into an app-managed directory. The source is only
+/// read. The copy is built in a staging directory and renamed into place only
+/// after the copied pack passes the same validation, so a partial copy can
+/// never be mistaken for a managed asset.
+pub fn copy_to_managed_asset(
+    source: &Path,
+    assets_root: &Path,
+    asset_id: &str,
+) -> Result<ManagedAsset, String> {
+    if !valid_asset_id(asset_id) {
+        return Err("素材 id 只能包含字母、数字、- 和 _".into());
+    }
+    let report = inspect_frame_directory(source)?;
+    if !report.valid {
+        return Err(format!("源目录预检未通过：{}", report.issues.join("；")));
+    }
+    let actions = scan_pack(source)?;
+    std::fs::create_dir_all(assets_root)
+        .map_err(|err| format!("创建应用素材目录失败：{err}"))?;
+    let final_root = assets_root.join(asset_id);
+    if final_root.exists() {
+        return Err(format!("目标素材已存在，不覆盖：{}", final_root.display()));
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staging = assets_root.join(format!(
+        ".staging-{asset_id}-{nonce}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&staging).map_err(|err| format!("创建暂存目录失败：{err}"))?;
+
+    let result = (|| -> Result<u64, String> {
+        let mut total_bytes = 0u64;
+        for (action, _) in ACTIONS {
+            let frames = actions
+                .get(action)
+                .ok_or_else(|| format!("缺少动作目录：{action}"))?;
+            let dest_dir = staging.join(action);
+            std::fs::create_dir_all(&dest_dir)
+                .map_err(|err| format!("创建暂存动作目录失败：{err}"))?;
+            for path in frames {
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| format!("帧文件没有文件名：{}", path.display()))?;
+                let dest = dest_dir.join(name);
+                std::fs::copy(path, &dest)
+                    .map_err(|err| format!("复制帧失败 {}：{err}", path.display()))?;
+                total_bytes += std::fs::metadata(&dest)
+                    .map_err(|err| format!("读取暂存帧属性失败：{err}"))?
+                    .len();
+            }
+        }
+        let copied = inspect_frame_directory(&staging)?;
+        if !copied.valid {
+            return Err(format!("复制后的目录预检未通过：{}", copied.issues.join("；")));
+        }
+        std::fs::rename(&staging, &final_root)
+            .map_err(|err| format!("提交应用素材目录失败：{err}"))?;
+        Ok(total_bytes)
+    })();
+
+    match result {
+        Ok(total_bytes) => Ok(ManagedAsset {
+            asset_id: asset_id.to_string(),
+            root: final_root.display().to_string(),
+            total_bytes,
+        }),
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            Err(err)
+        }
+    }
+}
+
 fn image_mime(path: &Path) -> &'static str {
     match path
         .extension()
@@ -566,6 +658,70 @@ mod tests {
             .global_issues
             .iter()
             .any(|issue| issue.contains("256 MiB")));
+    }
+
+    #[test]
+    fn managed_copy_preserves_source_and_removes_staging() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+        let original = std::fs::read(source.path().join("idle").join("000.png")).unwrap();
+
+        let copied = copy_to_managed_asset(source.path(), assets.path(), "pet-1").expect("copy");
+
+        assert_eq!(copied.asset_id, "pet-1");
+        assert!(Path::new(&copied.root).join("idle").join("000.png").is_file());
+        assert_eq!(
+            std::fs::read(source.path().join("idle").join("000.png")).unwrap(),
+            original
+        );
+        assert_eq!(
+            std::fs::read_dir(assets.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".staging-"))
+                .count(),
+            0
+        );
+        assert!(assets.path().join("pet-1").is_dir());
+    }
+
+    #[test]
+    fn managed_copy_rejects_invalid_source_without_a_target() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+        std::fs::remove_dir_all(source.path().join("walk")).unwrap();
+
+        let result = copy_to_managed_asset(source.path(), assets.path(), "pet-1");
+
+        assert!(result.is_err());
+        assert!(!assets.path().join("pet-1").exists());
+    }
+
+    #[test]
+    fn managed_copy_refuses_to_overwrite_an_existing_asset() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+        copy_to_managed_asset(source.path(), assets.path(), "pet-1").expect("first copy");
+        let marker = assets.path().join("pet-1").join("marker.txt");
+        std::fs::write(&marker, b"keep").unwrap();
+
+        let result = copy_to_managed_asset(source.path(), assets.path(), "pet-1");
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&marker).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn managed_copy_rejects_unsafe_asset_ids() {
+        let source = tempfile::tempdir().expect("source");
+        let assets = tempfile::tempdir().expect("assets");
+        write_pack(source.path(), 5);
+
+        assert!(copy_to_managed_asset(source.path(), assets.path(), "../escape").is_err());
+        assert!(copy_to_managed_asset(source.path(), assets.path(), "").is_err());
     }
 
     #[test]

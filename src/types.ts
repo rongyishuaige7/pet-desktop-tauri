@@ -10,6 +10,8 @@ export interface PetProfile {
   species: PetSpecies;
   style: "q-sticker";
   storageMode?: "embedded" | "preset-root";
+  assetMode?: "managed" | "external";
+  assetId?: string;
   frameRoot?: string;
   createdAt: string;
   sourceImage: string;
@@ -41,6 +43,12 @@ export interface FrameInspectionAction {
   minFrames: number;
   maxFrames: number;
   issues: string[];
+}
+
+export interface ManagedAsset {
+  assetId: string;
+  root: string;
+  totalBytes: number;
 }
 
 export interface FrameInspection {

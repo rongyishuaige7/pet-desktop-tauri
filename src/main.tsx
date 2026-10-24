@@ -22,6 +22,7 @@ import {
   deletePet,
   renamePet,
   replacePetAssets,
+  updatePetAssetReference,
   restoreRemovedPet,
   softRemovePet,
   updatePetAction,
@@ -46,6 +47,7 @@ import {
   type PetAction,
   type PetProfile,
   type FrameInspection,
+  type ManagedAsset,
   type PetSpecies,
   type StudioTab,
   type WorkshopTask
@@ -125,6 +127,7 @@ function StudioApp() {
   const [inspectAction, setInspectAction] = useState<PetAction>("idle");
   const [frameInspection, setFrameInspection] = useState<FrameInspection | null>(null);
   const [inspectingFrames, setInspectingFrames] = useState(false);
+  const [keepExternalReference, setKeepExternalReference] = useState(false);
   const inspectionRequestRef = useRef(0);
 
   useEffect(() => {
@@ -1640,6 +1643,51 @@ function StudioApp() {
     }
   }
 
+  async function handleManagePetAsset(pet: PetProfile) {
+    if (!isTauri || pet.storageMode !== "preset-root" || !pet.frameRoot) {
+      showToast("只有桌面版的外部目录伙伴可以交给应用保管。", "info");
+      return;
+    }
+    try {
+      const copyId = `${pet.id}-${Date.now()}`;
+      const copied = await invoke<ManagedAsset>("copy_to_managed_asset", {
+        sourceDir: pet.frameRoot,
+        assetId: copyId
+      });
+      const updated = await updatePetAssetReference(
+        pet.id,
+        copied.root,
+        "managed",
+        copied.assetId
+      );
+      if (!updated) throw new Error("伙伴已被移除");
+      await refreshList();
+      if (activePetRef.current?.id === pet.id) {
+        const full = await ensurePetHydrated(updated);
+        setActivePet(full);
+        try {
+          if (full.frameRoot) {
+            await native.attach(full.frameRoot, full.id, full.name);
+          }
+        } catch {
+          setLocalError({
+            id: `asset-${full.id}`,
+            petId: full.id,
+            title: "资料已交给应用保管，桌面尚未同步",
+            body: "本机资料已安全复制；可以重试加载或稍后重新显示。",
+            operation: "set_frame_root",
+            code: "ASSET_NOT_FOUND"
+          });
+          showToast("资料已交给应用保管，但桌面尚未同步。", "info");
+          return;
+        }
+      }
+      showToast(`已把「${pet.name}」交给应用保管，原目录不再依赖。`, "success");
+    } catch (err) {
+      showToast(`交给应用保管失败：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleImportPreset() {
     setIsLoading(true);
     try {
@@ -1688,16 +1736,34 @@ function StudioApp() {
         return;
       }
 
+      const petId = repairPetId ?? crypto.randomUUID();
+      const useManaged = !keepExternalReference;
+      let packRoot = rootDir;
+      let assetMode: PetProfile["assetMode"] = "external";
+      let managedAssetId: string | undefined;
+      if (useManaged) {
+        const copyId = repairPetId ? `${repairPetId}-${Date.now()}` : petId;
+        const copied = await invoke<ManagedAsset>("copy_to_managed_asset", {
+          sourceDir: rootDir,
+          assetId: copyId
+        });
+        packRoot = copied.root;
+        assetMode = "managed";
+        managedAssetId = copied.assetId;
+      }
       const pack = await invoke<PresetFramePack>("load_preset_frame_pack", {
-        request: { rootDir }
+        request: { rootDir: packRoot }
       });
 
       if (repairPetId) {
         const updated = await replacePetAssets(
           repairPetId,
-          rootDir,
+          packRoot,
           pack.sourceImage,
-          pack.actions
+          pack.actions,
+          undefined,
+          assetMode,
+          managedAssetId
         );
         if (!updated) throw new Error("要修复的伙伴已被移除");
         if (activePetRef.current?.id === repairPetId) {
@@ -1719,12 +1785,15 @@ function StudioApp() {
       }
 
       const newPet = createManualPet({
+        id: petId,
         name: name.trim() || (species === "cat" ? "糖宝" : "大黄"),
         species,
         sourceImage: pack.sourceImage,
         manualFrames: pack.actions,
-        frameRoot: rootDir,
-        storageMode: "preset-root"
+        frameRoot: packRoot,
+        storageMode: "preset-root",
+        assetMode,
+        assetId: managedAssetId
       });
 
       const result = await activatePet(newPet, true);
@@ -2452,6 +2521,8 @@ function StudioApp() {
                   inspectingFrames={inspectingFrames}
                   onInspectFrames={handleInspectFrames}
                   onChoosePresetDir={handleChooseFrameDir}
+                  keepExternalReference={keepExternalReference}
+                  onChangeKeepExternalReference={setKeepExternalReference}
                   manualFrames={manualFrames}
                   onChangeManualFrames={setManualFrames}
                   onSaveManualFrames={handleSaveManualFrames}
@@ -2526,6 +2597,7 @@ function StudioApp() {
             removedPets={removedPets}
             onDeployPet={handleDeployPet}
             onRemovePet={handleRemovePet}
+            onManagePet={handleManagePetAsset}
             onRestoreRemoved={handleRestoreRemoved}
             onRenamePet={handleRenamePet}
             onRecallPet={handleRecallPet}
@@ -2595,7 +2667,9 @@ function createManualPet({
   sourceImage,
   manualFrames,
   frameRoot,
-  storageMode = "embedded"
+  storageMode = "embedded",
+  assetMode,
+  assetId
 }: {
   id?: string;
   name: string;
@@ -2604,6 +2678,8 @@ function createManualPet({
   manualFrames: Partial<ActionFrameSet>;
   frameRoot?: string;
   storageMode?: PetProfile["storageMode"];
+  assetMode?: PetProfile["assetMode"];
+  assetId?: string;
 }): PetProfile {
   const missingActions = PET_ACTIONS.filter((action) => (manualFrames[action.id]?.length ?? 0) < 5);
   if (missingActions.length > 0) {
@@ -2625,6 +2701,8 @@ function createManualPet({
     species,
     style: "q-sticker",
     storageMode,
+    assetMode,
+    assetId,
     frameRoot,
     createdAt: new Date().toISOString(),
     sourceImage,

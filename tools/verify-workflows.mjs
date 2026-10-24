@@ -41,12 +41,16 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
    metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},
    transformCallback:(fn)=>{const id=seq++;callbacks.set(id,fn);return id;},
    invoke:async(cmd,args={})=>{
-    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
+    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,sourceDir:args.sourceDir,assetId:args.assetId,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
     if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);if(state.dragLeaveDelay&&args.event==='tauri://drag-leave')await new Promise(resolve=>setTimeout(resolve,state.dragLeaveDelay));return id;}
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
     if(cmd==='get_native_pet_state'){if(state.failStateReads>0){state.failStateReads--;throw new Error('mock state read failed');}return state.native;}
     if(cmd==='plugin:dialog|open')return state.dialogPath??null;
+    if(cmd==='copy_to_managed_asset'){
+     if(state.failManagedCopy)throw new Error('mock managed copy failed');
+     return {assetId:args.assetId,root:'/managed/'+args.assetId,totalBytes:30*1024};
+    }
     if(cmd==='inspect_frame_directory'){
      const report=state.frameInspection??(()=>{const actions=['idle','sit','sleep','happy','walk','jump'].map(action=>({action,frames:5,minFrames:5,maxFrames:60,issues:[]}));return {root:args.rootDir,actions,missingActions:[],totalBytes:6*5*1024,decodedBytes:6*5*512*512*4,valid:true,issues:[],globalIssues:[],thumbnail:null};})();
      if(state.inspectDelay)await new Promise(resolve=>setTimeout(resolve,state.inspectDelay));
@@ -1678,15 +1682,17 @@ await record('recent_removal_timer_pauses_on_hover',async()=>{
   await deleteCard(petCard(page,'测试甲'));
   const notice=page.locator('.removal-undo');
   await notice.waitFor();
+  await page.bringToFront();
+  await page.mouse.move(5,5);
   const start=Number(await notice.getAttribute('data-remaining'));
-  await page.waitForTimeout(1300);
+  await page.waitForFunction(start=>Number(document.querySelector('.removal-undo')?.getAttribute('data-remaining'))<start,start,{timeout:5000});
   const afterWait=Number(await notice.getAttribute('data-remaining'));
   await notice.hover();
   const paused=Number(await notice.getAttribute('data-remaining'));
   await page.waitForTimeout(1400);
   const afterHover=Number(await notice.getAttribute('data-remaining'));
   await page.mouse.move(5,5);
-  await page.waitForTimeout(1300);
+  await page.waitForFunction(paused=>Number(document.querySelector('.removal-undo')?.getAttribute('data-remaining'))<paused,paused,{timeout:5000});
   const afterResume=Number(await notice.getAttribute('data-remaining'));
   await page.getByRole('button',{name:'撤销',exact:true}).focus();
   const focusPaused=Number(await notice.getAttribute('data-remaining'));
@@ -1876,6 +1882,68 @@ await record('workshop_drag_drop_ignored_after_leaving_import',async()=>{
   await openWorkshopTask(page,'导入已有伙伴');
   const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {value:document.querySelector('#workshop-preset-dir')?.value,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent),pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id};});
   return {passed:after.value===before&&after.value!=='/tmp/late-drop'&&!after.toasts.some(text=>text?.includes('已收到目录'))&&after.pets===2&&after.active==='A'&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('managed_import_copies_and_persists_managed_root',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===3;});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const active=await s.loadPet();const all=await s.loadAllPets();return {activeId:active?.id,activeRoot:active?.frameRoot,activeMode:active?.assetMode,activeAssetId:active?.assetId,pets:all.length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').map(c=>({source:c.sourceDir,assetId:c.assetId})),loadRoots:window.__review.calls.filter(c=>c.cmd==='load_preset_frame_pack').map(c=>c.root),managerRoot:window.__review.root};});
+  return {passed:state.pets===3&&state.activeMode==='managed'&&state.activeRoot?.startsWith('/managed/')&&state.activeAssetId&&state.copies.length===1&&state.copies[0].source==='/review/A'&&state.loadRoots.includes(state.activeRoot)&&state.managerRoot===state.activeRoot&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('external_import_keeps_source_reference',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.getByRole('checkbox',{name:/继续引用外部目录/}).check();
+  await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===3;});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const active=await s.loadPet();return {root:active?.frameRoot,mode:active?.assetMode,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').length,pets:(await s.loadAllPets()).length};});
+  return {passed:state.pets===3&&state.root==='/review/A'&&state.mode==='external'&&state.copies===0&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('managed_copy_failure_creates_no_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'导入已有伙伴');
+  await page.evaluate(()=>{window.__review.failManagedCopy=true;});
+  await page.getByRole('button',{name:'一键导入并保存到宠物架',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'导入失败'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,active:(await s.loadPet())?.id,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').length,loads:window.__review.calls.filter(c=>c.cmd==='load_preset_frame_pack').length,native:window.__review.native.petId};});
+  return {passed:state.pets===2&&state.active==='A'&&state.copies===1&&state.loads===1&&state.native==='A'&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('managed_takeover_copies_external_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'交给应用保管',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return Boolean((await s.loadPet())?.frameRoot?.startsWith('/managed/'));});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,assetId:pet?.assetId,pets:(await s.loadAllPets()).length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').map(c=>({source:c.sourceDir,assetId:c.assetId})),nativeRoot:window.__review.root,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
+  return {passed:state.pets===2&&state.mode==='managed'&&state.root?.startsWith('/managed/')&&state.assetId?.startsWith('A-')&&state.copies.length===1&&state.copies[0].source==='/review/A'&&state.nativeRoot===state.root&&state.toasts.some(text=>text?.includes('交给应用保管'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('managed_takeover_failure_keeps_external',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await page.getByRole('button',{name:/我的伙伴/}).click();
+  await page.evaluate(()=>{window.__review.failManagedCopy=true;});
+  const card=petCard(page,'测试甲');
+  await card.locator('summary').click();
+  await card.getByRole('button',{name:'交给应用保管',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'交给应用保管失败'}).waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,mode:pet?.assetMode,pets:(await s.loadAllPets()).length,copies:window.__review.calls.filter(c=>c.cmd==='copy_to_managed_asset').length,nativeRoot:window.__review.root};});
+  return {passed:state.pets===2&&state.root==='/review/A'&&state.mode!=='managed'&&state.copies===1&&state.nativeRoot==='/review/A'&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{
