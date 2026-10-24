@@ -101,7 +101,7 @@
 - 验证：50 项 Rust 测试、137 项前端单元测试、98 个隔离浏览器流程、生产构建通过。
 - 新增“重新定位素材”：确认替换、托管复制、条件更新引用；隐藏/休息时只 attach 不 show，目标移除/引用变化时拒绝。
 - 验证：51 项 Rust 测试、137 项前端单元测试、100 个隔离浏览器流程、生产构建通过。
-- 未完成：复制中断/磁盘不足/资料提交失败的完整故障注入、托管素材引用清理；A02-02 仍不完整。CI：[40048618937](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40048618937) 通过。
+- 未完成：复制中断/磁盘不足/资料提交失败的完整故障注入、托管素材引用清理；A02-02 仍不完整。重定位 CI：[40057077988](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40057077988) 通过。CI：[40048618937](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40048618937) 通过。
 
 ## v0.4 A01 当前记录（2026-10-23，部分）
 
