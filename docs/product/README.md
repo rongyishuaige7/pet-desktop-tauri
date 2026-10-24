@@ -103,7 +103,7 @@
 - 验证：51 项 Rust 测试、137 项前端单元测试、100 个隔离浏览器流程、生产构建通过。
 - 故障矩阵：复制中断（测试注入）、assets 根不可用、存储事务中止、过期目标未引用目录清理均有回归。
 - 收尾修正：交给应用保管条件更新；引用变化清空旧动作/封面；attach 失败保留新引用并提供仅重试加载。
-- 验证：53 项 Rust 测试、138 项前端单元测试、102 个隔离浏览器流程、生产构建通过。
+- 验证：53 项 Rust 测试、138 项前端单元测试、102 个隔离浏览器流程、生产构建通过。CI：[40060342721](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40060342721) 通过。
 - 未完成：真实磁盘满、源目录复制中并发变化、真实桌面重新定位人工复核。A02 自动化实现完成，实机故障场景未标记通过。CI：[40058295165](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40058295165) 通过。CI：[40048618937](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40048618937) 通过。
 
 ## v0.4 A01 当前记录（2026-10-23，部分）
