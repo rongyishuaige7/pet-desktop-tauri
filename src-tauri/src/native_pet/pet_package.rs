@@ -97,7 +97,7 @@ fn validate_meta(pet: &PetMeta) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_package_file(root: &Path, relative: &str, seen: &mut HashSet<String>) -> Result<PathBuf, String> {
+fn resolve_package_file(root: &Path, relative: &str, seen: &mut HashSet<PathBuf>) -> Result<PathBuf, String> {
     if relative.is_empty() || relative.contains('\\') {
         return Err(format!("伙伴包路径无效：{relative}"));
     }
@@ -118,10 +118,6 @@ fn resolve_package_file(root: &Path, relative: &str, seen: &mut HashSet<String>)
     if normalized_parts.is_empty() {
         return Err(format!("伙伴包路径为空：{relative}"));
     }
-    let normalized = normalized_parts.join("/");
-    if !seen.insert(normalized) {
-        return Err(format!("伙伴包重复引用文件：{relative}"));
-    }
     let root_canonical = root
         .canonicalize()
         .map_err(|err| format!("读取伙伴包目录失败：{err}"))?;
@@ -139,6 +135,12 @@ fn resolve_package_file(root: &Path, relative: &str, seen: &mut HashSet<String>)
         .map_err(|err| format!("伙伴包文件无法解析：{err}"))?;
     if !canonical.starts_with(&root_canonical) {
         return Err(format!("伙伴包路径越界：{relative}"));
+    }
+    // Case-insensitive filesystems can resolve differently-cased spellings to
+    // the same file. Deduplicate by the resolved canonical path, not the
+    // manifest string.
+    if !seen.insert(canonical) {
+        return Err(format!("伙伴包重复引用文件：{relative}"));
     }
     Ok(current)
 }
@@ -708,6 +710,44 @@ mod tests {
             value["actions"]["idle"][1]["path"] = "frames//idle//000.png".into();
         });
         assert!(inspect_pet_package(root).is_err());
+    }
+
+    #[test]
+    fn package_validation_rejects_case_insensitive_duplicate_paths() {
+        let source = tempfile::tempdir().unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let assets = tempfile::tempdir().unwrap();
+        write_pack(source.path());
+        let exported = export_pet_package(
+            parent.path(),
+            "咕唧",
+            "cat",
+            "q-sticker",
+            "2026-10-21T00:00:00Z",
+            source.path(),
+        )
+        .unwrap();
+        let root = Path::new(&exported.root);
+        let uppercase = root.join("frames/idle/000.PNG");
+        if !uppercase.exists() {
+            // Case-sensitive filesystem: the two spellings are different files.
+            return;
+        }
+        mutate_manifest(root, |value| {
+            value["actions"]["idle"][1]["path"] = "frames/idle/000.PNG".into();
+        });
+
+        assert!(inspect_pet_package(root).is_err());
+        assert!(import_pet_package(root, assets.path(), "pet-case").is_err());
+        assert!(!assets.path().join("pet-case").exists());
+        assert_eq!(
+            std::fs::read_dir(assets.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".staging-"))
+                .count(),
+            0
+        );
     }
 
     #[test]
