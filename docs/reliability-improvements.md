@@ -227,6 +227,15 @@
 - UI：伙伴架“导出完整伙伴包”；导入任务“导入完整伙伴包…”先确认，保存到伙伴架但不切换当前伙伴、不触发 show。
 - 验证：60 项 Rust 测试（导出/导入往返、缺失源不产包、未知版本、绝对/`..`/等价重复路径、大小写重复、散列不符、缺动作、符号链接、导入后源文件被替换、六动作各 60 帧、导入失败不产目标）、139 项前端单元测试、104 个隔离浏览器流程、生产构建通过。跨机器真实导入、真实 macOS 目录对话框和人工包检查仍待做。CI：[40083315419](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40083315419) 通过；canonical 去重修复 CI：[40087872055](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40087872055) 通过。独立复核 11 项 Rust 测试通过，大小写不敏感环境实际执行复现并拒绝，未跳过；A03 自动化收口，跨机器/实机待做。CI：[40071659114](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40071659114) 通过。
 
+## v0.4 A04 装配草稿（2026-10-24，部分）
+
+- 数据库升级 v4，增量新增 `creation_drafts`（keyPath=draftId）；草稿包含 schemaVersion、draftId、revision、pendingPetId、name、species、manualFrames、updatedAt，图片存 IndexedDB 而非 localStorage。
+- 装配页 800ms 防抖保存；启动时恢复草稿；状态显示“保存中/已保存/未保存/其他窗口已更新”。条件写入使用 revision，冲突时保留本地输入并明确提示，不覆盖其他窗口。
+- 每帧增加可访问的前移/后移；缺项可保存草稿，正式提交按钮在六动作未满 5 帧时禁用。
+- 正式提交使用草稿稳定 `pendingPetId`，成功后删除草稿；丢弃草稿只删除草稿，不删除已保存伙伴或正式素材。
+- 验证：60 项 Rust 测试、140 项前端单元测试、109 个隔离浏览器流程、生产构建通过。浏览器覆盖自动保存/重启恢复、顺序调整、冲突保留本地输入、缺项禁用提交、稳定 pending id 提交、丢弃草稿保留正式伙伴。
+- 未完成：离开页面时等待已开始的保存、配额/磁盘失败注入、真实双窗口同时编辑；草稿帧仍以 data URL 存 IndexedDB，尚未改为 Blob。A04 仍为部分完成。
+
 ## 本轮之外的依赖维护
 
 只读 `npm audit` 发现开发工具链 6 项告警（3 high / 3 moderate）：Vite 8.1.4 的编辑器启动接口、Vitest / @vitest/mocker 4.1.10 的测试服务路径读取，以及 PostCSS、nanoid、source-map-js 的传递依赖告警。`npm audit --omit=dev` 返回 0 项，不能据此忽略开发环境风险。本轮保持既有依赖版本，未执行 `audit fix` 或升级；应在独立的工具链更新中调整锁文件并验证插件兼容性。

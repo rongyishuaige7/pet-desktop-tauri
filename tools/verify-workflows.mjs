@@ -170,8 +170,8 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
 async function seed(page,{desktop=false,active='A',empty=true}={}){
  await page.evaluate(async({desktop,active,empty})=>{
   const storage=await import('/src/storage.ts');
-  const db=await new Promise((resolve,reject)=>{const req=indexedDB.open('desktop-sticker-pet-db',3);req.onupgradeneeded=()=>{const database=req.result;for(const name of ['pet','pets_collection','metadata','removed_pets'])if(!database.objectStoreNames.contains(name))database.createObjectStore(name,name==='pets_collection'||name==='removed_pets'?{keyPath:'id'}:undefined);};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
-  await new Promise((resolve,reject)=>{const stores=['pet','pets_collection','metadata','removed_pets'];const tx=db.transaction(stores,'readwrite');for(const name of stores)tx.objectStore(name).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+  const db=await new Promise((resolve,reject)=>{const req=indexedDB.open('desktop-sticker-pet-db',4);req.onupgradeneeded=()=>{const database=req.result;for(const name of ['pet','pets_collection','metadata','removed_pets','creation_drafts'])if(!database.objectStoreNames.contains(name))database.createObjectStore(name,name==='creation_drafts'?{keyPath:'draftId'}:name==='pets_collection'||name==='removed_pets'?{keyPath:'id'}:undefined);};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
+  await new Promise((resolve,reject)=>{const stores=['pet','pets_collection','metadata','removed_pets','creation_drafts'];const tx=db.transaction(stores,'readwrite');for(const name of stores)tx.objectStore(name).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
   for(const id of ['A','B']){
    const actions=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,desktop&&empty?[]:[0,1,2,3,4].map(i=>`/frame-pack/${a}/${String(i).padStart(3,'0')}.png`)]));
    await storage.savePet({id,name:id==='A'?'测试甲':'测试乙',species:'dog',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',storageMode:'preset-root',frameRoot:'/review/'+id,sourceImage:desktop&&empty?'':actions.idle[0],actions,currentAction:'idle',actionStartedAt:'2026-10-21T00:00:00Z',scale:1});
@@ -2047,6 +2047,79 @@ await record('import_pet_package_saves_without_switching',async()=>{
   await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===3;});
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const all=await s.loadAllPets();const active=await s.loadPet();const imported=all.find(p=>p.name==='包伙伴');return {pets:all.length,active:active?.id,importedRoot:imported?.frameRoot,importedMode:imported?.assetMode,importedId:imported?.id,importedCreatedAt:imported?.createdAt,native:window.__review.native.petId,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,imports:window.__review.calls.filter(c=>c.cmd==='import_pet_package').length,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   return {passed:state.pets===3&&state.active==='A'&&state.importedRoot?.startsWith('/managed/')&&state.importedMode==='managed'&&state.importedId&&state.importedCreatedAt==='2026-10-21T00:00:00Z'&&state.native==='A'&&state.shows===showsBefore&&state.imports===1&&state.toasts.some(text=>text?.includes('当前伙伴未改变'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('assembly_draft_autosaves_and_restores',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  const saved=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {revision:d?.revision,frames:d?.manualFrames.idle.length,pending:d?.pendingPetId,disabled:[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('保存全套动作并应用到桌面'))?.disabled};});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  const restored=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {frames:d?.manualFrames.idle.length,count:[...document.querySelectorAll('.seg-tab-btn')].find(b=>b.textContent?.includes('待机'))?.textContent};});
+  return {passed:saved.revision===1&&saved.frames===1&&saved.pending&&saved.disabled===true&&restored.frames===1&&restored.count?.includes('1/5')&&errors.length===0,saved,restored,errors};
+ }finally{await context.close();}
+});
+await record('assembly_reorder_changes_frame_order',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  const images=await page.evaluate(()=>['#71402a','#2f6b3f'].map(color=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle=color;x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];}));
+  const files=images.map((data,index)=>({name:`00${index+1}.png`,mimeType:'image/png',buffer:Buffer.from(data,'base64')}));
+  await page.locator('.frame-add-card input[type=file]').setInputFiles(files);
+  await page.waitForFunction(()=>document.querySelectorAll('.frame-thumb-img').length===2);
+  const before=await page.evaluate(()=>[...document.querySelectorAll('.frame-thumb-img')].map(img=>img.getAttribute('src')));
+  await page.getByRole('button',{name:'后移第 1 帧',exact:true}).click();
+  const after=await page.evaluate(()=>[...document.querySelectorAll('.frame-thumb-img')].map(img=>img.getAttribute('src')));
+  return {passed:before.length===2&&after[0]===before[1]&&after[1]===before[0]&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('assembly_submit_uses_pending_id_and_clears_draft',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const frames=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.saveCreationDraft({schemaVersion:1,draftId:'manual-assembly',pendingPetId:'pending-a04',name:'草稿伙伴',species:'cat',manualFrames:frames},null);});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===1;});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();const draft=await s.loadCreationDraft('manual-assembly');return {id:pet?.id,name:pet?.name,draft:Boolean(draft),pets:(await s.loadAllPets()).length};});
+  return {passed:state.id==='pending-a04'&&state.name==='草稿伙伴'&&!state.draft&&state.pets===1&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('assembly_discard_draft_keeps_formal_pets',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true});
+  await openWorkshopTask(page,'装配动作帧');
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  const before=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {draft:Boolean(await s.loadCreationDraft('manual-assembly')),pets:(await s.loadAllPets()).length};});
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'丢弃草稿',exact:true}).click();
+  await page.locator('.draft-status.is-idle').waitFor();
+  const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {draft:Boolean(await s.loadCreationDraft('manual-assembly')),pets:(await s.loadAllPets()).length,frames:document.querySelectorAll('.frame-thumb-img').length};});
+  return {passed:before.draft&&before.pets===2&&!after.draft&&after.pets===2&&after.frames===0&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('assembly_draft_conflict_keeps_local_input',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');await s.saveCreationDraft({...d,name:'其他窗口草稿'},d.revision);});
+  await page.locator('#workshop-name').fill('本地名字');
+  await page.locator('.draft-status.is-conflict').waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  return {passed:state.input==='本地名字'&&state.draftName==='其他窗口草稿'&&state.toasts.some(t=>t?.includes('其他窗口已更新'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 }finally{

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference, savePetProfile } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference, savePetProfile, loadCreationDraft, saveCreationDraft, deleteCreationDraft } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -716,7 +716,7 @@ describe("recent removals", () => {
     await savePet(pet("A"));
     const removed = await softRemovePet("A");
     await new Promise<void>((resolve, reject) => {
-      const req = indexedDB.open("desktop-sticker-pet-db", 3);
+      const req = indexedDB.open("desktop-sticker-pet-db", 4);
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction(["pet"], "readwrite");
@@ -821,6 +821,37 @@ describe("recent removals", () => {
     expect(current?.frameRoot).toBe("/review/A");
     expect(current?.assetMode).toBe("external");
     expect(current?.assetId).toBeUndefined();
+  });
+
+  it("saves drafts with revision checks and deletes them", async () => {
+    const base = {
+      schemaVersion: 1 as const,
+      draftId: "manual-assembly",
+      pendingPetId: "pending-1",
+      name: "草稿甲",
+      species: "cat" as const,
+      manualFrames: Object.fromEntries(PET_ACTIONS.map(({ id }) => [id, ["frame.png"]])) as ActionFrameSet
+    };
+    const first = await saveCreationDraft(base, null);
+    expect(first.status).toBe("saved");
+    if (first.status !== "saved") return;
+    expect(first.draft.revision).toBe(1);
+
+    const second = await saveCreationDraft(
+      { ...base, name: "草稿乙" },
+      first.draft.revision
+    );
+    expect(second.status).toBe("saved");
+    if (second.status !== "saved") return;
+    expect(second.draft.revision).toBe(2);
+
+    const stale = await saveCreationDraft({ ...base, name: "迟到草稿" }, 1);
+    expect(stale.status).toBe("conflict");
+    if (stale.status === "conflict") expect(stale.draft?.name).toBe("草稿乙");
+    expect((await loadCreationDraft("manual-assembly"))?.name).toBe("草稿乙");
+
+    await deleteCreationDraft("manual-assembly");
+    expect(await loadCreationDraft("manual-assembly")).toBeNull();
   });
 
   it("saves a profile without changing the active selection", async () => {

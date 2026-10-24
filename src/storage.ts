@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { withCurrentAction, withRenamedPet } from "./pet-logic";
-import { PET_ACTIONS, PET_CHANNEL, STORAGE_KEY, type ActionFrameSet, type PetAction, type PetProfile } from "./types";
+import { PET_ACTIONS, PET_CHANNEL, STORAGE_KEY, type ActionFrameSet, type CreationDraft, type PetAction, type PetProfile } from "./types";
 import {
   ONBOARDING_KEY,
   normalizeOnboardingRecord,
@@ -9,8 +9,8 @@ import {
 } from "./onboarding";
 
 const DB_NAME = "desktop-sticker-pet-db";
-const DB_VERSION = 3;
-const STORES = ["pet", "pets_collection", "metadata", "removed_pets"];
+const DB_VERSION = 4;
+const STORES = ["pet", "pets_collection", "metadata", "removed_pets", "creation_drafts"];
 const ACTIVE_ID_KEY = "active_pet_id";
 const SELECTION_REVISION_KEY = "selection_revision_v1";
 const ONBOARDING_CHANNEL = "desktop-sticker-pet-onboarding";
@@ -23,7 +23,12 @@ function openDatabase(): Promise<IDBDatabase> {
       const db = request.result;
       for (const name of STORES) {
         if (!db.objectStoreNames.contains(name)) {
-          const keyPath = name === "pets_collection" || name === "removed_pets" ? { keyPath: "id" } : undefined;
+          const keyPath =
+            name === "creation_drafts"
+              ? { keyPath: "draftId" }
+              : name === "pets_collection" || name === "removed_pets"
+                ? { keyPath: "id" }
+                : undefined;
           db.createObjectStore(name, keyPath);
         }
       }
@@ -167,6 +172,49 @@ export async function savePet(pet: PetProfile, _broadcastPet: PetProfile = pet) 
   });
   localStorage.removeItem(STORAGE_KEY);
   notifyPetChanged();
+}
+
+export async function loadCreationDraft(draftId: string): Promise<CreationDraft | null> {
+  return transaction<CreationDraft | null>("readonly", (tx, done) => {
+    const req = tx.objectStore("creation_drafts").get(draftId);
+    req.onsuccess = () => done((req.result as CreationDraft | undefined) ?? null);
+  });
+}
+
+export type SaveDraftResult =
+  | { status: "saved"; draft: CreationDraft }
+  | { status: "conflict"; draft: CreationDraft | null };
+
+export async function saveCreationDraft(
+  draft: Omit<CreationDraft, "revision" | "updatedAt">,
+  expectedRevision: number | null
+): Promise<SaveDraftResult> {
+  return transaction<SaveDraftResult>("readwrite", (tx, done) => {
+    const store = tx.objectStore("creation_drafts");
+    const req = store.get(draft.draftId);
+    req.onsuccess = () => {
+      const current = req.result as CreationDraft | undefined;
+      const currentRevision = current?.revision ?? 0;
+      if (expectedRevision !== null && currentRevision !== expectedRevision) {
+        done({ status: "conflict", draft: current ?? null });
+        return;
+      }
+      const next: CreationDraft = {
+        ...draft,
+        revision: currentRevision + 1,
+        updatedAt: new Date().toISOString()
+      };
+      store.put(next);
+      done({ status: "saved", draft: next });
+    };
+  });
+}
+
+export async function deleteCreationDraft(draftId: string): Promise<void> {
+  await transaction<void>("readwrite", (tx, done) => {
+    tx.objectStore("creation_drafts").delete(draftId);
+    done();
+  });
 }
 
 export async function savePetProfile(pet: PetProfile): Promise<void> {

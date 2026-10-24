@@ -33,6 +33,9 @@ import {
   loadOnboardingRecord,
   loadRemovedPets,
   loadSelectionRevision,
+  loadCreationDraft,
+  saveCreationDraft,
+  deleteCreationDraft,
   saveOnboardingRecord,
   saveOnboardingProgress,
   startNewAdoptionIntent,
@@ -45,6 +48,7 @@ import {
 import {
   PET_ACTIONS,
   type ActionFrameSet,
+  type CreationDraft,
   type PetAction,
   type PetProfile,
   type ExportedPetPackage,
@@ -122,6 +126,8 @@ interface SavedManualFramePack {
   frameRoot: string;
   sourceImage: string;
 }
+
+const ASSEMBLY_DRAFT_ID = "manual-assembly";
 
 function StudioApp() {
   const { showToast } = useToast();
@@ -286,6 +292,15 @@ function StudioApp() {
   );
   const [manualFrames, setManualFrames] = useState<Partial<ActionFrameSet>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<
+    "idle" | "saving" | "saved" | "unsaved" | "conflict"
+  >("idle");
+  const draftRevisionRef = useRef<number | null>(null);
+  const draftPendingPetIdRef = useRef<string>(crypto.randomUUID());
+  const draftLoadedRef = useRef(false);
+  const draftSaveTimerRef = useRef<number | null>(null);
+  const persistDraftRef = useRef<() => Promise<boolean>>(async () => false);
+  const suppressNextDraftSaveRef = useRef(false);
 
   // AI Form State
   const [apiKey, setApiKey] = useState("");
@@ -298,6 +313,88 @@ function StudioApp() {
   const [aiLog, setAiLog] = useState<string[]>([]);
   const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
   const aiCheckpointRef = useRef(createGenerationCheckpoint());
+
+  async function persistAssemblyDraft(): Promise<boolean> {
+    if (!draftLoadedRef.current) return false;
+    setDraftStatus("saving");
+    const frames = Object.fromEntries(
+      PET_ACTIONS.map(({ id }) => [id, manualFrames[id] ?? []])
+    ) as ActionFrameSet;
+    const draft: Omit<CreationDraft, "revision" | "updatedAt"> = {
+      schemaVersion: 1,
+      draftId: ASSEMBLY_DRAFT_ID,
+      pendingPetId: draftPendingPetIdRef.current,
+      name,
+      species,
+      manualFrames: frames
+    };
+    try {
+      const result = await saveCreationDraft(draft, draftRevisionRef.current);
+      if (result.status === "conflict") {
+        setDraftStatus("conflict");
+        showToast("其他窗口已更新草稿，当前输入未覆盖；可继续编辑或刷新恢复。", "info");
+        return false;
+      }
+      draftRevisionRef.current = result.draft.revision;
+      setDraftStatus("saved");
+      return true;
+    } catch {
+      setDraftStatus("unsaved");
+      return false;
+    }
+  }
+  persistDraftRef.current = persistAssemblyDraft;
+
+  useEffect(() => {
+    if (!initialized || draftLoadedRef.current) return;
+    let cancelled = false;
+    loadCreationDraft(ASSEMBLY_DRAFT_ID)
+      .then((draft) => {
+        if (cancelled || !draft) return;
+        setName(draft.name);
+        setSpecies(draft.species);
+        setManualFrames(draft.manualFrames);
+        draftRevisionRef.current = draft.revision;
+        draftPendingPetIdRef.current = draft.pendingPetId;
+        setDraftStatus("saved");
+      })
+      .catch(() => {
+        // A storage outage keeps the in-memory form; autosave will report it.
+      })
+      .finally(() => {
+        if (!cancelled) draftLoadedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialized]);
+
+  useEffect(() => {
+    if (
+      !initialized ||
+      !draftLoadedRef.current ||
+      currentTab !== "workshop" ||
+      workshopTask !== "frames"
+    ) {
+      return;
+    }
+    if (suppressNextDraftSaveRef.current) {
+      suppressNextDraftSaveRef.current = false;
+      return;
+    }
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+    }
+    setDraftStatus("saving");
+    draftSaveTimerRef.current = window.setTimeout(() => {
+      void persistDraftRef.current();
+    }, 800);
+    return () => {
+      if (draftSaveTimerRef.current) {
+        window.clearTimeout(draftSaveTimerRef.current);
+      }
+    };
+  }, [initialized, currentTab, workshopTask, name, species, manualFrames]);
 
   useEffect(() => {
     if (!aiCancelRef.current) {
@@ -2033,6 +2130,23 @@ function StudioApp() {
   }
 
   // Workshop - Save Manual Frames
+  async function handleDiscardDraft() {
+    if (!window.confirm("丢弃本次装配草稿？不会删除已保存伙伴或正式素材。")) {
+      return;
+    }
+    try {
+      await deleteCreationDraft(ASSEMBLY_DRAFT_ID);
+      draftRevisionRef.current = null;
+      draftPendingPetIdRef.current = crypto.randomUUID();
+      suppressNextDraftSaveRef.current = true;
+      setDraftStatus("idle");
+      setManualFrames({});
+      showToast("装配草稿已丢弃，已保存的伙伴和素材没有变化。", "info");
+    } catch (err) {
+      showToast(`丢弃草稿失败：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleSaveManualFrames() {
     setIsLoading(true);
     try {
@@ -2048,6 +2162,7 @@ function StudioApp() {
           request: { actions }
         });
         const newPet = createManualPet({
+          id: draftPendingPetIdRef.current,
           name: name.trim() || "我的宠物",
           species,
           sourceImage: saved.sourceImage || fallbackImage,
@@ -2056,18 +2171,29 @@ function StudioApp() {
           storageMode: "preset-root"
         });
         const result = await activatePet(newPet, true);
+        await deleteCreationDraft(ASSEMBLY_DRAFT_ID).catch(() => {});
+        draftRevisionRef.current = null;
+        draftPendingPetIdRef.current = crypto.randomUUID();
+        setDraftStatus("idle");
+        setManualFrames({});
         announceActivation(result, `已成功保存「${newPet.name}」并同步至桌面！`);
         setCurrentTab("stage");
         return;
       }
 
       const newPet = createManualPet({
+        id: draftPendingPetIdRef.current,
         name: name.trim() || "我的宠物",
         species,
         sourceImage: fallbackImage,
         manualFrames: actions
       });
       const result = await activatePet(newPet, true);
+      await deleteCreationDraft(ASSEMBLY_DRAFT_ID).catch(() => {});
+      draftRevisionRef.current = null;
+      draftPendingPetIdRef.current = crypto.randomUUID();
+      setDraftStatus("idle");
+      setManualFrames({});
       announceActivation(result, "已保存动作帧（网页预览模式）！");
       setCurrentTab("stage");
     } catch (err) {
@@ -2753,6 +2879,9 @@ function StudioApp() {
                   manualFrames={manualFrames}
                   onChangeManualFrames={setManualFrames}
                   onSaveManualFrames={handleSaveManualFrames}
+                  draftStatus={draftStatus}
+                  onSaveDraft={() => void persistAssemblyDraft()}
+                  onDiscardDraft={() => void handleDiscardDraft()}
                   isLoading={isLoading}
                   isTauri={isTauri}
                   apiKey={apiKey}

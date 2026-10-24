@@ -25,6 +25,9 @@ interface WorkshopProps {
   manualFrames: Partial<ActionFrameSet>;
   onChangeManualFrames: (frames: Partial<ActionFrameSet>) => void;
   onSaveManualFrames: () => Promise<void>;
+  draftStatus: "idle" | "saving" | "saved" | "unsaved" | "conflict";
+  onSaveDraft: () => Promise<void> | void;
+  onDiscardDraft: () => Promise<void> | void;
   isLoading: boolean;
   isTauri: boolean;
   // AI props
@@ -66,6 +69,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
   manualFrames,
   onChangeManualFrames,
   onSaveManualFrames,
+  draftStatus,
+  onSaveDraft,
+  onDiscardDraft,
   isLoading,
   isTauri,
   apiKey,
@@ -128,6 +134,28 @@ export const Workshop: React.FC<WorkshopProps> = ({
       [action]: existing.filter((_, idx) => idx !== indexToDelete)
     });
   }
+
+  function handleMoveFrame(action: PetAction, index: number, delta: number) {
+    const frames = [...(manualFrames[action] ?? [])];
+    const target = index + delta;
+    if (target < 0 || target >= frames.length) return;
+    [frames[index], frames[target]] = [frames[target], frames[index]];
+    onChangeManualFrames({ ...manualFrames, [action]: frames });
+  }
+
+  const allActionsComplete = PET_ACTIONS.every(
+    (action) => (manualFrames[action.id] ?? []).length >= 5
+  );
+  const incompleteCount = PET_ACTIONS.filter(
+    (action) => (manualFrames[action.id] ?? []).length < 5
+  ).length;
+  const draftStatusLabel = {
+    idle: "草稿：未开始",
+    saving: "草稿：保存中…",
+    saved: "草稿：已保存",
+    unsaved: "草稿：未保存",
+    conflict: "草稿：其他窗口已更新"
+  }[draftStatus];
 
   return (
     <div className="workshop-shell">
@@ -362,6 +390,26 @@ export const Workshop: React.FC<WorkshopProps> = ({
                     <img src={frameSrc} alt={`Frame ${idx + 1}`} className="frame-thumb-img" />
                   </div>
                   <span className="frame-num-label">#{idx + 1}</span>
+                  <div className="frame-order-buttons">
+                    <button
+                      type="button"
+                      className="frame-order-btn"
+                      onClick={() => handleMoveFrame(inspectAction, idx, -1)}
+                      disabled={busy || idx === 0}
+                      aria-label={`前移第 ${idx + 1} 帧`}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="frame-order-btn"
+                      onClick={() => handleMoveFrame(inspectAction, idx, 1)}
+                      disabled={busy || idx === currentActionFrames.length - 1}
+                      aria-label={`后移第 ${idx + 1} 帧`}
+                    >
+                      ↓
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className="frame-delete-btn"
@@ -387,16 +435,40 @@ export const Workshop: React.FC<WorkshopProps> = ({
               </label>
             </div>
 
-            <div style={{ marginTop: "12px" }}>
+            <div className="frame-save-row">
+              <span className={`draft-status is-${draftStatus}`} role="status">
+                {draftStatusLabel}
+              </span>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void onSaveDraft()}
+                disabled={busy}
+              >
+                保存草稿
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void onDiscardDraft()}
+                disabled={busy}
+              >
+                丢弃草稿
+              </button>
               <button
                 type="button"
                 className="btn-primary"
                 onClick={onSaveManualFrames}
-                disabled={busy}
+                disabled={busy || !allActionsComplete}
               >
                 {isLoading ? "正在保存..." : "保存全套动作并应用到桌面"}
               </button>
             </div>
+            {!allActionsComplete && (
+              <p className="frame-save-note">
+                还缺 {incompleteCount} 个动作未满 5 帧；可以先保存草稿，补齐后才能应用到桌面。
+              </p>
+            )}
           </div>
         )}
 

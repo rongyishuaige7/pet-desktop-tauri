@@ -45,6 +45,17 @@ export interface FrameInspectionAction {
   issues: string[];
 }
 
+export interface CreationDraft {
+  schemaVersion: 1;
+  draftId: string;
+  revision: number;
+  pendingPetId: string;
+  name: string;
+  species: PetSpecies;
+  manualFrames: ActionFrameSet;
+  updatedAt: string;
+}
+
 export interface ExportedPetPackage {
   root: string;
 }
