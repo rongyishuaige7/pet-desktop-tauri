@@ -99,7 +99,7 @@
 - 导入校验格式版本、路径、符号链接、重复、散列、尺寸与容量；复制到应用管理目录、分配新 id，保存到伙伴架但不切换当前伙伴。
 - 收尾修正：导入后逐帧核对清单散列/尺寸/顺序/容量；清单紧凑 JSON 支持六动作各 60 帧；规范化路径阻止 `./`/重复分隔符绕过；导入保留包内创建时间。
 - 验证：59 项 Rust 测试、139 项前端单元测试、104 个隔离浏览器流程、生产构建通过。
-- 未完成：跨机器真实导入、真实 macOS 目录对话框、人工包内容检查。CI：[40071659114](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40071659114) 通过。
+- 未完成：跨机器真实导入、真实 macOS 目录对话框、人工包内容检查。CI：[40083315419](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40083315419) 通过。CI：[40071659114](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40071659114) 通过。
 
 ## v0.4 A02 当前记录（2026-10-23，部分）
 
