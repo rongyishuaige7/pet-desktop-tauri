@@ -215,7 +215,7 @@
 - 新增“重新定位素材”：原生目录选择 → 明确确认替换 → 托管复制 → 条件更新引用；活动伙伴只 attach 不 show，隐藏/休息保持；目标被移除或引用变化时拒绝，迟到回调不能覆盖新引用。
 - 故障与清理：复制中途失败（测试注入）、assets 根不可用、存储提交事务中止均有回归；提交失败/过期目标产生的未引用托管目录在确认没有伙伴或最近移除引用后删除。
 - 验证：53 项 Rust 测试（复制保留源、暂存清理、坏源不产目标、拒绝覆盖、非法 id、assets 根不可用、复制中断、删除边界）、138 项前端单元测试、100 个隔离浏览器流程、生产构建通过。浏览器覆盖默认托管导入、外部引用、复制失败不建伙伴、交给应用保管成功/失败、重新定位保持隐藏且不 show、目标移除后拒绝并清理未引用目录；存储事务中止保留旧引用。
-- 未完成：真实磁盘满、源目录在复制过程中并发变化、真实桌面端重新定位的人工复核。A02 自动化主链路与故障矩阵已完成，但不把实机故障场景标记为通过。重定位 CI：[40057077988](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40057077988) 通过。CI：[40048618937](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40048618937) 通过。
+- 未完成：真实磁盘满、源目录在复制过程中并发变化、真实桌面端重新定位的人工复核。A02 自动化主链路与故障矩阵已完成，但不把实机故障场景标记为通过。CI：[40058295165](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40058295165) 通过。重定位 CI：[40057077988](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40057077988) 通过。CI：[40048618937](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40048618937) 通过。
 
 ## 本轮之外的依赖维护
 
