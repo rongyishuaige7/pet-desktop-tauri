@@ -1875,7 +1875,8 @@ function StudioApp() {
           frameRoot: imported.root,
           storageMode: "preset-root",
           assetMode: "managed",
-          assetId: imported.assetId
+          assetId: imported.assetId,
+          createdAt: imported.createdAt
         });
         await savePetProfile(toPersistedPet(newPet));
         await refreshList();
@@ -2897,7 +2898,8 @@ function createManualPet({
   frameRoot,
   storageMode = "embedded",
   assetMode,
-  assetId
+  assetId,
+  createdAt
 }: {
   id?: string;
   name: string;
@@ -2908,6 +2910,7 @@ function createManualPet({
   storageMode?: PetProfile["storageMode"];
   assetMode?: PetProfile["assetMode"];
   assetId?: string;
+  createdAt?: string;
 }): PetProfile {
   const missingActions = PET_ACTIONS.filter((action) => (manualFrames[action.id]?.length ?? 0) < 5);
   if (missingActions.length > 0) {
@@ -2932,7 +2935,7 @@ function createManualPet({
     assetMode,
     assetId,
     frameRoot,
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt ?? new Date().toISOString(),
     sourceImage,
     actions,
     currentAction: "idle",

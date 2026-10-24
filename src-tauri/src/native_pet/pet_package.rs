@@ -102,14 +102,24 @@ fn resolve_package_file(root: &Path, relative: &str, seen: &mut HashSet<String>)
         return Err(format!("伙伴包路径无效：{relative}"));
     }
     let rel = Path::new(relative);
-    if rel.is_absolute()
-        || rel
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-    {
-        return Err(format!("伙伴包拒绝绝对路径或 ..：{relative}"));
+    if rel.is_absolute() {
+        return Err(format!("伙伴包拒绝绝对路径：{relative}"));
     }
-    if !seen.insert(relative.to_string()) {
+    let mut normalized_parts = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(part) => normalized_parts.push(part.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("伙伴包拒绝绝对路径或 ..：{relative}"));
+            }
+        }
+    }
+    if normalized_parts.is_empty() {
+        return Err(format!("伙伴包路径为空：{relative}"));
+    }
+    let normalized = normalized_parts.join("/");
+    if !seen.insert(normalized) {
         return Err(format!("伙伴包重复引用文件：{relative}"));
     }
     let root_canonical = root
@@ -325,7 +335,7 @@ pub fn export_pet_package(
             pet: meta,
             actions,
         };
-        let json = serde_json::to_vec_pretty(&manifest)
+        let json = serde_json::to_vec(&manifest)
             .map_err(|err| format!("序列化伙伴包清单失败：{err}"))?;
         if json.len() > MAX_MANIFEST_BYTES {
             return Err("伙伴包清单超过 64 KiB".into());
@@ -343,6 +353,42 @@ pub fn export_pet_package(
     Ok(ExportedPetPackage {
         root: target.display().to_string(),
     })
+}
+
+fn verify_copied_package(staging: &Path, manifest: &Manifest) -> Result<(), String> {
+    let mut total_bytes = 0usize;
+    let mut decoded_bytes = 0u64;
+    for (action, _) in ACTIONS {
+        let entries = manifest
+            .actions
+            .get(action)
+            .ok_or_else(|| format!("缺少动作：{action}"))?;
+        let files = scan_action_frames(staging, action)?;
+        if files.len() != entries.len() {
+            return Err(format!("导入后的 {action} 帧数与清单不一致"));
+        }
+        for (index, entry) in entries.iter().enumerate() {
+            let path = &files[index];
+            let bytes = read_frame_bytes(path)?;
+            total_bytes += bytes.len();
+            if total_bytes > MAX_PACK_BYTES {
+                return Err("导入后的文件总量超过 128 MiB".into());
+            }
+            if sha256_hex(&bytes) != entry.sha256 {
+                return Err(format!("导入后的散列与清单不一致：{action}/{index:03}"));
+            }
+            let image = decode_frame(&bytes)?;
+            let (width, height) = image.dimensions();
+            if width != entry.width || height != entry.height {
+                return Err(format!("导入后的尺寸与清单不一致：{action}/{index:03}"));
+            }
+            decoded_bytes += width as u64 * height as u64 * 4;
+            if decoded_bytes > MAX_DECODED_PACK_BYTES {
+                return Err("导入后的解码总量超过 256 MiB".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn inspect_pet_package(root: &Path) -> Result<PackageSummary, String> {
@@ -366,6 +412,15 @@ pub fn import_pet_package(
     assets_root: &Path,
     asset_id: &str,
 ) -> Result<ImportedPetPackage, String> {
+    import_pet_package_inner(root, assets_root, asset_id, None)
+}
+
+fn import_pet_package_inner(
+    root: &Path,
+    assets_root: &Path,
+    asset_id: &str,
+    after_validate: Option<&dyn Fn()>,
+) -> Result<ImportedPetPackage, String> {
     if asset_id.is_empty()
         || asset_id.len() > 80
         || !asset_id
@@ -375,6 +430,9 @@ pub fn import_pet_package(
         return Err("素材 id 只能包含字母、数字、- 和 _".into());
     }
     let (manifest, paths, thumbnail) = validate_package(root)?;
+    if let Some(hook) = after_validate {
+        hook();
+    }
     std::fs::create_dir_all(assets_root)
         .map_err(|err| format!("创建应用素材目录失败：{err}"))?;
     let final_root = assets_root.join(asset_id);
@@ -396,20 +454,12 @@ pub fn import_pet_package(
             let dir = staging.join(action);
             std::fs::create_dir_all(&dir).map_err(|err| format!("创建导入动作目录失败：{err}"))?;
             for (index, source) in frames.iter().enumerate() {
-                let extension = source
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("png")
-                    .to_ascii_lowercase();
-                let destination = dir.join(format!("{index:03}.{extension}"));
+                let destination = dir.join(format!("{index:03}.png"));
                 std::fs::copy(source, &destination)
                     .map_err(|err| format!("复制导入帧失败：{err}"))?;
             }
         }
-        let copied = inspect_frame_directory(&staging)?;
-        if !copied.valid {
-            return Err(format!("导入后的素材预检未通过：{}", copied.issues.join("；")));
-        }
+        verify_copied_package(&staging, &manifest)?;
         std::fs::rename(&staging, &final_root)
             .map_err(|err| format!("提交导入素材失败：{err}"))?;
         Ok(())
@@ -447,11 +497,24 @@ mod tests {
     }
 
     fn write_pack(root: &Path) {
+        write_pack_count(root, 5);
+    }
+
+    fn write_pack_count(root: &Path, count: usize) {
         for (action, _) in ACTIONS {
-            for index in 0..5 {
+            for index in 0..count {
                 write_png(&root.join(action).join(format!("{index:03}.png")));
             }
         }
+    }
+
+    fn alternate_png(path: &Path) {
+        let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));
+        let mut buffer = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut buffer, ImageFormat::Png)
+            .unwrap();
+        std::fs::write(path, buffer.into_inner()).unwrap();
     }
 
     fn mutate_manifest(root: &Path, change: impl FnOnce(&mut serde_json::Value)) {
@@ -515,6 +578,67 @@ mod tests {
     }
 
     #[test]
+    fn import_rejects_a_source_changed_after_manifest_validation() {
+        let source = tempfile::tempdir().unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let assets = tempfile::tempdir().unwrap();
+        write_pack(source.path());
+        let exported = export_pet_package(
+            parent.path(),
+            "咕唧",
+            "cat",
+            "q-sticker",
+            "2026-10-21T00:00:00Z",
+            source.path(),
+        )
+        .unwrap();
+        let root = Path::new(&exported.root);
+        let frame = root.join("frames/idle/000.png");
+        let hook = || alternate_png(&frame);
+
+        let result = import_pet_package_inner(root, assets.path(), "pet-race", Some(&hook));
+
+        assert!(result.is_err());
+        assert!(!assets.path().join("pet-race").exists());
+        assert_eq!(
+            std::fs::read_dir(assets.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".staging-"))
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn sixty_frames_per_action_round_trip_with_a_compact_manifest() {
+        let source = tempfile::tempdir().unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let assets = tempfile::tempdir().unwrap();
+        write_pack_count(source.path(), 60);
+
+        let exported = export_pet_package(
+            parent.path(),
+            "满帧伙伴",
+            "dog",
+            "q-sticker",
+            "2026-10-21T00:00:00Z",
+            source.path(),
+        )
+        .expect("export 60 frames");
+        let root = Path::new(&exported.root);
+        let manifest_bytes = std::fs::metadata(root.join(MANIFEST_NAME)).unwrap().len();
+        assert!(manifest_bytes <= MAX_MANIFEST_BYTES as u64);
+
+        let imported = import_pet_package(root, assets.path(), "pet-60").expect("import 60 frames");
+        let frames = std::fs::read_dir(Path::new(&imported.root).join("idle"))
+            .unwrap()
+            .count();
+        assert_eq!(frames, 60);
+        assert!(inspect_frame_directory(Path::new(&imported.root)).unwrap().valid);
+    }
+
+    #[test]
     fn export_refuses_an_incomplete_source_without_creating_a_package() {
         let source = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
@@ -572,6 +696,16 @@ mod tests {
         mutate_manifest(root, |value| {
             value["actions"]["idle"][0]["path"] = "frames/idle/000.png".into();
             value["actions"]["idle"][1]["path"] = "frames/idle/000.png".into();
+        });
+        assert!(inspect_pet_package(root).is_err());
+
+        mutate_manifest(root, |value| {
+            value["actions"]["idle"][1]["path"] = "frames/idle/./000.png".into();
+        });
+        assert!(inspect_pet_package(root).is_err());
+
+        mutate_manifest(root, |value| {
+            value["actions"]["idle"][1]["path"] = "frames//idle//000.png".into();
         });
         assert!(inspect_pet_package(root).is_err());
     }
