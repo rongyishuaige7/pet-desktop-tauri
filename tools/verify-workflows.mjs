@@ -2278,6 +2278,28 @@ await record('assembly_first_edit_after_discard_autosaves',async()=>{
   return {passed:state.name==='首笔编辑'&&restored==='首笔编辑'&&errors.length===0,state,restored,errors};
  }finally{await context.close();}
 });
+await record('assembly_pending_flush_return_and_submit',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.waitForFunction(()=>!document.querySelector('#workshop-name')?.disabled);
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const frames=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.saveCreationDraft({schemaVersion:1,draftId:'manual-assembly',pendingPetId:'pending-a04',name:'草稿伙伴',species:'cat',manualFrames:frames},null);});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(()=>{window.__review.blockDraftSave=true;});
+  await page.locator('#workshop-name').fill('新内容');
+  await page.locator('.draft-status.is-saving').waitFor();
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await openWorkshopTask(page,'装配动作帧');
+  await page.waitForFunction(()=>{const button=[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('保存全套动作并应用到桌面'));return Boolean(button)&&!button.disabled;});
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.evaluate(()=>{window.__review.blockDraftSave=false;window.__review.releaseDraftSave?.();});
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===1;},null,{timeout:8000});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();const d=await s.loadCreationDraft('manual-assembly');return {name:pet?.name,id:pet?.id,draft:Boolean(d),toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  return {passed:state.name==='新内容'&&state.id==='pending-a04'&&!state.draft&&!state.toasts.some(t=>t?.includes('其他窗口已更新'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{
