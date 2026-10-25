@@ -151,6 +151,9 @@ function bumpSelectionRevision(
 }
 
 export function loadSelectionRevision(): Promise<number> {
+  if ((globalThis as { __review?: { failSelectionRead?: boolean } }).__review?.failSelectionRead) {
+    return Promise.reject(new Error("selection revision read failed"));
+  }
   return transaction<number>("readonly", (tx, done) => {
     const req = tx.objectStore("metadata").get(SELECTION_REVISION_KEY);
     req.onsuccess = () => {

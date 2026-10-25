@@ -2184,6 +2184,24 @@ await record('assembly_stale_attach_does_not_rollback_new_selection',async()=>{
   return {passed:state.active==='B'&&state.native==='/review/B'&&state.nativePet==='B'&&!state.draft&&!state.recovery&&!state.toasts.some(t=>t?.includes('恢复原桌宠失败'))&&!state.toasts.some(t=>t?.includes('成功保存'))&&state.toasts.some(t=>t?.includes('选择已更新'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
+await record('assembly_attach_selection_read_failure_does_not_rollback',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const frames=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.saveCreationDraft({schemaVersion:1,draftId:'manual-assembly',pendingPetId:'pending-a04',name:'草稿伙伴',species:'cat',manualFrames:frames},null);});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(()=>{window.__review.delayGeneratedCommit=700;window.__review.failGeneratedAttach=true;});
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.waitForTimeout(150);
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');await s.setActivePetId('B');await window.__TAURI_INTERNALS__.invoke('set_native_pet_frame_root',{rootDir:'/review/B',petId:'B',petName:'测试乙'});window.__review.failSelectionRead=true;});
+  await page.locator('.toast-message').filter({hasText:'无法确认当前选择'}).waitFor({timeout:5000});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');window.__review.failSelectionRead=false;const pet=await s.loadPet();return {active:pet?.id,native:window.__review.root,nativePet:window.__review.native.petId,recovery:Boolean(document.querySelector('.recovery-notice')),toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  return {passed:state.active==='B'&&state.native==='/review/B'&&state.nativePet==='B'&&!state.recovery&&!state.toasts.some(t=>t?.includes('恢复原桌宠失败'))&&!state.toasts.some(t=>t?.includes('成功保存'))&&state.toasts.some(t=>t?.includes('无法确认当前选择'))&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{

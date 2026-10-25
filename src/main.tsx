@@ -578,19 +578,21 @@ function StudioApp() {
         }
       } catch (error) {
         if (options?.expectedSelectionRevision !== undefined) {
+          let currentRevision: number;
+          let current: PetProfile | null;
           try {
-            const [currentRevision, current] = await Promise.all([
+            [currentRevision, current] = await Promise.all([
               loadSelectionRevision(),
               loadPet()
             ]);
-            if (
-              currentRevision !== options.expectedSelectionRevision ||
-              current?.id !== pet.id
-            ) {
-              return { status: "superseded", currentPetId: current?.id ?? null };
-            }
           } catch {
-            // If the selection cannot be checked, keep the normal rollback path.
+            return { status: "selection_unknown" };
+          }
+          if (
+            currentRevision !== options.expectedSelectionRevision ||
+            current?.id !== pet.id
+          ) {
+            return { status: "superseded", currentPetId: current?.id ?? null };
           }
         }
         if (!persisted && nativeChanged && previous?.frameRoot) {
@@ -713,6 +715,12 @@ function StudioApp() {
         return;
       case "superseded":
         showToast("这次切换已被更新的伙伴选择取代，已读取最新状态。", "info");
+        return;
+      case "selection_unknown":
+        showToast(
+          "伙伴已保存，但暂时无法确认当前选择；桌面未切换，请稍后重试。",
+          "info"
+        );
         return;
     }
   }

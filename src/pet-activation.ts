@@ -15,7 +15,8 @@ export type ActivationResult =
       retry: DisplayRetryContext;
       code: string;
     }
-  | { status: "superseded"; currentPetId: string | null };
+  | { status: "superseded"; currentPetId: string | null }
+  | { status: "selection_unknown" };
 
 export interface DisplayRetryContext {
   operationId: string;
