@@ -36,6 +36,7 @@ import {
   loadCreationDraft,
   saveCreationDraft,
   deleteCreationDraft,
+  commitAssemblyDraftPet,
   saveOnboardingRecord,
   saveOnboardingProgress,
   startNewAdoptionIntent,
@@ -306,7 +307,6 @@ function StudioApp() {
   const draftDirtyRef = useRef(false);
   const draftSaveInFlightRef = useRef<Promise<boolean> | null>(null);
   const draftSubmitInProgressRef = useRef(false);
-  const lastSavedDraftRef = useRef<CreationDraft | null>(null);
   const [draftLoading, setDraftLoading] = useState(true);
   const [draftReady, setDraftReady] = useState(false);
   const [draftSaveTick, setDraftSaveTick] = useState(0);
@@ -345,7 +345,11 @@ function StudioApp() {
     setDraftStatus("saving");
     const promise = (async () => {
       try {
-        const result = await saveCreationDraft(draft, draftRevisionRef.current);
+        const result = await saveCreationDraft(
+          draft,
+          draftRevisionRef.current,
+          draftPendingPetIdRef.current
+        );
         if (result.status === "conflict") {
           if (editSeq === draftEditSeqRef.current) {
             setDraftStatus("conflict");
@@ -354,7 +358,6 @@ function StudioApp() {
           return false;
         }
         draftRevisionRef.current = result.draft.revision;
-        lastSavedDraftRef.current = result.draft;
         if (editSeq === draftEditSeqRef.current) {
           setDraftStatus("saved");
         } else {
@@ -398,7 +401,6 @@ function StudioApp() {
         }
         draftRevisionRef.current = draft.revision;
         draftPendingPetIdRef.current = draft.pendingPetId;
-        lastSavedDraftRef.current = draft;
       })
       .catch(() => {
         // A storage outage keeps the in-memory form; autosave will report it.
@@ -2193,21 +2195,6 @@ function StudioApp() {
   }
 
   // Workshop - Save Manual Frames
-  function draftMatchesLocalFrames(
-    draft: CreationDraft,
-    actions: ActionFrameSet
-  ): boolean {
-    if (draft.name !== name || draft.species !== species) return false;
-    return PET_ACTIONS.every(({ id }) => {
-      const stored = draft.manualFrames[id] ?? [];
-      const local = actions[id] ?? [];
-      return (
-        stored.length === local.length &&
-        stored.every((frame, index) => frame === local[index])
-      );
-    });
-  }
-
   async function waitForDraftIdle() {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (draftSaveInFlightRef.current) {
@@ -2216,31 +2203,6 @@ function StudioApp() {
       if (!draftSavingRef.current && !draftSaveInFlightRef.current) return;
       await new Promise((resolve) => window.setTimeout(resolve, 50));
     }
-  }
-
-  async function finalizeSubmittedDraft(
-    actions: ActionFrameSet,
-    submitted: CreationDraft | null
-  ): Promise<boolean> {
-    const current = await loadCreationDraft(ASSEMBLY_DRAFT_ID).catch(() => null);
-    if (!current) return true;
-    const expectedPending = submitted?.pendingPetId ?? draftPendingPetIdRef.current;
-    if (current.pendingPetId !== expectedPending) {
-      return false;
-    }
-    const known = lastSavedDraftRef.current;
-    const isOurNewerRevision =
-      known !== null &&
-      known.revision === current.revision &&
-      known.pendingPetId === current.pendingPetId;
-    if (!isOurNewerRevision && !draftMatchesLocalFrames(current, actions)) {
-      return false;
-    }
-    return deleteCreationDraft(
-      ASSEMBLY_DRAFT_ID,
-      current.revision,
-      current.pendingPetId
-    ).catch(() => false);
   }
 
   async function handleDiscardDraft() {
@@ -2278,7 +2240,6 @@ function StudioApp() {
         return;
       }
       draftRevisionRef.current = null;
-      lastSavedDraftRef.current = null;
       draftPendingPetIdRef.current = crypto.randomUUID();
       suppressNextDraftSaveRef.current = true;
       setDraftStatus("idle");
@@ -2298,20 +2259,8 @@ function StudioApp() {
       window.clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
     }
-    let submittedDraft: CreationDraft | null = null;
     try {
       await waitForDraftIdle();
-      submittedDraft = await loadCreationDraft(ASSEMBLY_DRAFT_ID);
-      if (
-        submittedDraft &&
-        (draftRevisionRef.current === null ||
-          submittedDraft.revision !== draftRevisionRef.current ||
-          submittedDraft.pendingPetId !== draftPendingPetIdRef.current)
-      ) {
-        setDraftStatus("conflict");
-        showToast("草稿已被其他窗口更新，未提交；当前输入仍保留。", "info");
-        return;
-      }
       const actions = Object.fromEntries(
         PET_ACTIONS.map((a) => [a.id, manualFrames[a.id] ?? []])
       ) as ActionFrameSet;
@@ -2319,11 +2268,12 @@ function StudioApp() {
       const fallbackImage =
         manualFrames.idle?.[0] || Object.values(manualFrames).find((f) => f?.[0])?.[0] || "";
 
+      let newPet: PetProfile;
       if (isTauri) {
         const saved = await invoke<SavedManualFramePack>("save_manual_frame_pack", {
           request: { actions }
         });
-        const newPet = createManualPet({
+        newPet = createManualPet({
           id: draftPendingPetIdRef.current,
           name: name.trim() || "我的宠物",
           species,
@@ -2332,45 +2282,40 @@ function StudioApp() {
           frameRoot: saved.frameRoot,
           storageMode: "preset-root"
         });
-        const result = await activatePet(newPet, true);
-        const deleted = await finalizeSubmittedDraft(actions, submittedDraft);
-        if (deleted) {
-          draftRevisionRef.current = null;
-          lastSavedDraftRef.current = null;
-          draftPendingPetIdRef.current = crypto.randomUUID();
-          suppressNextDraftSaveRef.current = true;
-          setDraftStatus("idle");
-          setManualFrames({});
-        } else {
-          setDraftStatus("conflict");
-          showToast("伙伴已保存，但草稿已被其他窗口更新，未删除。", "info");
-        }
-        announceActivation(result, `已成功保存「${newPet.name}」并同步至桌面！`);
-        setCurrentTab("stage");
+      } else {
+        newPet = createManualPet({
+          id: draftPendingPetIdRef.current,
+          name: name.trim() || "我的宠物",
+          species,
+          sourceImage: fallbackImage,
+          manualFrames: actions
+        });
+      }
+
+      const commit = await commitAssemblyDraftPet(
+        toPersistedPet(newPet),
+        ASSEMBLY_DRAFT_ID,
+        draftRevisionRef.current,
+        draftPendingPetIdRef.current
+      );
+      if (commit.status === "conflict") {
+        setDraftStatus("conflict");
+        showToast("草稿已被其他窗口更新，未提交；当前输入仍保留。", "info");
         return;
       }
 
-      const newPet = createManualPet({
-        id: draftPendingPetIdRef.current,
-        name: name.trim() || "我的宠物",
-        species,
-        sourceImage: fallbackImage,
-        manualFrames: actions
-      });
-      const result = await activatePet(newPet, true);
-      const deleted = await finalizeSubmittedDraft(actions, submittedDraft);
-      if (deleted) {
-        draftRevisionRef.current = null;
-        lastSavedDraftRef.current = null;
-        draftPendingPetIdRef.current = crypto.randomUUID();
-        suppressNextDraftSaveRef.current = true;
-        setDraftStatus("idle");
-        setManualFrames({});
-      } else {
-        setDraftStatus("conflict");
-        showToast("伙伴已保存，但草稿已被其他窗口更新，未删除。", "info");
-      }
-      announceActivation(result, "已保存动作帧（网页预览模式）！");
+      const result = await activatePet(commit.pet, false);
+      draftRevisionRef.current = null;
+      draftPendingPetIdRef.current = crypto.randomUUID();
+      suppressNextDraftSaveRef.current = true;
+      setDraftStatus("idle");
+      setManualFrames({});
+      announceActivation(
+        result,
+        commit.status === "committed"
+          ? `已成功保存「${commit.pet.name}」并同步至桌面！`
+          : `这次提交已在另一窗口完成，沿用「${commit.pet.name}」。`
+      );
       setCurrentTab("stage");
     } catch (err) {
       setDraftStatus("unsaved");

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference, savePetProfile, loadCreationDraft, saveCreationDraft, deleteCreationDraft } from "./storage";
+import { claimAdoptionRecord, commitAdoptedPet, confirmAdoptionDisplay, deletePet, isCollectionInitialized, loadAllPets, loadOnboardingRecord, loadPet, loadRemovedPets, loadSelectionRevision, renamePet, restoreRemovedPet, saveOnboardingProgress, saveOnboardingRecord, savePet, setActivePetId, softRemovePet, startNewAdoptionIntent, updatePetAction, updatePetAssetReference, savePetProfile, loadCreationDraft, saveCreationDraft, deleteCreationDraft, commitAssemblyDraftPet } from "./storage";
 import { createOnboardingRecord } from "./onboarding";
 import { PET_ACTIONS, type ActionFrameSet, type PetProfile } from "./types";
 
@@ -862,6 +862,72 @@ describe("recent removals", () => {
       await deleteCreationDraft("manual-assembly", 2, "pending-1")
     ).toBe(true);
     expect(await loadCreationDraft("manual-assembly")).toBeNull();
+  });
+
+  it("rejects a draft save from a different pending generation", async () => {
+    const base = {
+      schemaVersion: 1 as const,
+      draftId: "manual-assembly",
+      pendingPetId: "old-pending",
+      name: "旧草稿",
+      species: "cat" as const,
+      manualFrames: Object.fromEntries(PET_ACTIONS.map(({ id }) => [id, ["frame.png"]])) as ActionFrameSet
+    };
+    const first = await saveCreationDraft(base, null);
+    expect(first.status).toBe("saved");
+    if (first.status !== "saved") return;
+    await deleteCreationDraft("manual-assembly");
+    const recreated = await saveCreationDraft(
+      { ...base, pendingPetId: "new-pending", name: "新草稿" },
+      null
+    );
+    expect(recreated.status).toBe("saved");
+
+    const stale = await saveCreationDraft(
+      { ...base, name: "旧窗口" },
+      recreated.status === "saved" ? recreated.draft.revision : 1,
+      "old-pending"
+    );
+    expect(stale.status).toBe("conflict");
+    expect((await loadCreationDraft("manual-assembly"))?.name).toBe("新草稿");
+  });
+
+  it("commits a pet and deletes the draft atomically without overwriting", async () => {
+    const base = {
+      schemaVersion: 1 as const,
+      draftId: "manual-assembly",
+      pendingPetId: "pending-commit",
+      name: "草稿伙伴",
+      species: "cat" as const,
+      manualFrames: Object.fromEntries(PET_ACTIONS.map(({ id }) => [id, ["frame.png"]])) as ActionFrameSet
+    };
+    const draft = await saveCreationDraft(base, null);
+    expect(draft.status).toBe("saved");
+    if (draft.status !== "saved") return;
+
+    const candidate = { ...pet("pending-commit"), name: "甲窗口伙伴" };
+    const committed = await commitAssemblyDraftPet(
+      candidate,
+      "manual-assembly",
+      draft.draft.revision,
+      "pending-commit"
+    );
+    expect(committed.status).toBe("committed");
+    expect((await loadPet())?.name).toBe("甲窗口伙伴");
+    expect(await loadCreationDraft("manual-assembly")).toBeNull();
+
+    const later = { ...candidate, name: "乙窗口伙伴" };
+    const already = await commitAssemblyDraftPet(
+      later,
+      "manual-assembly",
+      draft.draft.revision,
+      "pending-commit"
+    );
+    expect(already.status).toBe("already_committed");
+    if (already.status === "already_committed") {
+      expect(already.pet.name).toBe("甲窗口伙伴");
+    }
+    expect((await loadPet())?.name).toBe("甲窗口伙伴");
   });
 
   it("saves a profile without changing the active selection", async () => {

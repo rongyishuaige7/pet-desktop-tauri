@@ -189,7 +189,8 @@ export type SaveDraftResult =
 
 export async function saveCreationDraft(
   draft: Omit<CreationDraft, "revision" | "updatedAt">,
-  expectedRevision: number | null
+  expectedRevision: number | null,
+  expectedPendingPetId?: string
 ): Promise<SaveDraftResult> {
   const delay = (globalThis as { __review?: { draftSaveDelay?: number } }).__review?.draftSaveDelay;
   if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -204,7 +205,11 @@ export async function saveCreationDraft(
           done({ status: "conflict", draft: current });
           return;
         }
-      } else if (currentRevision !== expectedRevision) {
+      } else if (
+        currentRevision !== expectedRevision ||
+        (expectedPendingPetId !== undefined &&
+          current?.pendingPetId !== expectedPendingPetId)
+      ) {
         done({ status: "conflict", draft: current ?? null });
         return;
       }
@@ -217,6 +222,64 @@ export async function saveCreationDraft(
       done({ status: "saved", draft: next });
     };
   });
+}
+
+export type CommitDraftResult =
+  | { status: "committed"; pet: PetProfile }
+  | { status: "already_committed"; pet: PetProfile }
+  | { status: "conflict" };
+
+export async function commitAssemblyDraftPet(
+  pet: PetProfile,
+  draftId: string,
+  expectedRevision: number | null,
+  expectedPendingPetId: string
+): Promise<CommitDraftResult> {
+  const result = await transaction<CommitDraftResult>("readwrite", (tx, done) => {
+    const drafts = tx.objectStore("creation_drafts");
+    const collection = tx.objectStore("pets_collection");
+    const draftReq = drafts.get(draftId);
+    draftReq.onsuccess = () => {
+      const draft = draftReq.result as CreationDraft | undefined;
+      const existingReq = collection.get(pet.id);
+      existingReq.onsuccess = () => {
+        const existing = existingReq.result as PetProfile | undefined;
+        if (!draft) {
+          if (existing) {
+            done({ status: "already_committed", pet: existing });
+          } else if (expectedRevision === null) {
+            collection.put(pet);
+            activate(tx, pet);
+            bumpSelectionRevision(tx);
+            done({ status: "committed", pet });
+          } else {
+            done({ status: "conflict" });
+          }
+          return;
+        }
+        if (
+          expectedRevision === null ||
+          draft.revision !== expectedRevision ||
+          draft.pendingPetId !== expectedPendingPetId
+        ) {
+          done({ status: "conflict" });
+          return;
+        }
+        if (existing) {
+          drafts.delete(draftId);
+          done({ status: "already_committed", pet: existing });
+          return;
+        }
+        collection.put(pet);
+        activate(tx, pet);
+        bumpSelectionRevision(tx);
+        drafts.delete(draftId);
+        done({ status: "committed", pet });
+      };
+    };
+  });
+  if (result.status === "committed") notifyPetChanged();
+  return result;
 }
 
 export async function deleteCreationDraft(

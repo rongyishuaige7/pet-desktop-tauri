@@ -145,6 +145,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     }
     if(cmd==='save_manual_frame_pack'){
      state.saves++;state.savedActions=args.request.actions;state.saving=true;
+     if(state.manualSaveDelay)await new Promise(resolve=>setTimeout(resolve,state.manualSaveDelay));
      if(state.blockSave)await new Promise(resolve=>state.releaseSave=resolve);
      return {frameRoot:'/review/generated',sourceImage:state.savedActions.idle[0]};
     }
@@ -2106,6 +2107,23 @@ await record('assembly_discard_draft_keeps_formal_pets',async()=>{
   await page.locator('.draft-status.is-idle').waitFor();
   const after=await page.evaluate(async()=>{const s=await import('/src/storage.ts');return {draft:Boolean(await s.loadCreationDraft('manual-assembly')),pets:(await s.loadAllPets()).length,frames:document.querySelectorAll('.frame-thumb-img').length};});
   return {passed:before.draft&&before.pets===2&&!after.draft&&after.pets===2&&after.frames===0&&errors.length===0,before,after,errors};
+ }finally{await context.close();}
+});
+await record('assembly_late_submit_returns_existing_commit',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const frames=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.saveCreationDraft({schemaVersion:1,draftId:'manual-assembly',pendingPetId:'pending-a04',name:'草稿伙伴',species:'cat',manualFrames:frames},null);});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(()=>{window.__review.manualSaveDelay=700;});
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.waitForTimeout(150);
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const actions=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.savePet({id:'pending-a04',name:'乙窗口伙伴',species:'cat',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',storageMode:'preset-root',frameRoot:'/review/B',sourceImage:img,actions,currentAction:'idle',actionStartedAt:new Date().toISOString(),scale:1});await s.deleteCreationDraft('manual-assembly');});
+  await page.locator('.toast-message').filter({hasText:'另一窗口完成'}).waitFor({timeout:5000});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {name:pet?.name,id:pet?.id,draft:Boolean(await s.loadCreationDraft('manual-assembly')),pets:(await s.loadAllPets()).length,native:window.__review.root,toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  return {passed:state.id==='pending-a04'&&state.name==='乙窗口伙伴'&&!state.draft&&state.pets===1&&state.native==='/review/B'&&state.toasts.some(t=>t?.includes('另一窗口完成'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
