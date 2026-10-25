@@ -101,7 +101,7 @@
 - 收尾修正：首次并发创建冲突、条件删除草稿、提交/丢弃前版本与 pendingPetId 校验、冲突禁用提交、迟到保存回复不误报、恢复期间禁用表单。
 - 原子提交：`commitAssemblyDraftPet` 在同一事务内校验草稿、写伙伴并删除草稿；迟到提交返回已有伙伴，不覆盖。草稿保存同时校验 revision 与 pendingPetId。
 - 提交后同步：首次提交在素材加载后、挂载前再次核对选择版本；过期请求不 attach/show；attach 失败分支也核对版本，已过期时不回滚旧伙伴；已提交重复请求不重新激活/show；挂载失败显示“已保存，桌面待同步”，仅重试加载。
-- 未完成：离开前等待保存、配额/磁盘失败、真实双窗口同时编辑；草稿帧仍为 data URL。CI：[40163660229](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40163660229) 通过；原子提交 CI：[40165126275](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40165126275) 通过；提交后同步 CI：[40166707033](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40166707033) 通过；加载后选择复核 CI：[40178502111](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40178502111) 通过。CI：[40092982191](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40092982191) 通过。
+- 未完成：离开前等待保存、配额/磁盘失败、真实双窗口同时编辑；草稿帧仍为 data URL。CI：[40163660229](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40163660229) 通过；原子提交 CI：[40165126275](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40165126275) 通过；提交后同步 CI：[40166707033](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40166707033) 通过；加载后选择复核 CI：[40178502111](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40178502111) 通过；attach 过期回滚 CI：[40179624537](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40179624537) 通过。CI：[40092982191](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40092982191) 通过。
 
 ## v0.4 A03 当前记录（2026-10-24，自动化完成）
 
