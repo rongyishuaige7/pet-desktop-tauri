@@ -2121,9 +2121,30 @@ await record('assembly_late_submit_returns_existing_commit',async()=>{
   await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
   await page.waitForTimeout(150);
   await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const actions=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.savePet({id:'pending-a04',name:'乙窗口伙伴',species:'cat',style:'q-sticker',createdAt:'2026-10-21T00:00:00Z',storageMode:'preset-root',frameRoot:'/review/B',sourceImage:img,actions,currentAction:'idle',actionStartedAt:new Date().toISOString(),scale:1});await s.deleteCreationDraft('manual-assembly');});
+  const beforeRevision=await page.evaluate(async()=>(await import('/src/storage.ts')).loadSelectionRevision());
   await page.locator('.toast-message').filter({hasText:'另一窗口完成'}).waitFor({timeout:5000});
-  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {name:pet?.name,id:pet?.id,draft:Boolean(await s.loadCreationDraft('manual-assembly')),pets:(await s.loadAllPets()).length,native:window.__review.root,toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
-  return {passed:state.id==='pending-a04'&&state.name==='乙窗口伙伴'&&!state.draft&&state.pets===1&&state.native==='/review/B'&&state.toasts.some(t=>t?.includes('另一窗口完成'))&&errors.length===0,state,errors};
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {name:pet?.name,id:pet?.id,draft:Boolean(await s.loadCreationDraft('manual-assembly')),pets:(await s.loadAllPets()).length,native:window.__review.root,revision:await s.loadSelectionRevision(),toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  return {passed:state.id==='pending-a04'&&state.name==='乙窗口伙伴'&&!state.draft&&state.pets===1&&state.revision===beforeRevision&&state.toasts.some(t=>t?.includes('另一窗口完成'))&&errors.length===0,beforeRevision,state,errors};
+ }finally{await context.close();}
+});
+await record('assembly_attach_failure_after_commit_keeps_saved_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const frames=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.saveCreationDraft({schemaVersion:1,draftId:'manual-assembly',pendingPetId:'pending-a04',name:'草稿伙伴',species:'cat',manualFrames:frames},null);});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(()=>{window.__review.failAttach=true;});
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.waitForTimeout(1500);
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {petId:pet?.id,root:pet?.frameRoot,draft:Boolean(await s.loadCreationDraft('manual-assembly')),status:document.querySelector('.draft-status')?.textContent,recovery:document.querySelector('.recovery-notice')?.textContent,toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent),native:window.__review.root};});
+  if(!failed.recovery)return {passed:false,failed,errors};
+  await page.evaluate(()=>{window.__review.failAttach=false;});
+  await page.getByRole('button',{name:'重试加载',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return pet?.frameRoot===window.__review.root&&!document.querySelector('.recovery-notice');});
+  const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,native:window.__review.root,recovery:Boolean(document.querySelector('.recovery-notice'))};});
+  return {passed:failed.petId==='pending-a04'&&failed.root?.startsWith('/review/generated')&&!failed.draft&&!failed.toasts.some(t=>t?.includes('保存帧包失败'))&&failed.native==='/review/A'&&retried.root===retried.native&&!retried.recovery&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
 await record('assembly_draft_conflict_keeps_local_input',async()=>{

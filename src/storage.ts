@@ -136,12 +136,17 @@ function activate(tx: IDBTransaction, pet: PetProfile | null) {
  * change. Display retries compare it so an older intent cannot win over a
  * newer choice, even when the user selected the same profile again.
  */
-function bumpSelectionRevision(tx: IDBTransaction) {
+function bumpSelectionRevision(
+  tx: IDBTransaction,
+  onDone?: (revision: number) => void
+) {
   const meta = tx.objectStore("metadata");
   const current = meta.get(SELECTION_REVISION_KEY);
   current.onsuccess = () => {
     const previous = Number(current.result);
-    meta.put(Number.isFinite(previous) ? previous + 1 : 1, SELECTION_REVISION_KEY);
+    const next = Number.isFinite(previous) ? previous + 1 : 1;
+    meta.put(next, SELECTION_REVISION_KEY);
+    onDone?.(next);
   };
 }
 
@@ -225,7 +230,7 @@ export async function saveCreationDraft(
 }
 
 export type CommitDraftResult =
-  | { status: "committed"; pet: PetProfile }
+  | { status: "committed"; pet: PetProfile; selectionRevision: number }
   | { status: "already_committed"; pet: PetProfile }
   | { status: "conflict" };
 
@@ -250,8 +255,9 @@ export async function commitAssemblyDraftPet(
           } else if (expectedRevision === null) {
             collection.put(pet);
             activate(tx, pet);
-            bumpSelectionRevision(tx);
-            done({ status: "committed", pet });
+            bumpSelectionRevision(tx, (selectionRevision) =>
+              done({ status: "committed", pet, selectionRevision })
+            );
           } else {
             done({ status: "conflict" });
           }
@@ -272,9 +278,10 @@ export async function commitAssemblyDraftPet(
         }
         collection.put(pet);
         activate(tx, pet);
-        bumpSelectionRevision(tx);
+        bumpSelectionRevision(tx, (selectionRevision) =>
+          done({ status: "committed", pet, selectionRevision })
+        );
         drafts.delete(draftId);
-        done({ status: "committed", pet });
       };
     };
   });

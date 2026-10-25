@@ -501,7 +501,8 @@ function StudioApp() {
   async function activatePet(
     pet: PetProfile,
     create = false,
-    explicitShow = true
+    explicitShow = true,
+    options?: { skipActivate?: boolean }
   ): Promise<ActivationResult> {
     return serial(async (): Promise<ActivationResult> => {
       transitioning.current = true;
@@ -518,7 +519,9 @@ function StudioApp() {
           full.currentAction = await syncNativeAction(full.currentAction);
         }
         if (create) await savePet(toPersistedPet(full));
-        else if (!await setActivePetId(full.id)) throw new Error("该宠物已被移除");
+        else if (!options?.skipActivate && !await setActivePetId(full.id)) {
+          throw new Error("该宠物已被移除");
+        }
         persisted = true;
         setActivePet(full);
         setDisplayRetry(null);
@@ -2304,18 +2307,61 @@ function StudioApp() {
         return;
       }
 
-      const result = await activatePet(commit.pet, false);
+      // The database commit is complete: end the draft submission state before
+      // touching the native window. A later attach failure must not look like a
+      // failed save or resurrect the deleted draft.
       draftRevisionRef.current = null;
       draftPendingPetIdRef.current = crypto.randomUUID();
       suppressNextDraftSaveRef.current = true;
       setDraftStatus("idle");
       setManualFrames({});
-      announceActivation(
-        result,
-        commit.status === "committed"
-          ? `已成功保存「${commit.pet.name}」并同步至桌面！`
-          : `这次提交已在另一窗口完成，沿用「${commit.pet.name}」。`
-      );
+
+      if (commit.status === "already_committed") {
+        await refreshList();
+        showToast(
+          "这次提交已在另一窗口完成，沿用已保存的伙伴；当前选择保持不变。",
+          "info"
+        );
+        setCurrentTab("stage");
+        return;
+      }
+
+      try {
+        const selectionRevision = await loadSelectionRevision();
+        const currentPet = await loadPet();
+        if (
+          selectionRevision !== commit.selectionRevision ||
+          currentPet?.id !== commit.pet.id
+        ) {
+          await refreshList();
+          showToast(
+            "伙伴已保存；当前选择已由另一窗口更新，未切换桌面。",
+            "info"
+          );
+          setCurrentTab("stage");
+          return;
+        }
+        const result = await activatePet(commit.pet, false, true, {
+          skipActivate: true
+        });
+        announceActivation(
+          result,
+          `已成功保存「${commit.pet.name}」并同步至桌面！`
+        );
+      } catch {
+        const full = await ensurePetHydrated(commit.pet).catch(() => commit.pet);
+        setActivePet(full);
+        setLocalError({
+          id: `asset-${commit.pet.id}`,
+          petId: commit.pet.id,
+          title: "已保存，桌面待同步",
+          body: "资料和草稿已提交；桌面仍在用旧素材。可以只重试加载，不需要重新保存。",
+          operation: "set_frame_root",
+          code: "ASSET_NOT_FOUND"
+        });
+        showToast("已保存，桌面待同步。", "info");
+        await refreshList().catch(() => {});
+      }
       setCurrentTab("stage");
     } catch (err) {
       setDraftStatus("unsaved");
