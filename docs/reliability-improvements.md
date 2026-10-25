@@ -235,7 +235,7 @@
 - 正式提交使用草稿稳定 `pendingPetId`，成功后删除草稿；丢弃草稿只删除草稿，不删除已保存伙伴或正式素材。
 - 验证：60 项 Rust 测试、140 项前端单元测试、109 个隔离浏览器流程、生产构建通过。浏览器覆盖自动保存/重启恢复、顺序调整、冲突保留本地输入、冲突时禁用提交/丢弃不删除新草稿、缺项禁用提交、稳定 pending id 提交、丢弃草稿保留正式伙伴；存储覆盖首次并发创建冲突和条件删除。
 - 收尾修正：`expectedRevision=null` 只允许创建不存在的草稿，已有草稿返回冲突；提交/丢弃前暂停自动保存、等待在途保存、校验 revision 与 pendingPetId，条件删除草稿，冲突时保留新草稿；冲突状态禁用正式提交。自动保存记录编辑代次，迟到成功回复只更新 revision，不再把新输入标记为已保存；在途期间的新编辑会触发补存。草稿恢复期间禁用表单，并用恢复代次保护。
-- 未完成：离开页面时等待已开始的保存、配额/磁盘失败注入、真实双窗口同时编辑；草稿帧仍以 data URL 存 IndexedDB，尚未改为 Blob。A04 仍为部分完成。CI：[40092982191](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40092982191) 通过。
+- 未完成：离开页面时等待已开始的保存、配额/磁盘失败注入、真实双窗口同时编辑；草稿帧仍以 data URL 存 IndexedDB，尚未改为 Blob。A04 仍为部分完成。CI：[40163660229](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40163660229) 通过。CI：[40092982191](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40092982191) 通过。
 
 ## 本轮之外的依赖维护
 
