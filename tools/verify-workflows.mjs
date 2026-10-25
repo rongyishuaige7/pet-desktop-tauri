@@ -2202,6 +2202,40 @@ await record('assembly_attach_selection_read_failure_does_not_rollback',async()=
   return {passed:state.active==='B'&&state.native==='/review/B'&&state.nativePet==='B'&&!state.recovery&&!state.toasts.some(t=>t?.includes('恢复原桌宠失败'))&&!state.toasts.some(t=>t?.includes('成功保存'))&&state.toasts.some(t=>t?.includes('无法确认当前选择'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
+await record('assembly_draft_flushes_when_leaving_frames',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.waitForFunction(()=>!document.querySelector('#workshop-name')?.disabled);
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.frame-thumb-img').waitFor();
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return d?.manualFrames.idle.length===1;},{timeout:5000});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {frames:d?.manualFrames.idle.length,revision:d?.revision};});
+  return {passed:state.frames===1&&state.revision>=1&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('assembly_draft_save_failure_keeps_old_version',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  const before=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {name:d?.name,revision:d?.revision};});
+  await page.evaluate(()=>{window.__review.failDraftSave=true;});
+  await page.locator('#workshop-name').fill('未保存名字');
+  await page.locator('.draft-status.is-unsaved').waitFor();
+  const failed=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,revision:d?.revision};});
+  await page.evaluate(()=>{window.__review.failDraftSave=false;});
+  await page.locator('#workshop-name').fill('恢复保存');
+  await page.locator('.draft-status.is-saved').waitFor({timeout:5000});
+  await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return d?.name==='恢复保存';},{timeout:5000});
+  const recovered=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {name:d?.name,revision:d?.revision};});
+  return {passed:failed.input==='未保存名字'&&failed.draftName===before.name&&failed.revision===before.revision&&recovered.name==='恢复保存'&&recovered.revision>before.revision&&errors.length===0,before,failed,recovered,errors};
+ }finally{await context.close();}
+});
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{

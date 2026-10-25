@@ -302,6 +302,8 @@ function StudioApp() {
   const draftSaveTimerRef = useRef<number | null>(null);
   const persistDraftRef = useRef<() => Promise<boolean>>(async () => false);
   const suppressNextDraftSaveRef = useRef(false);
+  const draftPausedRef = useRef(false);
+  const wasFramesRef = useRef(false);
   const draftEditSeqRef = useRef(0);
   const draftSavingRef = useRef(false);
   const draftDirtyRef = useRef(false);
@@ -392,6 +394,7 @@ function StudioApp() {
       .then((draft) => {
         if (cancelled || !draft) return;
         if (draftEditSeqRef.current === restoreSeq) {
+          draftPausedRef.current = false;
           setName(draft.name);
           setSpecies(draft.species);
           setManualFrames(draft.manualFrames);
@@ -434,6 +437,7 @@ function StudioApp() {
     ) {
       return;
     }
+    if (draftPausedRef.current) return;
     if (suppressNextDraftSaveRef.current) {
       suppressNextDraftSaveRef.current = false;
       return;
@@ -460,6 +464,20 @@ function StudioApp() {
     species,
     manualFrames
   ]);
+
+  useEffect(() => {
+    const isFrames = currentTab === "workshop" && workshopTask === "frames";
+    if (wasFramesRef.current && !isFrames && !draftPausedRef.current) {
+      if (draftSaveTimerRef.current) {
+        window.clearTimeout(draftSaveTimerRef.current);
+        draftSaveTimerRef.current = null;
+      }
+      if (draftLoadedRef.current) {
+        void persistDraftRef.current();
+      }
+    }
+    wasFramesRef.current = isFrames;
+  }, [currentTab, workshopTask]);
 
   useEffect(() => {
     if (!aiCancelRef.current) {
@@ -2280,6 +2298,7 @@ function StudioApp() {
       }
       draftRevisionRef.current = null;
       draftPendingPetIdRef.current = crypto.randomUUID();
+      draftPausedRef.current = true;
       suppressNextDraftSaveRef.current = true;
       setDraftStatus("idle");
       setManualFrames({});
@@ -2348,6 +2367,7 @@ function StudioApp() {
       // failed save or resurrect the deleted draft.
       draftRevisionRef.current = null;
       draftPendingPetIdRef.current = crypto.randomUUID();
+      draftPausedRef.current = true;
       suppressNextDraftSaveRef.current = true;
       setDraftStatus("idle");
       setManualFrames({});
@@ -3071,11 +3091,13 @@ function StudioApp() {
                   onInspectActionChange={setInspectAction}
                   name={name}
                   onChangeName={(value) => {
+                    draftPausedRef.current = false;
                     draftEditSeqRef.current += 1;
                     setName(value);
                   }}
                   species={species}
                   onChangeSpecies={(value) => {
+                    draftPausedRef.current = false;
                     draftEditSeqRef.current += 1;
                     setSpecies(value);
                   }}
@@ -3096,6 +3118,7 @@ function StudioApp() {
                   onChangeKeepExternalReference={setKeepExternalReference}
                   manualFrames={manualFrames}
                   onChangeManualFrames={(frames) => {
+                    draftPausedRef.current = false;
                     draftEditSeqRef.current += 1;
                     setManualFrames(frames);
                   }}

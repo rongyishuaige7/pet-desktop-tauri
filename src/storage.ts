@@ -200,6 +200,9 @@ export async function saveCreationDraft(
   expectedRevision: number | null,
   expectedPendingPetId?: string
 ): Promise<SaveDraftResult> {
+  if ((globalThis as { __review?: { failDraftSave?: boolean } }).__review?.failDraftSave) {
+    throw new Error("草稿存储配额不足");
+  }
   const delay = (globalThis as { __review?: { draftSaveDelay?: number } }).__review?.draftSaveDelay;
   if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
   return transaction<SaveDraftResult>("readwrite", (tx, done) => {
