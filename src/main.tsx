@@ -502,7 +502,7 @@ function StudioApp() {
     pet: PetProfile,
     create = false,
     explicitShow = true,
-    options?: { skipActivate?: boolean }
+    options?: { skipActivate?: boolean; expectedSelectionRevision?: number }
   ): Promise<ActivationResult> {
     return serial(async (): Promise<ActivationResult> => {
       transitioning.current = true;
@@ -513,6 +513,18 @@ function StudioApp() {
         const selected = create ? pet : (await loadAllPets()).find((p) => p.id === pet.id);
         if (!selected) throw new Error("该宠物已被移除");
         const full = await ensurePetHydrated(selected);
+        if (options?.expectedSelectionRevision !== undefined) {
+          const [currentRevision, current] = await Promise.all([
+            loadSelectionRevision(),
+            loadPet()
+          ]);
+          if (
+            currentRevision !== options.expectedSelectionRevision ||
+            current?.id !== full.id
+          ) {
+            return { status: "superseded", currentPetId: current?.id ?? null };
+          }
+        }
         if (isTauri && full.frameRoot) {
           nativeChanged = true;
           await native.attach(full.frameRoot, full.id, full.name);
@@ -2342,8 +2354,15 @@ function StudioApp() {
           return;
         }
         const result = await activatePet(commit.pet, false, true, {
-          skipActivate: true
+          skipActivate: true,
+          expectedSelectionRevision: commit.selectionRevision
         });
+        if (result.status === "superseded") {
+          await refreshList();
+          showToast("伙伴已保存；选择已更新，未切换桌面。", "info");
+          setCurrentTab("stage");
+          return;
+        }
         announceActivation(
           result,
           `已成功保存「${commit.pet.name}」并同步至桌面！`

@@ -63,6 +63,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     }
     if(cmd==='load_preset_frame_pack'){
      const root=args.request.rootDir;
+     if(state.generatedLoadDelay&&root==='/review/generated')await new Promise(resolve=>setTimeout(resolve,state.generatedLoadDelay));
      if(root==='/review/generated'&&state.savedActions)return {sourceImage:state.savedActions.idle[0],actions:state.savedActions};
      await new Promise(r=>setTimeout(r,root==='/review/B'?state.delayB:packDelay));
      if(state.missing)throw new Error('audit: custom frame directory does not exist');
@@ -2145,6 +2146,24 @@ await record('assembly_attach_failure_after_commit_keeps_saved_pet',async()=>{
   await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return pet?.frameRoot===window.__review.root&&!document.querySelector('.recovery-notice');});
   const retried=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {root:pet?.frameRoot,native:window.__review.root,recovery:Boolean(document.querySelector('.recovery-notice'))};});
   return {passed:failed.petId==='pending-a04'&&failed.root?.startsWith('/review/generated')&&!failed.draft&&!failed.toasts.some(t=>t?.includes('保存帧包失败'))&&failed.native==='/review/A'&&retried.root===retried.native&&!retried.recovery&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('assembly_commit_superseded_during_hydration',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await seed(page,{desktop:true,active:'A'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');const img=window.__review.makeImage();const frames=Object.fromEntries(['idle','sit','sleep','happy','walk','jump'].map(a=>[a,Array(5).fill(img)]));await s.saveCreationDraft({schemaVersion:1,draftId:'manual-assembly',pendingPetId:'pending-a04',name:'草稿伙伴',species:'cat',manualFrames:frames},null);});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(()=>{window.__review.generatedLoadDelay=800;});
+  await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
+  await page.waitForTimeout(150);
+  await page.evaluate(async()=>{const s=await import('/src/storage.ts');await s.setActivePetId('B');await window.__TAURI_INTERNALS__.invoke('set_native_pet_frame_root',{rootDir:'/review/B',petId:'B',petName:'测试乙'});});
+  await page.waitForTimeout(1200);
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();return {active:pet?.id,native:window.__review.root,nativePet:window.__review.native.petId,pets:(await s.loadAllPets()).length,draft:Boolean(await s.loadCreationDraft('manual-assembly')),toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  return {passed:state.active==='B'&&state.native==='/review/B'&&state.nativePet==='B'&&state.pets===3&&!state.draft&&!state.toasts.some(t=>t?.includes('成功保存'))&&state.toasts.some(t=>t?.includes('选择已更新'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
