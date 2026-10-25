@@ -205,6 +205,8 @@ export async function saveCreationDraft(
       failDraftSave?: boolean;
       blockDraftSave?: boolean;
       releaseDraftSave?: () => void;
+      draftSaveBlocked?: boolean;
+      draftSaveBlockCount?: number;
       draftSaveDelay?: number;
     };
   }).__review;
@@ -212,9 +214,12 @@ export async function saveCreationDraft(
     throw new Error("草稿存储配额不足");
   }
   if (review?.blockDraftSave) {
+    review.draftSaveBlocked = true;
+    review.draftSaveBlockCount = (review.draftSaveBlockCount ?? 0) + 1;
     await new Promise<void>((resolve) => {
       review.releaseDraftSave = resolve;
     });
+    review.draftSaveBlocked = false;
   }
   const delay = review?.draftSaveDelay;
   if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
