@@ -577,6 +577,22 @@ function StudioApp() {
           return { status: "displayPending", pet: full, retry, code: retry.code };
         }
       } catch (error) {
+        if (options?.expectedSelectionRevision !== undefined) {
+          try {
+            const [currentRevision, current] = await Promise.all([
+              loadSelectionRevision(),
+              loadPet()
+            ]);
+            if (
+              currentRevision !== options.expectedSelectionRevision ||
+              current?.id !== pet.id
+            ) {
+              return { status: "superseded", currentPetId: current?.id ?? null };
+            }
+          } catch {
+            // If the selection cannot be checked, keep the normal rollback path.
+          }
+        }
         if (!persisted && nativeChanged && previous?.frameRoot) {
           try {
             await native.attach(previous.frameRoot, previous.id, previous.name);
