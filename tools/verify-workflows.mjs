@@ -2236,6 +2236,48 @@ await record('assembly_draft_save_failure_keeps_old_version',async()=>{
   return {passed:failed.input==='未保存名字'&&failed.draftName===before.name&&failed.revision===before.revision&&recovered.name==='恢复保存'&&recovered.revision>before.revision&&errors.length===0,before,failed,recovered,errors};
  }finally{await context.close();}
 });
+await record('assembly_leave_during_inflight_save_persists_latest',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.waitForFunction(()=>!document.querySelector('#workshop-name')?.disabled);
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  await page.evaluate(()=>{window.__review.draftSaveDelay=700;});
+  await page.locator('#workshop-name').fill('在途编辑');
+  await page.waitForTimeout(900);
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await page.waitForTimeout(3000);
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {name:d?.name,revision:d?.revision};});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('#workshop-name').waitFor();
+  const restored=await page.locator('#workshop-name').inputValue();
+  return {passed:state.name==='在途编辑'&&restored==='在途编辑'&&errors.length===0,state,restored,errors};
+ }finally{await context.close();}
+});
+await record('assembly_first_edit_after_discard_autosaves',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.waitForFunction(()=>!document.querySelector('#workshop-name')?.disabled);
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'丢弃草稿',exact:true}).click();
+  await page.locator('.draft-status.is-idle').waitFor();
+  await page.locator('#workshop-name').fill('首笔编辑');
+  await page.locator('.draft-status.is-saved').waitFor({timeout:5000});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {name:d?.name,revision:d?.revision};});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await openWorkshopTask(page,'装配动作帧');
+  await page.locator('#workshop-name').waitFor();
+  const restored=await page.locator('#workshop-name').inputValue();
+  return {passed:state.name==='首笔编辑'&&restored==='首笔编辑'&&errors.length===0,state,restored,errors};
+ }finally{await context.close();}
+});
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{

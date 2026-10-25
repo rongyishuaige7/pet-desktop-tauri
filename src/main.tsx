@@ -385,6 +385,17 @@ function StudioApp() {
   }
   persistDraftRef.current = persistAssemblyDraft;
 
+  async function flushDraftOnLeave() {
+    if (!draftLoadedRef.current || draftPausedRef.current) return;
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    await waitForDraftIdle();
+    if (draftPausedRef.current) return;
+    await persistDraftRef.current();
+  }
+
   useEffect(() => {
     if (!initialized || draftLoadedRef.current) return;
     let cancelled = false;
@@ -473,7 +484,7 @@ function StudioApp() {
         draftSaveTimerRef.current = null;
       }
       if (draftLoadedRef.current) {
-        void persistDraftRef.current();
+        void flushDraftOnLeave();
       }
     }
     wasFramesRef.current = isFrames;
@@ -3092,12 +3103,14 @@ function StudioApp() {
                   name={name}
                   onChangeName={(value) => {
                     draftPausedRef.current = false;
+                    suppressNextDraftSaveRef.current = false;
                     draftEditSeqRef.current += 1;
                     setName(value);
                   }}
                   species={species}
                   onChangeSpecies={(value) => {
                     draftPausedRef.current = false;
+                    suppressNextDraftSaveRef.current = false;
                     draftEditSeqRef.current += 1;
                     setSpecies(value);
                   }}
@@ -3119,6 +3132,7 @@ function StudioApp() {
                   manualFrames={manualFrames}
                   onChangeManualFrames={(frames) => {
                     draftPausedRef.current = false;
+                    suppressNextDraftSaveRef.current = false;
                     draftEditSeqRef.current += 1;
                     setManualFrames(frames);
                   }}
