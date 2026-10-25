@@ -837,6 +837,10 @@ describe("recent removals", () => {
     if (first.status !== "saved") return;
     expect(first.draft.revision).toBe(1);
 
+    const secondNull = await saveCreationDraft({ ...base, name: "并发新建" }, null);
+    expect(secondNull.status).toBe("conflict");
+    if (secondNull.status === "conflict") expect(secondNull.draft?.name).toBe("草稿甲");
+
     const second = await saveCreationDraft(
       { ...base, name: "草稿乙" },
       first.draft.revision
@@ -850,7 +854,13 @@ describe("recent removals", () => {
     if (stale.status === "conflict") expect(stale.draft?.name).toBe("草稿乙");
     expect((await loadCreationDraft("manual-assembly"))?.name).toBe("草稿乙");
 
-    await deleteCreationDraft("manual-assembly");
+    expect(
+      await deleteCreationDraft("manual-assembly", 1, "pending-1")
+    ).toBe(false);
+    expect((await loadCreationDraft("manual-assembly"))?.name).toBe("草稿乙");
+    expect(
+      await deleteCreationDraft("manual-assembly", 2, "pending-1")
+    ).toBe(true);
     expect(await loadCreationDraft("manual-assembly")).toBeNull();
   });
 

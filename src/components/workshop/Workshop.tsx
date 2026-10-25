@@ -26,6 +26,7 @@ interface WorkshopProps {
   onChangeManualFrames: (frames: Partial<ActionFrameSet>) => void;
   onSaveManualFrames: () => Promise<void>;
   draftStatus: "idle" | "saving" | "saved" | "unsaved" | "conflict";
+  draftLoading: boolean;
   onSaveDraft: () => Promise<void> | void;
   onDiscardDraft: () => Promise<void> | void;
   isLoading: boolean;
@@ -70,6 +71,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
   onChangeManualFrames,
   onSaveManualFrames,
   draftStatus,
+  draftLoading,
   onSaveDraft,
   onDiscardDraft,
   isLoading,
@@ -93,7 +95,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
   const readingRef = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const { showToast } = useToast();
-  const busy = aiRunning || isLoading || readingFrames;
+  const busy = aiRunning || isLoading || readingFrames || draftLoading;
 
   useEffect(() => {
     nameRef.current?.focus({ preventScroll: true });
@@ -459,7 +461,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 type="button"
                 className="btn-primary"
                 onClick={onSaveManualFrames}
-                disabled={busy || !allActionsComplete}
+                disabled={busy || !allActionsComplete || draftStatus === "conflict"}
               >
                 {isLoading ? "正在保存..." : "保存全套动作并应用到桌面"}
               </button>

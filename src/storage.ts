@@ -175,6 +175,8 @@ export async function savePet(pet: PetProfile, _broadcastPet: PetProfile = pet) 
 }
 
 export async function loadCreationDraft(draftId: string): Promise<CreationDraft | null> {
+  const delay = (globalThis as { __review?: { draftLoadDelay?: number } }).__review?.draftLoadDelay;
+  if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
   return transaction<CreationDraft | null>("readonly", (tx, done) => {
     const req = tx.objectStore("creation_drafts").get(draftId);
     req.onsuccess = () => done((req.result as CreationDraft | undefined) ?? null);
@@ -189,13 +191,20 @@ export async function saveCreationDraft(
   draft: Omit<CreationDraft, "revision" | "updatedAt">,
   expectedRevision: number | null
 ): Promise<SaveDraftResult> {
+  const delay = (globalThis as { __review?: { draftSaveDelay?: number } }).__review?.draftSaveDelay;
+  if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
   return transaction<SaveDraftResult>("readwrite", (tx, done) => {
     const store = tx.objectStore("creation_drafts");
     const req = store.get(draft.draftId);
     req.onsuccess = () => {
       const current = req.result as CreationDraft | undefined;
       const currentRevision = current?.revision ?? 0;
-      if (expectedRevision !== null && currentRevision !== expectedRevision) {
+      if (expectedRevision === null) {
+        if (current) {
+          done({ status: "conflict", draft: current });
+          return;
+        }
+      } else if (currentRevision !== expectedRevision) {
         done({ status: "conflict", draft: current ?? null });
         return;
       }
@@ -210,10 +219,30 @@ export async function saveCreationDraft(
   });
 }
 
-export async function deleteCreationDraft(draftId: string): Promise<void> {
-  await transaction<void>("readwrite", (tx, done) => {
-    tx.objectStore("creation_drafts").delete(draftId);
-    done();
+export async function deleteCreationDraft(
+  draftId: string,
+  expectedRevision?: number,
+  expectedPendingPetId?: string
+): Promise<boolean> {
+  return transaction<boolean>("readwrite", (tx, done) => {
+    const store = tx.objectStore("creation_drafts");
+    const req = store.get(draftId);
+    req.onsuccess = () => {
+      const current = req.result as CreationDraft | undefined;
+      if (expectedRevision !== undefined) {
+        if (
+          !current ||
+          current.revision !== expectedRevision ||
+          (expectedPendingPetId !== undefined &&
+            current.pendingPetId !== expectedPendingPetId)
+        ) {
+          done(false);
+          return;
+        }
+      }
+      store.delete(draftId);
+      done(true);
+    };
   });
 }
 

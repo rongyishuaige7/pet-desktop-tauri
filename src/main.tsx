@@ -301,6 +301,15 @@ function StudioApp() {
   const draftSaveTimerRef = useRef<number | null>(null);
   const persistDraftRef = useRef<() => Promise<boolean>>(async () => false);
   const suppressNextDraftSaveRef = useRef(false);
+  const draftEditSeqRef = useRef(0);
+  const draftSavingRef = useRef(false);
+  const draftDirtyRef = useRef(false);
+  const draftSaveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const draftSubmitInProgressRef = useRef(false);
+  const lastSavedDraftRef = useRef<CreationDraft | null>(null);
+  const [draftLoading, setDraftLoading] = useState(true);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftSaveTick, setDraftSaveTick] = useState(0);
 
   // AI Form State
   const [apiKey, setApiKey] = useState("");
@@ -314,9 +323,14 @@ function StudioApp() {
   const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
   const aiCheckpointRef = useRef(createGenerationCheckpoint());
 
-  async function persistAssemblyDraft(): Promise<boolean> {
-    if (!draftLoadedRef.current) return false;
-    setDraftStatus("saving");
+  function persistAssemblyDraft(): Promise<boolean> {
+    if (!draftLoadedRef.current) return Promise.resolve(false);
+    if (draftSavingRef.current) {
+      draftDirtyRef.current = true;
+      return Promise.resolve(false);
+    }
+    draftSavingRef.current = true;
+    const editSeq = draftEditSeqRef.current;
     const frames = Object.fromEntries(
       PET_ACTIONS.map(({ id }) => [id, manualFrames[id] ?? []])
     ) as ActionFrameSet;
@@ -328,41 +342,73 @@ function StudioApp() {
       species,
       manualFrames: frames
     };
-    try {
-      const result = await saveCreationDraft(draft, draftRevisionRef.current);
-      if (result.status === "conflict") {
-        setDraftStatus("conflict");
-        showToast("其他窗口已更新草稿，当前输入未覆盖；可继续编辑或刷新恢复。", "info");
+    setDraftStatus("saving");
+    const promise = (async () => {
+      try {
+        const result = await saveCreationDraft(draft, draftRevisionRef.current);
+        if (result.status === "conflict") {
+          if (editSeq === draftEditSeqRef.current) {
+            setDraftStatus("conflict");
+            showToast("其他窗口已更新草稿，当前输入未覆盖；可继续编辑或刷新恢复。", "info");
+          }
+          return false;
+        }
+        draftRevisionRef.current = result.draft.revision;
+        lastSavedDraftRef.current = result.draft;
+        if (editSeq === draftEditSeqRef.current) {
+          setDraftStatus("saved");
+        } else {
+          setDraftStatus("unsaved");
+        }
+        return true;
+      } catch {
+        if (editSeq === draftEditSeqRef.current) {
+          setDraftStatus("unsaved");
+        }
         return false;
+      } finally {
+        draftSavingRef.current = false;
+        draftSaveInFlightRef.current = null;
+        if (draftDirtyRef.current) {
+          draftDirtyRef.current = false;
+          setDraftSaveTick((tick) => tick + 1);
+        }
       }
-      draftRevisionRef.current = result.draft.revision;
-      setDraftStatus("saved");
-      return true;
-    } catch {
-      setDraftStatus("unsaved");
-      return false;
-    }
+    })();
+    draftSaveInFlightRef.current = promise;
+    return promise;
   }
   persistDraftRef.current = persistAssemblyDraft;
 
   useEffect(() => {
     if (!initialized || draftLoadedRef.current) return;
     let cancelled = false;
+    const restoreSeq = draftEditSeqRef.current;
+    setDraftLoading(true);
     loadCreationDraft(ASSEMBLY_DRAFT_ID)
       .then((draft) => {
         if (cancelled || !draft) return;
-        setName(draft.name);
-        setSpecies(draft.species);
-        setManualFrames(draft.manualFrames);
+        if (draftEditSeqRef.current === restoreSeq) {
+          setName(draft.name);
+          setSpecies(draft.species);
+          setManualFrames(draft.manualFrames);
+          setDraftStatus("saved");
+        } else {
+          setDraftStatus("unsaved");
+        }
         draftRevisionRef.current = draft.revision;
         draftPendingPetIdRef.current = draft.pendingPetId;
-        setDraftStatus("saved");
+        lastSavedDraftRef.current = draft;
       })
       .catch(() => {
         // A storage outage keeps the in-memory form; autosave will report it.
       })
       .finally(() => {
-        if (!cancelled) draftLoadedRef.current = true;
+        if (!cancelled) {
+          draftLoadedRef.current = true;
+          setDraftLoading(false);
+          setDraftReady(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -370,9 +416,17 @@ function StudioApp() {
   }, [initialized]);
 
   useEffect(() => {
+    if (currentTab !== "workshop" || workshopTask !== "frames") {
+      suppressNextDraftSaveRef.current = false;
+    }
+  }, [currentTab, workshopTask]);
+
+  useEffect(() => {
     if (
       !initialized ||
       !draftLoadedRef.current ||
+      !draftReady ||
+      draftSubmitInProgressRef.current ||
       currentTab !== "workshop" ||
       workshopTask !== "frames"
     ) {
@@ -394,7 +448,16 @@ function StudioApp() {
         window.clearTimeout(draftSaveTimerRef.current);
       }
     };
-  }, [initialized, currentTab, workshopTask, name, species, manualFrames]);
+  }, [
+    initialized,
+    draftReady,
+    draftSaveTick,
+    currentTab,
+    workshopTask,
+    name,
+    species,
+    manualFrames
+  ]);
 
   useEffect(() => {
     if (!aiCancelRef.current) {
@@ -2130,13 +2193,92 @@ function StudioApp() {
   }
 
   // Workshop - Save Manual Frames
+  function draftMatchesLocalFrames(
+    draft: CreationDraft,
+    actions: ActionFrameSet
+  ): boolean {
+    if (draft.name !== name || draft.species !== species) return false;
+    return PET_ACTIONS.every(({ id }) => {
+      const stored = draft.manualFrames[id] ?? [];
+      const local = actions[id] ?? [];
+      return (
+        stored.length === local.length &&
+        stored.every((frame, index) => frame === local[index])
+      );
+    });
+  }
+
+  async function waitForDraftIdle() {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (draftSaveInFlightRef.current) {
+        await draftSaveInFlightRef.current.catch(() => false);
+      }
+      if (!draftSavingRef.current && !draftSaveInFlightRef.current) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+  }
+
+  async function finalizeSubmittedDraft(
+    actions: ActionFrameSet,
+    submitted: CreationDraft | null
+  ): Promise<boolean> {
+    const current = await loadCreationDraft(ASSEMBLY_DRAFT_ID).catch(() => null);
+    if (!current) return true;
+    const expectedPending = submitted?.pendingPetId ?? draftPendingPetIdRef.current;
+    if (current.pendingPetId !== expectedPending) {
+      return false;
+    }
+    const known = lastSavedDraftRef.current;
+    const isOurNewerRevision =
+      known !== null &&
+      known.revision === current.revision &&
+      known.pendingPetId === current.pendingPetId;
+    if (!isOurNewerRevision && !draftMatchesLocalFrames(current, actions)) {
+      return false;
+    }
+    return deleteCreationDraft(
+      ASSEMBLY_DRAFT_ID,
+      current.revision,
+      current.pendingPetId
+    ).catch(() => false);
+  }
+
   async function handleDiscardDraft() {
     if (!window.confirm("丢弃本次装配草稿？不会删除已保存伙伴或正式素材。")) {
       return;
     }
+    draftSubmitInProgressRef.current = true;
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
     try {
-      await deleteCreationDraft(ASSEMBLY_DRAFT_ID);
+      await waitForDraftIdle();
+      const current = await loadCreationDraft(ASSEMBLY_DRAFT_ID);
+      if (
+        current &&
+        (draftRevisionRef.current === null ||
+          current.revision !== draftRevisionRef.current ||
+          current.pendingPetId !== draftPendingPetIdRef.current)
+      ) {
+        setDraftStatus("conflict");
+        showToast("草稿已被其他窗口更新，未删除；当前输入仍保留。", "info");
+        return;
+      }
+      const deleted = current
+        ? await deleteCreationDraft(
+            ASSEMBLY_DRAFT_ID,
+            current.revision,
+            current.pendingPetId
+          )
+        : true;
+      if (!deleted) {
+        setDraftStatus("conflict");
+        showToast("草稿已被其他窗口更新，未删除；当前输入仍保留。", "info");
+        return;
+      }
       draftRevisionRef.current = null;
+      lastSavedDraftRef.current = null;
       draftPendingPetIdRef.current = crypto.randomUUID();
       suppressNextDraftSaveRef.current = true;
       setDraftStatus("idle");
@@ -2144,12 +2286,32 @@ function StudioApp() {
       showToast("装配草稿已丢弃，已保存的伙伴和素材没有变化。", "info");
     } catch (err) {
       showToast(`丢弃草稿失败：${formatError(err)}`, "error");
+    } finally {
+      draftSubmitInProgressRef.current = false;
     }
   }
 
   async function handleSaveManualFrames() {
     setIsLoading(true);
+    draftSubmitInProgressRef.current = true;
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    let submittedDraft: CreationDraft | null = null;
     try {
+      await waitForDraftIdle();
+      submittedDraft = await loadCreationDraft(ASSEMBLY_DRAFT_ID);
+      if (
+        submittedDraft &&
+        (draftRevisionRef.current === null ||
+          submittedDraft.revision !== draftRevisionRef.current ||
+          submittedDraft.pendingPetId !== draftPendingPetIdRef.current)
+      ) {
+        setDraftStatus("conflict");
+        showToast("草稿已被其他窗口更新，未提交；当前输入仍保留。", "info");
+        return;
+      }
       const actions = Object.fromEntries(
         PET_ACTIONS.map((a) => [a.id, manualFrames[a.id] ?? []])
       ) as ActionFrameSet;
@@ -2171,11 +2333,18 @@ function StudioApp() {
           storageMode: "preset-root"
         });
         const result = await activatePet(newPet, true);
-        await deleteCreationDraft(ASSEMBLY_DRAFT_ID).catch(() => {});
-        draftRevisionRef.current = null;
-        draftPendingPetIdRef.current = crypto.randomUUID();
-        setDraftStatus("idle");
-        setManualFrames({});
+        const deleted = await finalizeSubmittedDraft(actions, submittedDraft);
+        if (deleted) {
+          draftRevisionRef.current = null;
+          lastSavedDraftRef.current = null;
+          draftPendingPetIdRef.current = crypto.randomUUID();
+          suppressNextDraftSaveRef.current = true;
+          setDraftStatus("idle");
+          setManualFrames({});
+        } else {
+          setDraftStatus("conflict");
+          showToast("伙伴已保存，但草稿已被其他窗口更新，未删除。", "info");
+        }
         announceActivation(result, `已成功保存「${newPet.name}」并同步至桌面！`);
         setCurrentTab("stage");
         return;
@@ -2189,16 +2358,25 @@ function StudioApp() {
         manualFrames: actions
       });
       const result = await activatePet(newPet, true);
-      await deleteCreationDraft(ASSEMBLY_DRAFT_ID).catch(() => {});
-      draftRevisionRef.current = null;
-      draftPendingPetIdRef.current = crypto.randomUUID();
-      setDraftStatus("idle");
-      setManualFrames({});
+      const deleted = await finalizeSubmittedDraft(actions, submittedDraft);
+      if (deleted) {
+        draftRevisionRef.current = null;
+        lastSavedDraftRef.current = null;
+        draftPendingPetIdRef.current = crypto.randomUUID();
+        suppressNextDraftSaveRef.current = true;
+        setDraftStatus("idle");
+        setManualFrames({});
+      } else {
+        setDraftStatus("conflict");
+        showToast("伙伴已保存，但草稿已被其他窗口更新，未删除。", "info");
+      }
       announceActivation(result, "已保存动作帧（网页预览模式）！");
       setCurrentTab("stage");
     } catch (err) {
+      setDraftStatus("unsaved");
       showToast(`保存帧包失败：${formatError(err)}`, "error");
     } finally {
+      draftSubmitInProgressRef.current = false;
       setIsLoading(false);
     }
   }
@@ -2858,9 +3036,15 @@ function StudioApp() {
                   inspectAction={inspectAction}
                   onInspectActionChange={setInspectAction}
                   name={name}
-                  onChangeName={setName}
+                  onChangeName={(value) => {
+                    draftEditSeqRef.current += 1;
+                    setName(value);
+                  }}
                   species={species}
-                  onChangeSpecies={setSpecies}
+                  onChangeSpecies={(value) => {
+                    draftEditSeqRef.current += 1;
+                    setSpecies(value);
+                  }}
                   presetDir={presetFrameDir}
                   onChangePresetDir={(value) => {
                     inspectionRequestRef.current += 1;
@@ -2877,9 +3061,13 @@ function StudioApp() {
                   keepExternalReference={keepExternalReference}
                   onChangeKeepExternalReference={setKeepExternalReference}
                   manualFrames={manualFrames}
-                  onChangeManualFrames={setManualFrames}
+                  onChangeManualFrames={(frames) => {
+                    draftEditSeqRef.current += 1;
+                    setManualFrames(frames);
+                  }}
                   onSaveManualFrames={handleSaveManualFrames}
                   draftStatus={draftStatus}
+                  draftLoading={draftLoading}
                   onSaveDraft={() => void persistAssemblyDraft()}
                   onDiscardDraft={() => void handleDiscardDraft()}
                   isLoading={isLoading}

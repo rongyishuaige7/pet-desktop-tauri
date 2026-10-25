@@ -2088,7 +2088,7 @@ await record('assembly_submit_uses_pending_id_and_clears_draft',async()=>{
   await page.locator('.draft-status.is-saved').waitFor();
   await page.getByRole('button',{name:'保存全套动作并应用到桌面',exact:true}).click();
   await page.waitForFunction(async()=>{const s=await import('/src/storage.ts');return (await s.loadAllPets()).length===1;});
-  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();const draft=await s.loadCreationDraft('manual-assembly');return {id:pet?.id,name:pet?.name,draft:Boolean(draft),pets:(await s.loadAllPets()).length};});
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const pet=await s.loadPet();const draft=await s.loadCreationDraft('manual-assembly');return {id:pet?.id,name:pet?.name,draft:draft?{name:draft.name,revision:draft.revision,frames:draft.manualFrames.idle.length,pending:draft.pendingPetId}:null,pets:(await s.loadAllPets()).length};});
   return {passed:state.id==='pending-a04'&&state.name==='草稿伙伴'&&!state.draft&&state.pets===1&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
@@ -2118,8 +2118,12 @@ await record('assembly_draft_conflict_keeps_local_input',async()=>{
   await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');await s.saveCreationDraft({...d,name:'其他窗口草稿'},d.revision);});
   await page.locator('#workshop-name').fill('本地名字');
   await page.locator('.draft-status.is-conflict').waitFor();
-  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
-  return {passed:state.input==='本地名字'&&state.draftName==='其他窗口草稿'&&state.toasts.some(t=>t?.includes('其他窗口已更新'))&&errors.length===0,state,errors};
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,finalDisabled:[...document.querySelectorAll('button')].some(b=>b.textContent?.includes('保存全套动作并应用到桌面')&&b.disabled),toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)};});
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'丢弃草稿',exact:true}).click();
+  await page.locator('.toast-message').filter({hasText:'未删除'}).waitFor();
+  const afterDiscard=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name};});
+  return {passed:state.input==='本地名字'&&state.draftName==='其他窗口草稿'&&state.finalDisabled&&afterDiscard.input==='本地名字'&&afterDiscard.draftName==='其他窗口草稿'&&state.toasts.some(t=>t?.includes('其他窗口已更新'))&&errors.length===0,state,afterDiscard,errors};
  }finally{await context.close();}
 });
 }finally{
