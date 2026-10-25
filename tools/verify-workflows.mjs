@@ -2315,10 +2315,11 @@ await record('assembly_two_pages_conflict_keeps_latest_draft',async()=>{
   await second.locator('.draft-status.is-saved').waitFor();
   await second.locator('#workshop-name').fill('乙窗口');
   await second.locator('.draft-status.is-saved').waitFor();
+  const revisionAfterSecond=await second.evaluate(async()=>{const s=await import('/src/storage.ts');return (await s.loadCreationDraft('manual-assembly'))?.revision;});
   await page.locator('#workshop-name').fill('甲窗口');
   await page.locator('.draft-status.is-conflict').waitFor();
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,revision:d?.revision};});
-  return {passed:state.input==='甲窗口'&&state.draftName==='乙窗口'&&state.revision>=2&&errors.length===0,state,errors};
+  return {passed:state.input==='甲窗口'&&state.draftName==='乙窗口'&&state.revision===revisionAfterSecond&&errors.length===0,revisionAfterSecond,state,errors};
  }finally{await context.close();}
 });
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
