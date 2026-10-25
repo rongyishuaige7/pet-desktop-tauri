@@ -2301,6 +2301,26 @@ await record('assembly_pending_flush_return_and_submit',async()=>{
   return {passed:state.name==='最新内容'&&state.id==='pending-a04'&&!state.draft&&!state.toasts.some(t=>t?.includes('其他窗口已更新'))&&errors.length===0,state,errors};
  }finally{await context.close();}
 });
+await record('assembly_two_pages_conflict_keeps_latest_draft',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openWorkshopTask(page,'装配动作帧');
+  await page.waitForFunction(()=>!document.querySelector('#workshop-name')?.disabled);
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=100;const x=c.getContext('2d');x.fillStyle='#71402a';x.fillRect(20,10,60,80);return c.toDataURL().split(',')[1];});
+  await page.locator('.frame-add-card input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.locator('.draft-status.is-saved').waitFor();
+  const second=await context.newPage();
+  await second.goto(base,{waitUntil:'domcontentloaded'});
+  await openWorkshopTask(second,'装配动作帧');
+  await second.locator('.draft-status.is-saved').waitFor();
+  await second.locator('#workshop-name').fill('乙窗口');
+  await second.locator('.draft-status.is-saved').waitFor();
+  await page.locator('#workshop-name').fill('甲窗口');
+  await page.locator('.draft-status.is-conflict').waitFor();
+  const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,revision:d?.revision};});
+  return {passed:state.input==='甲窗口'&&state.draftName==='乙窗口'&&state.revision>=2&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{
