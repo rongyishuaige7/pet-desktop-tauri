@@ -308,6 +308,7 @@ function StudioApp() {
   const draftSavingRef = useRef(false);
   const draftDirtyRef = useRef(false);
   const draftSaveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const draftFlushInFlightRef = useRef<Promise<void> | null>(null);
   const draftSubmitInProgressRef = useRef(false);
   const [draftLoading, setDraftLoading] = useState(true);
   const [draftReady, setDraftReady] = useState(false);
@@ -386,14 +387,30 @@ function StudioApp() {
   persistDraftRef.current = persistAssemblyDraft;
 
   async function flushDraftOnLeave() {
-    if (!draftLoadedRef.current || draftPausedRef.current) return;
-    if (draftSaveTimerRef.current) {
-      window.clearTimeout(draftSaveTimerRef.current);
-      draftSaveTimerRef.current = null;
+    if (
+      !draftLoadedRef.current ||
+      draftPausedRef.current ||
+      draftSubmitInProgressRef.current
+    ) {
+      return;
     }
-    await waitForDraftIdle();
-    if (draftPausedRef.current) return;
-    await persistDraftRef.current();
+    const run = (async () => {
+      if (draftSaveTimerRef.current) {
+        window.clearTimeout(draftSaveTimerRef.current);
+        draftSaveTimerRef.current = null;
+      }
+      await waitForDraftIdle();
+      if (draftPausedRef.current || draftSubmitInProgressRef.current) return;
+      await persistDraftRef.current();
+    })();
+    draftFlushInFlightRef.current = run;
+    try {
+      await run;
+    } finally {
+      if (draftFlushInFlightRef.current === run) {
+        draftFlushInFlightRef.current = null;
+      }
+    }
   }
 
   useEffect(() => {
@@ -2283,6 +2300,9 @@ function StudioApp() {
       draftSaveTimerRef.current = null;
     }
     try {
+      if (draftFlushInFlightRef.current) {
+        await draftFlushInFlightRef.current.catch(() => {});
+      }
       await waitForDraftIdle();
       const current = await loadCreationDraft(ASSEMBLY_DRAFT_ID);
       if (
@@ -2329,6 +2349,9 @@ function StudioApp() {
       draftSaveTimerRef.current = null;
     }
     try {
+      if (draftFlushInFlightRef.current) {
+        await draftFlushInFlightRef.current.catch(() => {});
+      }
       await waitForDraftIdle();
       const actions = Object.fromEntries(
         PET_ACTIONS.map((a) => [a.id, manualFrames[a.id] ?? []])
