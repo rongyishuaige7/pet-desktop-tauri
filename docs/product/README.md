@@ -100,7 +100,7 @@
 - 任务阶段 characterGenerating → characterReview → actionsGenerating → readyToSave → committed，确认时记录 confirmedCharacterRevision。
 - 动作失败/取消保留角色确认，可再次确认重试。
 - 验证：67 项 Rust、145 项前端单元测试、122 个隔离浏览器流程。
-- 未完成：角色/动作媒体持久化与重启恢复预览。
+- 未完成：角色/动作媒体持久化与重启恢复预览。CI：[40309099164](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40309099164) 通过。
 
 ## v0.5 G01 当前记录（2026-10-26，后端切片）
 

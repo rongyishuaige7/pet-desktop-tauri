@@ -247,7 +247,7 @@
 - 任务阶段推进为 characterGenerating → characterReview → actionsGenerating → readyToSave → committed；确认时写入 confirmedCharacterRevision。
 - 动作生成失败或取消后保留角色确认，可再次确认重试；角色版本变化会使动作缓存失效。
 - 验证：67 项 Rust 测试、145 项前端单元测试、122 个隔离浏览器流程；新增“确认前请求数为 1、确认后才生成动作、重新生成角色 v2、改名不增加请求”回归。
-- 未完成：角色图/动作媒体持久化到任务目录，重启后从 characterReview 恢复预览；G02 仍为部分完成。
+- 未完成：角色图/动作媒体持久化到任务目录，重启后从 characterReview 恢复预览；G02 仍为部分完成。CI：[40309099164](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40309099164) 通过。
 
 ## v0.5 G01 配置与持久任务（2026-10-26，后端切片）
 
