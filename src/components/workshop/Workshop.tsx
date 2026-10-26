@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { DEFAULT_PRESET_FRAME_DIR } from "../../config";
 import { PET_ACTIONS, type ActionFrameSet, type FrameInspection, type PetAction, type PetSpecies } from "../../types";
+import {
+  GENERATION_STAGE_LABELS,
+  type GenerationTaskSummary
+} from "../../generation-tasks";
 import { useToast } from "../ui/Toast";
 
 interface WorkshopProps {
@@ -44,8 +48,18 @@ interface WorkshopProps {
   aiCommitting: boolean;
   canResumeAI: boolean;
   aiLog: string[];
+  aiConsent: boolean;
+  onChangeAiConsent: (value: boolean) => void;
+  generationTasks: GenerationTaskSummary[];
+  onResumeGenerationTask: (taskId: string) => Promise<void> | void;
   onGenerateAI: () => Promise<void>;
   onCancelAI: () => void;
+}
+
+function formatGenerationTime(value: string): string {
+  if (!value) return "";
+  const millis = /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+  return Number.isFinite(millis) ? ` · ${new Date(millis).toLocaleString()}` : "";
 }
 
 export const Workshop: React.FC<WorkshopProps> = ({
@@ -88,6 +102,10 @@ export const Workshop: React.FC<WorkshopProps> = ({
   aiCommitting,
   canResumeAI,
   aiLog,
+  aiConsent,
+  onChangeAiConsent,
+  generationTasks,
+  onResumeGenerationTask,
   onGenerateAI,
   onCancelAI
 }) => {
@@ -477,9 +495,46 @@ export const Workshop: React.FC<WorkshopProps> = ({
         {/* Task: photo generation */}
         {task === "ai" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <p style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>
-              基于 Minimax 图生图模型，上传真实宠物照片生成 Q 版角色模型图及 30 帧连续动作帧包。
-            </p>
+            {generationTasks.length > 0 && (
+              <div className="generation-task-list">
+                <div className="generation-task-head">
+                  <strong>本机制作任务</strong>
+                  <span>任务只保存在本机，不包含 Key 或照片内容。</span>
+                </div>
+                {generationTasks.map((entry) => (
+                  <div key={entry.taskId} className="generation-task-row">
+                    <div>
+                      <strong>
+                        {GENERATION_STAGE_LABELS[entry.stage] ?? entry.stage}
+                      </strong>
+                      <span>
+                        {entry.completedActions}/6 动作 · {entry.species === "cat" ? "猫" : "狗"}
+                        {formatGenerationTime(entry.updatedAt)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={busy}
+                      onClick={() => void onResumeGenerationTask(entry.taskId)}
+                    >
+                      继续
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="ai-service-config">
+              <div className="generation-task-head">
+                <strong>服务配置</strong>
+                <span>仅本次会话有效；关闭应用后需要重新填写 Key。</span>
+              </div>
+              <p>
+                照片会上传到下面的自备上传服务，再由 Minimax 生成角色和动作。处理在本机完成，
+                任务清单不会保存 Key、上传地址或照片内容。生成请求可能产生服务费用。
+              </p>
+            </div>
 
             <div className="input-row-2">
               <div className="input-group">
@@ -547,12 +602,22 @@ export const Workshop: React.FC<WorkshopProps> = ({
               />
             </div>
 
+            <label className="ai-consent">
+              <input
+                type="checkbox"
+                checked={aiConsent}
+                onChange={(event) => onChangeAiConsent(event.target.checked)}
+                disabled={busy}
+              />
+              我了解照片会上传到上述服务，并可能产生生成费用。
+            </label>
+
             <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
               <button
                 type="button"
                 className="btn-primary"
                 onClick={onGenerateAI}
-                disabled={busy || !isTauri}
+                disabled={busy || !isTauri || !aiConsent}
               >
                 {aiCommitting ? "完成入住中..." : aiRunning ? "AI 生成中（请耐心等待）..." : canResumeAI ? "继续上次生成" : "开始 AI 自动生成全套帧包"}
               </button>

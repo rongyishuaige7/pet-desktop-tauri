@@ -11,6 +11,17 @@ import {
   UPLOAD_URL_STORAGE
 } from "./config";
 import { createGenerationCheckpoint, generatePetFramePack, GenerationCancelled } from "./ai-generation";
+import {
+  GENERATION_STAGE_LABELS,
+  claimGenerationTask,
+  createGenerationTask,
+  generationSessionId,
+  listGenerationTasks,
+  releaseGenerationTask,
+  updateGenerationTask,
+  type GenerationTask,
+  type GenerationTaskSummary
+} from "./generation-tasks";
 import { hasRenderableFrames, normalizeZoom, withCurrentAction } from "./pet-logic";
 import { actionDurationMs, chooseNextAction } from "./pet-behavior";
 import { buildDefaultActionFrames, hydratePet, toPersistedPet as persistPet } from "./pet-resources";
@@ -323,6 +334,9 @@ function StudioApp() {
   const [aiCommitting, setAiCommitting] = useState(false);
   const [canResumeAI, setCanResumeAI] = useState(false);
   const [aiLog, setAiLog] = useState<string[]>([]);
+  const [aiConsent, setAiConsent] = useState(false);
+  const [generationTasks, setGenerationTasks] = useState<GenerationTaskSummary[]>([]);
+  const activeGenerationTaskRef = useRef<GenerationTask | null>(null);
   const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
   const aiCheckpointRef = useRef(createGenerationCheckpoint());
 
@@ -513,6 +527,19 @@ function StudioApp() {
       setCanResumeAI(false);
     }
   }, [name, species, uploadUrl, referencePhoto, appearanceNotes]);
+
+  useEffect(() => {
+    if (!isTauri || currentTab !== "workshop" || workshopTask !== "ai") return;
+    let cancelled = false;
+    listGenerationTasks()
+      .then((tasks) => {
+        if (!cancelled) setGenerationTasks(tasks);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTab, isTauri, workshopTask]);
 
   // Zoom
   const [zoom, setZoom] = useState(() => {
@@ -2470,6 +2497,79 @@ function StudioApp() {
   }
 
   // Workshop - AI Generation
+  async function refreshGenerationTasks() {
+    if (!isTauri) return;
+    try {
+      setGenerationTasks(await listGenerationTasks());
+    } catch {
+      // The generation flow still works if the task list cannot be read.
+    }
+  }
+
+  async function ensureGenerationTask(): Promise<GenerationTask> {
+    const existing = activeGenerationTaskRef.current;
+    if (existing) return existing;
+    if (!referencePhoto) throw new Error("请先选择宠物照片");
+    const digest = await sha256Hex(referencePhoto);
+    const created = await createGenerationTask({
+      schemaVersion: 1,
+      taskId: crypto.randomUUID(),
+      revision: 0,
+      ownerSession: null,
+      stage: "draft",
+      pendingPetId: crypto.randomUUID(),
+      photoDigest: digest,
+      species,
+      appearanceNotes,
+      promptVersion: "v1",
+      characterRevision: 0,
+      confirmedCharacterRevision: null,
+      actions: {},
+      receipts: [],
+      committedPetId: null,
+      createdAt: "",
+      updatedAt: ""
+    });
+    const claimed = await claimGenerationTask(created.taskId, false);
+    activeGenerationTaskRef.current = claimed.task;
+    await refreshGenerationTasks();
+    return claimed.task;
+  }
+
+  async function advanceGenerationTask(
+    task: GenerationTask,
+    stage: string,
+    extra: Partial<GenerationTask> = {}
+  ): Promise<GenerationTask> {
+    try {
+      const updated = await updateGenerationTask(
+        { ...task, stage, ...extra },
+        task.revision
+      );
+      activeGenerationTaskRef.current = updated;
+      await refreshGenerationTasks();
+      return updated;
+    } catch {
+      return task;
+    }
+  }
+
+  async function handleResumeGenerationTask(taskId: string) {
+    try {
+      const claimed = await claimGenerationTask(taskId, true);
+      activeGenerationTaskRef.current = claimed.task;
+      await refreshGenerationTasks();
+      showToast(
+        claimed.status === "interrupted"
+          ? "任务已标记中断；再次继续可重新领取。"
+          : "已领取上次制作任务，请继续生成当前阶段。",
+        "info"
+      );
+    } catch (err) {
+      showToast(`领取制作任务失败：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleGenerateAI() {
     if (!isTauri) {
       showToast("AI 生成需在桌面版环境中运行", "error");
@@ -2481,8 +2581,14 @@ function StudioApp() {
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
+    let generationTask: GenerationTask | null = null;
 
     try {
+      generationTask = await ensureGenerationTask();
+      generationTask = await advanceGenerationTask(
+        generationTask,
+        "characterGenerating"
+      );
       const result = await generatePetFramePack({
         apiKey,
         uploadUrl,
@@ -2496,10 +2602,12 @@ function StudioApp() {
       });
 
       if (cancelToken.cancelled) throw new GenerationCancelled();
+      generationTask = await advanceGenerationTask(generationTask, "readyToSave");
       cancelToken.committing = true;
       setAiCommitting(true);
 
       const newPet = createManualPet({
+        id: generationTask.pendingPetId,
         name: name.trim() || "AI 宠物",
         species,
         sourceImage: result.characterImage,
@@ -2509,11 +2617,26 @@ function StudioApp() {
       });
 
       const activation = await activatePet(newPet, true);
+      generationTask = await advanceGenerationTask(generationTask, "committed", {
+        committedPetId: newPet.id
+      });
+      await releaseGenerationTask(generationTask.taskId).catch(() => {});
+      activeGenerationTaskRef.current = null;
+      await refreshGenerationTasks();
       aiCheckpointRef.current = createGenerationCheckpoint();
       setCanResumeAI(false);
       announceActivation(activation, `AI 宠物「${newPet.name}」制作完成并已入住桌面！`);
       setCurrentTab("stage");
     } catch (err) {
+      if (generationTask) {
+        generationTask = await advanceGenerationTask(
+          generationTask,
+          err instanceof GenerationCancelled ? "interrupted" : "failed"
+        );
+        await releaseGenerationTask(generationTask.taskId).catch(() => {});
+        activeGenerationTaskRef.current = null;
+        await refreshGenerationTasks();
+      }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
       if (err instanceof GenerationCancelled) {
         showToast("AI 生成已取消，已完成的图片可在本次会话内继续使用", "info");
@@ -3193,6 +3316,10 @@ function StudioApp() {
                   aiCommitting={aiCommitting}
                   canResumeAI={canResumeAI}
                   aiLog={aiLog}
+                  aiConsent={aiConsent}
+                  onChangeAiConsent={setAiConsent}
+                  generationTasks={generationTasks}
+                  onResumeGenerationTask={handleResumeGenerationTask}
                   onGenerateAI={handleGenerateAI}
                   onCancelAI={handleCancelAI}
                 />
@@ -3295,6 +3422,14 @@ function StudioApp() {
       )}
     </div>
   );
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function toPersistedPet(pet: PetProfile) { return persistPet(pet, isTauri); }

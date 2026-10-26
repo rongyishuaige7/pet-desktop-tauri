@@ -742,6 +742,67 @@ button {
   color: var(--text-tertiary);
 }
 
+.generation-task-list,
+.ai-service-config {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card-solid);
+}
+
+.generation-task-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.generation-task-head span {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.generation-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.generation-task-row div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.generation-task-row span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.ai-service-config p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.ai-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .frame-inspection {
   display: flex;
   flex-direction: column;
