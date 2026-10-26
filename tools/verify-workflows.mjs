@@ -1182,8 +1182,9 @@ await record('ai_idle_sample_gate',async()=>{
   const sample=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves,frames:document.querySelectorAll('.ai-sample-frames img').length,text:document.querySelector('.ai-sample-review')?.textContent??''}));
   await confirmAISample(page);
   await page.locator('.companion-title').waitFor({timeout:15000});
-  const done=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length}));
-  return {passed:sample.generations===2&&sample.saves===0&&sample.frames===5&&sample.text.includes('不会重复生成')&&done.generations===7&&done.saves===1&&done.pets===1&&errors.length===0,sample,done,errors};
+  const done=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length,task:window.__review.activeGenerationTask}));
+  const receipts=done.task?.receipts??[];
+  return {passed:sample.generations===2&&sample.saves===0&&sample.frames===5&&sample.text.includes('不会重复生成')&&done.generations===7&&done.saves===1&&done.pets===1&&receipts.length===7&&receipts.every(r=>r.status==='succeeded')&&new Set(receipts.map(r=>r.attemptId)).size===7&&errors.length===0,sample,done,receipts,errors};
  }finally{await context.close();}
 });
 await record('ai_failed_character_stage_update_keeps_old_context',async()=>{

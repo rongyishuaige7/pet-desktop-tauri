@@ -2580,6 +2580,24 @@ function StudioApp() {
     activeGenerationTaskRef.current = updated;
   }
 
+  async function markReceivedReceiptsSucceeded() {
+    const task = activeGenerationTaskRef.current;
+    if (!task) return;
+    const receipts = task.receipts.map((receipt) =>
+      receipt.status === "received"
+        ? { ...receipt, status: "succeeded" }
+        : receipt
+    );
+    if (receipts.every((receipt, index) => receipt.status === task.receipts[index]?.status)) {
+      return;
+    }
+    const updated = await updateGenerationTask(
+      { ...task, receipts },
+      task.revision
+    );
+    activeGenerationTaskRef.current = updated;
+  }
+
   function hasUnsettledReceipts(task: GenerationTask | null) {
     return Boolean(
       task?.receipts.some(
@@ -2996,6 +3014,7 @@ function StudioApp() {
       if (inputSignature !== aiInputSignature()) {
         throw new Error("照片或描述已变化，已丢弃本次动作结果，请重新生成角色");
       }
+      await markReceivedReceiptsSucceeded().catch(() => {});
       generationTask = await advanceGenerationTask(generationTask, "readyToSave");
       cancelToken.committing = true;
       setAiCommitting(true);
