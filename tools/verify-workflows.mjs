@@ -137,7 +137,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      await state.emitNative();
      return {accepted:true,state:n};
     }
-    if(cmd==='upload_reference_image'){state.uploadSeq=(state.uploadSeq??0)+1;const url=`https://example.test/upload-${state.uploadSeq}.png`;state.uploadUrls=[...(state.uploadUrls??[]),url];return url;}
+    if(cmd==='upload_reference_image'){state.uploadSeq=(state.uploadSeq??0)+1;if(state.failCharacterUpload&&state.uploadSeq===2){state.failCharacterUpload=false;throw new Error('mock character upload failed');}const url=`https://example.test/upload-${state.uploadSeq}.png`;state.uploadUrls=[...(state.uploadUrls??[]),url];return url;}
     if(cmd==='generate_minimax_image'){
      state.generations++;
      if(state.generationDelay)await new Promise(resolve=>setTimeout(resolve,state.generationDelay));
@@ -1190,6 +1190,50 @@ await record('ai_failed_character_stage_update_keeps_old_context',async()=>{
   const v1CharacterUrl=v1.urls[1];
   const v2CharacterUrl=afterFail.urls[afterFail.urls.length-1];
   return {passed:afterFail.review.includes('v1')&&v1CharacterUrl!==v2CharacterUrl&&idle.reference===v1CharacterUrl&&idle.generations===3&&errors.length===0,v1,afterFail,v1CharacterUrl,v2CharacterUrl,idle,errors};
+ }finally{await context.close();}
+});
+await record('ai_cancelled_character_result_is_reused',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.generationDelay=300;});
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.generations===1);
+  await page.getByRole('button',{name:'取消',exact:true}).click();
+  await page.locator('.toast-message').filter({hasText:'角色生成已取消'}).waitFor();
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.ai-character-review').waitFor();
+  const state=await page.evaluate(()=>({generations:window.__review.generations,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  return {passed:state.generations===1&&state.review.includes('v1')&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('ai_character_upload_failure_retries_without_new_generation',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.failCharacterUpload=true;});
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'角色生成失败'}).waitFor();
+  const failed=await page.evaluate(()=>({generations:window.__review.generations,review:Boolean(document.querySelector('.ai-character-review'))}));
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.ai-character-review').waitFor();
+  const retried=await page.evaluate(()=>({generations:window.__review.generations,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  return {passed:failed.generations===1&&!failed.review&&retried.generations===1&&retried.review.includes('v1')&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('ai_failed_stage_retry_reuses_candidate',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  await page.evaluate(()=>{window.__review.failTaskUpdateStage='characterReview';});
+  await page.getByRole('button',{name:'调整描述后重新生成',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'角色重新生成失败'}).waitFor();
+  const failed=await page.evaluate(()=>({generations:window.__review.generations,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  await page.getByRole('button',{name:'调整描述后重新生成',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.ai-character-review')?.textContent?.includes('v2'),null,{timeout:10000});
+  const retried=await page.evaluate(()=>({generations:window.__review.generations,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  return {passed:failed.generations===2&&failed.review.includes('v1')&&retried.generations===2&&retried.review.includes('v2')&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
 await record('ai_stops_when_task_update_fails',async()=>{

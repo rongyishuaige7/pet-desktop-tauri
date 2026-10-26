@@ -356,6 +356,12 @@ function StudioApp() {
   const activeGenerationTaskRef = useRef<GenerationTask | null>(null);
   const aiCharacterUrlRef = useRef("");
   const aiCharacterImageRef = useRef("");
+  const aiCandidateRef = useRef<{
+    taskId: string;
+    inputSignature: string;
+    mode: "initial" | "regenerate";
+    checkpoint: ReturnType<typeof createGenerationCheckpoint>;
+  } | null>(null);
   const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
   const aiCheckpointRef = useRef(createGenerationCheckpoint());
 
@@ -547,6 +553,7 @@ function StudioApp() {
     }
     aiCharacterUrlRef.current = "";
     aiCharacterImageRef.current = "";
+    aiCandidateRef.current = null;
     setAiCharacterReview(null);
     setAiSampleReview(null);
   }, [species, uploadUrl, referencePhoto, appearanceNotes]);
@@ -2533,11 +2540,35 @@ function StudioApp() {
     return JSON.stringify([uploadUrl, referencePhoto, species, appearanceNotes]);
   }
 
+  function generationCandidate(mode: "initial" | "regenerate") {
+    const active = activeGenerationTaskRef.current;
+    const existing = aiCandidateRef.current;
+    const signature = aiInputSignature();
+    if (
+      existing &&
+      active &&
+      existing.taskId === active.taskId &&
+      existing.inputSignature === signature &&
+      existing.mode === mode
+    ) {
+      return { checkpoint: existing.checkpoint, forceNewCharacter: false };
+    }
+    const checkpoint = cloneGenerationCheckpoint(aiCheckpointRef.current);
+    aiCandidateRef.current = {
+      taskId: active?.taskId ?? "",
+      inputSignature: signature,
+      mode,
+      checkpoint
+    };
+    return { checkpoint, forceNewCharacter: mode === "regenerate" };
+  }
+
   async function ensureGenerationTask(): Promise<GenerationTask> {
     const existing = activeGenerationTaskRef.current;
     if (existing) return existing;
     if (!referencePhoto) throw new Error("请先选择宠物照片");
     const digest = await sha256Hex(referencePhoto);
+    aiCandidateRef.current = null;
     const created = await createGenerationTask({
       schemaVersion: 1,
       taskId: crypto.randomUUID(),
@@ -2617,14 +2648,15 @@ function StudioApp() {
         generationTask,
         "characterGenerating"
       );
-      const candidate = cloneGenerationCheckpoint(aiCheckpointRef.current);
+      const candidate = generationCandidate("initial");
       const character = await generateCharacter({
         apiKey,
         uploadUrl,
         referencePhoto: referencePhoto ?? "",
         species,
         appearanceNotes,
-        checkpoint: candidate,
+        checkpoint: candidate.checkpoint,
+        forceNewCharacter: candidate.forceNewCharacter,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2641,9 +2673,10 @@ function StudioApp() {
           confirmedCharacterRevision: null
         }
       );
-      aiCheckpointRef.current = candidate;
+      aiCheckpointRef.current = candidate.checkpoint;
       aiCharacterUrlRef.current = character.characterUrl;
       aiCharacterImageRef.current = character.characterImage;
+      aiCandidateRef.current = null;
       setAiSampleReview(null);
       setAiCharacterReview((previous) => ({
         image: character.characterImage,
@@ -2692,15 +2725,15 @@ function StudioApp() {
         generationTask,
         "characterGenerating"
       );
-      const candidate = cloneGenerationCheckpoint(aiCheckpointRef.current);
+      const candidate = generationCandidate("regenerate");
       const character = await generateCharacter({
         apiKey,
         uploadUrl,
         referencePhoto: referencePhoto ?? "",
         species,
         appearanceNotes,
-        checkpoint: candidate,
-        forceNewCharacter: true,
+        checkpoint: candidate.checkpoint,
+        forceNewCharacter: candidate.forceNewCharacter,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2717,9 +2750,10 @@ function StudioApp() {
           confirmedCharacterRevision: null
         }
       );
-      aiCheckpointRef.current = candidate;
+      aiCheckpointRef.current = candidate.checkpoint;
       aiCharacterUrlRef.current = character.characterUrl;
       aiCharacterImageRef.current = character.characterImage;
+      aiCandidateRef.current = null;
       setAiSampleReview(null);
       setAiCharacterReview((previous) => ({
         image: character.characterImage,
@@ -2765,9 +2799,11 @@ function StudioApp() {
       setAiCharacterReview(null);
       aiCharacterUrlRef.current = "";
       aiCharacterImageRef.current = "";
+      aiCandidateRef.current = null;
       showToast("照片或描述已变化，请重新生成并确认角色", "error");
       return;
     }
+    aiCandidateRef.current = null;
     setAiLog([]);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
