@@ -99,7 +99,7 @@
 - 字段含 revision/ownerSession/stage/pendingPetId/角色版本/动作状态/回执；不含 Key、上传地址、照片 data URL 或原始响应。
 - create/load/list/update/claim/release 命令；revision、ownerSession、pendingPetId 条件校验；第二 session 标记 interrupted，显式 resume 才能继续。
 - 验证：64 项 Rust 测试。
-- 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体文件、清理与引用检查。
+- 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体文件、清理与引用检查。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过。
 
 ## v0.4 A04 当前记录（2026-10-24，自动化完成；真实磁盘配额未实测）
 

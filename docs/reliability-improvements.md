@@ -247,7 +247,7 @@
 - 任务 id 只允许字母/数字/-/_；未知阶段、物种、动作、超过 60 帧、错误 schemaVersion 拒绝。列表跳过损坏任务。
 - 新增 create/load/list/update/claim/release 命令；update 条件校验 revision、ownerSession 和 pendingPetId；第二个 session claim 时标记 interrupted 并清空 owner，显式 resume 才能重新领取。
 - 验证：64 项 Rust 测试（任务创建/读取/列表、秘密字段排除、路径拒绝、revision/owner 冲突、重启中断与恢复、损坏任务跳过）。
-- 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体版本文件、任务清理与引用检查。G01 仍为部分完成。
+- 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体版本文件、任务清理与引用检查。G01 仍为部分完成。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过。
 
 ## 本轮之外的依赖维护
 
