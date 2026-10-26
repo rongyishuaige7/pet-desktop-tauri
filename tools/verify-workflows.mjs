@@ -151,7 +151,18 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      return task;
     }
     if(cmd==='claim_generation_task')return {status:'claimed',task:{...(state.activeGenerationTask??{taskId:args.taskId,pendingPetId:'mock-pending',stage:'draft'}),ownerSession:args.ownerSession,revision:2,updatedAt:'2026-10-26T00:00:00Z'}};
-    if(cmd==='update_generation_task'){if(state.failTaskUpdate||(state.failTaskUpdateStage&&args.task.stage===state.failTaskUpdateStage)){state.failTaskUpdate=false;state.failTaskUpdateStage=null;throw new Error('TASK_OWNER：当前窗口没有执行权');}const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};state.activeGenerationTask=task;return task;}
+    if(cmd==='update_generation_task'){
+     const lastReceipt=args.task?.receipts?.at(-1);
+     if(state.blockReceiptStart&&lastReceipt?.status==='started'){
+      state.receiptStartBlocked=true;
+      await new Promise(resolve=>state.releaseReceiptStart=resolve);
+      state.receiptStartBlocked=false;
+     }
+     if(state.failReceiptReceived&&args.task?.receipts?.some(r=>r.status==='received')){state.failReceiptReceived=false;throw new Error('mock receipt write failed');}
+     if(state.failTaskUpdate||(state.failTaskUpdateStage&&args.task.stage===state.failTaskUpdateStage)){state.failTaskUpdate=false;state.failTaskUpdateStage=null;throw new Error('TASK_OWNER：当前窗口没有执行权');}
+     const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};
+     state.activeGenerationTask=task;return task;
+    }
     if(cmd==='release_generation_task')return null;
     if(cmd==='load_generation_task')return state.activeGenerationTask??null;
     if(cmd==='save_manual_frame_pack'){
@@ -1250,6 +1261,35 @@ await record('ai_request_receipts_and_uncertain',async()=>{
   const uncertainReceipt=failed.task?.receipts?.find(r=>r.status==='uncertain');
   const receivedReceipt=retried.task?.receipts?.find(r=>r.status==='received');
   return {passed:Boolean(uncertainReceipt?.attemptId)&&failed.task?.stage==='uncertain'&&failed.note.includes('结果尚未确认')&&!retried.note&&retried.review&&Boolean(receivedReceipt?.attemptId)&&errors.length===0,failed,retried,uncertainReceipt,receivedReceipt,errors};
+ }finally{await context.close();}
+});
+await record('ai_received_receipt_failure_reuses_image',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.failReceiptReceived=true;});
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'角色生成失败'}).waitFor();
+  const failed=await page.evaluate(()=>({generations:window.__review.generations,review:Boolean(document.querySelector('.ai-character-review')),task:window.__review.activeGenerationTask}));
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.ai-character-review').waitFor();
+  const retried=await page.evaluate(()=>({generations:window.__review.generations,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  return {passed:failed.generations===1&&!failed.review&&retried.generations===1&&retried.review.includes('v1')&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('ai_cancel_while_started_receipt_is_blocked',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.blockReceiptStart=true;});
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.waitForFunction(()=>window.__review.receiptStartBlocked===true);
+  await page.getByRole('button',{name:'取消',exact:true}).click();
+  await page.evaluate(()=>{window.__review.releaseReceiptStart();});
+  await page.locator('.toast-message').filter({hasText:'角色生成已取消'}).waitFor();
+  const state=await page.evaluate(()=>({generations:window.__review.generations,task:window.__review.activeGenerationTask,note:Boolean(document.querySelector('.ai-uncertain-note'))}));
+  const cancelled=state.task?.receipts?.at(-1);
+  return {passed:state.generations===0&&cancelled?.status==='cancelled'&&state.task?.stage==='interrupted'&&!state.note&&errors.length===0,state,cancelled,errors};
  }finally{await context.close();}
 });
 await record('ai_stops_when_task_update_fails',async()=>{

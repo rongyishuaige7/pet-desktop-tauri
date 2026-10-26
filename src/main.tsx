@@ -2581,7 +2581,12 @@ function StudioApp() {
   }
 
   function hasUnsettledReceipts(task: GenerationTask | null) {
-    return Boolean(task?.receipts.some((receipt) => receipt.status !== "succeeded"));
+    return Boolean(
+      task?.receipts.some(
+        (receipt) =>
+          receipt.status !== "succeeded" && receipt.status !== "cancelled"
+      )
+    );
   }
 
   function generationCandidate(mode: "initial" | "regenerate") {

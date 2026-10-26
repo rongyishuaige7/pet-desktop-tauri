@@ -20,6 +20,11 @@ export interface GenerationCheckpoint {
   cleanedFrames: ActionFrameSet;
   actions: ActionFrameSet;
   frameRoot?: string;
+  pendingRequest?: {
+    attemptId: string;
+    action: string;
+    image: string;
+  };
 }
 export function createGenerationCheckpoint(): GenerationCheckpoint {
   return {
@@ -32,7 +37,8 @@ export function createGenerationCheckpoint(): GenerationCheckpoint {
     rawFrames: emptyActions(),
     cleanedFrames: emptyActions(),
     actions: emptyActions(),
-    frameRoot: undefined
+    frameRoot: undefined,
+    pendingRequest: undefined
   };
 }
 export interface GenerationRequestAttempt {
@@ -42,7 +48,7 @@ export interface GenerationRequestAttempt {
 
 export interface GenerationRequestResult {
   attemptId: string;
-  status: "received" | "uncertain";
+  status: "received" | "uncertain" | "cancelled";
 }
 
 export interface GenerateFramePackOptions {
@@ -97,24 +103,38 @@ async function generateImage(apiKey: string, prompt: string, referenceImageUrl: 
 
 async function requestImage(
   options: GenerateFramePackOptions,
+  state: GenerationCheckpoint,
   prompt: string,
   referenceImageUrl: string,
   action: string,
   aspectRatio: "1:1" | "3:2" = "1:1"
 ) {
+  const pending = state.pendingRequest;
+  if (pending && pending.action === action) {
+    await options.onRequestEnd?.({ attemptId: pending.attemptId, status: "received" });
+    state.pendingRequest = undefined;
+    return pending.image;
+  }
   const attemptId =
     globalThis.crypto && "randomUUID" in globalThis.crypto
       ? globalThis.crypto.randomUUID()
       : `attempt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   await options.onRequestStart?.({ attemptId, action });
+  if (options.isCancelled?.()) {
+    await options.onRequestEnd?.({ attemptId, status: "cancelled" });
+    throw new GenerationCancelled();
+  }
+  let image: string;
   try {
-    const image = await generateImage(options.apiKey, prompt, referenceImageUrl, aspectRatio);
-    await options.onRequestEnd?.({ attemptId, status: "received" });
-    return image;
+    image = await generateImage(options.apiKey, prompt, referenceImageUrl, aspectRatio);
   } catch (error) {
     await options.onRequestEnd?.({ attemptId, status: "uncertain" });
     throw error;
   }
+  state.pendingRequest = { attemptId, action, image };
+  await options.onRequestEnd?.({ attemptId, status: "received" });
+  state.pendingRequest = undefined;
+  return image;
 }
 
 function validateBase(options: GenerateFramePackOptions) {
@@ -205,6 +225,7 @@ export async function generateCharacter(options: GenerateCharacterOptions): Prom
     progress("生成角色设定图...");
     state.characterRaw = await requestImage(
       options as GenerateFramePackOptions,
+      state,
       buildCharacterPrompt(contextFor(options as GenerateFramePackOptions, state.referenceUrl)),
       state.referenceUrl,
       "character"
@@ -272,6 +293,7 @@ export async function generateActionPack(
           progress(`生成「${actionLabel(id)}」动作序列图...`);
           state.sheets[id] = await requestImage(
             options,
+            state,
             buildSpriteSheetPrompt(contextFor(options, state.characterUrl), id),
             state.characterUrl,
             id,
@@ -291,6 +313,7 @@ export async function generateActionPack(
           if (!state.rawFrames[id][index]) {
             state.rawFrames[id][index] = await requestImage(
               options,
+              state,
               buildActionPrompt(contextFor(options, state.characterUrl), id, index),
               state.characterUrl,
               id
