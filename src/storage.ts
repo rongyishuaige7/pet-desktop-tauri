@@ -209,8 +209,10 @@ async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
-  const text = await blob.text();
-  if (blob.type === "text/plain" && !text.startsWith("data:")) return text;
+  if (blob.type === "text/plain") {
+    const text = await blob.text();
+    if (!text.startsWith("data:")) return text;
+  }
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   const chunk = 0x8000;
@@ -238,9 +240,31 @@ export async function loadCreationDraft(draftId: string): Promise<CreationDraft 
   return { ...stored, manualFrames: frames } as unknown as CreationDraft;
 }
 
+export interface CreationDraftSummary {
+  schemaVersion: 1;
+  draftId: string;
+  revision: number;
+  pendingPetId: string;
+  name: string;
+  species: CreationDraft["species"];
+  updatedAt: string;
+}
+
 export type SaveDraftResult =
   | { status: "saved"; draft: CreationDraft }
-  | { status: "conflict"; draft: CreationDraft | null };
+  | { status: "conflict"; draft: CreationDraftSummary | null };
+
+function draftSummary(draft: StoredCreationDraft): CreationDraftSummary {
+  return {
+    schemaVersion: draft.schemaVersion,
+    draftId: draft.draftId,
+    revision: draft.revision,
+    pendingPetId: draft.pendingPetId,
+    name: draft.name,
+    species: draft.species,
+    updatedAt: draft.updatedAt
+  };
+}
 
 export async function saveCreationDraft(
   draft: Omit<CreationDraft, "revision" | "updatedAt">,
@@ -291,7 +315,7 @@ export async function saveCreationDraft(
       const currentRevision = current?.revision ?? 0;
       if (expectedRevision === null) {
         if (current) {
-          done({ status: "conflict", draft: current as unknown as CreationDraft });
+          done({ status: "conflict", draft: current ? draftSummary(current) : null });
           return;
         }
       } else if (
@@ -299,7 +323,7 @@ export async function saveCreationDraft(
         (expectedPendingPetId !== undefined &&
           current?.pendingPetId !== expectedPendingPetId)
       ) {
-        done({ status: "conflict", draft: (current ?? null) as unknown as CreationDraft | null });
+        done({ status: "conflict", draft: current ? draftSummary(current) : null });
         return;
       }
       const next: StoredCreationDraft = {

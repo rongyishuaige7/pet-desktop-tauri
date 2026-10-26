@@ -851,7 +851,10 @@ describe("recent removals", () => {
 
     const stale = await saveCreationDraft({ ...base, name: "迟到草稿" }, 1);
     expect(stale.status).toBe("conflict");
-    if (stale.status === "conflict") expect(stale.draft?.name).toBe("草稿乙");
+    if (stale.status === "conflict") {
+      expect(stale.draft?.name).toBe("草稿乙");
+      expect(stale.draft && "manualFrames" in stale.draft).toBe(false);
+    }
     expect((await loadCreationDraft("manual-assembly"))?.name).toBe("草稿乙");
 
     expect(
@@ -960,6 +963,24 @@ describe("recent removals", () => {
     const frameBlobs = stored.frameBlobs as Record<string, Blob[]>;
     expect(frameBlobs.idle[0]).toBeInstanceOf(Blob);
     expect(await blobText(frameBlobs.idle[0])).toBe("idle");
+  });
+
+  it("round-trips an image data URL through Blob storage", async () => {
+    const image =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    const base = {
+      schemaVersion: 1 as const,
+      draftId: "manual-assembly",
+      pendingPetId: "pending-image",
+      name: "图片草稿",
+      species: "dog" as const,
+      manualFrames: Object.fromEntries(
+        PET_ACTIONS.map(({ id }) => [id, [image]])
+      ) as ActionFrameSet
+    };
+    await saveCreationDraft(base, null);
+    const loaded = await loadCreationDraft("manual-assembly");
+    expect(loaded?.manualFrames.idle[0]).toBe(image);
   });
 
   it("saves a profile without changing the active selection", async () => {
