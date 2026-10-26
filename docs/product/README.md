@@ -97,8 +97,8 @@
 
 - Rust 持久任务存储 `generation-tasks/<taskId>/task.json`，schemaVersion=1，原子写入。
 - 字段含 revision/ownerSession/stage/pendingPetId/角色版本/动作状态/回执；不含 Key、上传地址、照片 data URL 或原始响应。
-- create/load/list/update/claim/release 命令；revision、ownerSession、pendingPetId 条件校验；第二 session 标记 interrupted，显式 resume 才能继续。
-- 验证：64 项 Rust 测试。
+- create/load/list/update/claim/release 命令；revision、ownerSession、pendingPetId 条件校验；第二 session 标记 interrupted，之后必须显式 resume。跨进程文件锁覆盖读改写；创建失败清理未完成目录并可重试。
+- 验证：67 项 Rust 测试。
 - 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体文件、清理与引用检查。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过。
 
 ## v0.4 A04 当前记录（2026-10-24，自动化完成；真实磁盘配额未实测）

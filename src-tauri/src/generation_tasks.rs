@@ -1,5 +1,7 @@
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -141,6 +143,19 @@ fn task_file(root: &Path, task_id: &str) -> Result<PathBuf, String> {
     Ok(task_dir(root, task_id)?.join("task.json"))
 }
 
+fn acquire_store_lock(root: &Path) -> Result<File, String> {
+    std::fs::create_dir_all(root).map_err(|err| format!("创建任务根目录失败：{err}"))?;
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(root.join(".task-store.lock"))
+        .map_err(|err| format!("打开任务锁失败：{err}"))?;
+    file.lock_exclusive()
+        .map_err(|err| format!("获取任务锁失败：{err}"))?;
+    Ok(file)
+}
+
 fn read_task(root: &Path, task_id: &str) -> Result<GenerationTask, String> {
     let path = task_file(root, task_id)?;
     let bytes = std::fs::read(&path).map_err(|err| format!("读取任务失败：{err}"))?;
@@ -163,34 +178,51 @@ fn write_task_atomic(root: &Path, task: &GenerationTask) -> Result<(), String> {
         .unwrap_or_default()
         .as_nanos();
     let temp = dir.join(format!(".task-{}-{nonce}.json", std::process::id()));
-    std::fs::write(&temp, json).map_err(|err| format!("写入任务暂存失败：{err}"))?;
-    std::fs::rename(&temp, dir.join("task.json"))
-        .map_err(|err| format!("提交任务文件失败：{err}"))?;
-    Ok(())
+    let result = (|| -> Result<(), String> {
+        std::fs::write(&temp, json).map_err(|err| format!("写入任务暂存失败：{err}"))?;
+        std::fs::rename(&temp, dir.join("task.json"))
+            .map_err(|err| format!("提交任务文件失败：{err}"))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 pub fn create_task(root: &Path, mut task: GenerationTask) -> Result<GenerationTask, String> {
     let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
     let dir = task_dir(root, &task.task_id)?;
     if dir.exists() {
-        return Err("任务已存在，不覆盖".into());
+        if task_file(root, &task.task_id)?.is_file() {
+            return Err("任务已存在，不覆盖".into());
+        }
+        // A previous create failed before task.json committed. The store lock
+        // makes it safe to discard this app-owned incomplete directory.
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("清理未完成任务失败：{err}"))?;
     }
     task.schema_version = SCHEMA_VERSION;
     task.revision = 1;
     task.owner_session = None;
     task.created_at = now_ms();
     task.updated_at = task.created_at.clone();
-    write_task_atomic(root, &task)?;
+    if let Err(err) = write_task_atomic(root, &task) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(err);
+    }
     Ok(task)
 }
 
 pub fn load_task(root: &Path, task_id: &str) -> Result<GenerationTask, String> {
     let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
     read_task(root, task_id)
 }
 
 pub fn list_tasks(root: &Path) -> Result<Vec<TaskSummary>, String> {
     let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -229,6 +261,7 @@ pub fn update_task(
     owner_session: &str,
 ) -> Result<GenerationTask, String> {
     let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
     let current = read_task(root, &task.task_id)?;
     if current.revision != expected_revision {
         return Err("TASK_CONFLICT：任务已被其他窗口更新".into());
@@ -255,7 +288,14 @@ pub fn claim_task(
     resume: bool,
 ) -> Result<ClaimResult, String> {
     let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
     let mut task = read_task(root, task_id)?;
+    if task.stage == "interrupted" && !resume {
+        return Ok(ClaimResult {
+            status: "interrupted".into(),
+            task,
+        });
+    }
     if let Some(owner) = task.owner_session.as_deref() {
         if owner != owner_session {
             if !resume {
@@ -283,6 +323,7 @@ pub fn claim_task(
 
 pub fn release_task(root: &Path, task_id: &str, owner_session: &str) -> Result<(), String> {
     let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
     let mut task = read_task(root, task_id)?;
     if task.owner_session.as_deref() != Some(owner_session) {
         return Err("TASK_OWNER：当前窗口没有执行权".into());
@@ -363,6 +404,54 @@ mod tests {
         let resumed = claim_task(root.path(), "task-1", "session-b", true).unwrap();
         assert_eq!(resumed.status, "claimed");
         assert_eq!(resumed.task.owner_session.as_deref(), Some("session-b"));
+    }
+
+    #[test]
+    fn interrupted_task_requires_explicit_resume_even_without_an_owner() {
+        let root = tempfile::tempdir().unwrap();
+        create_task(root.path(), task("task-1")).unwrap();
+        claim_task(root.path(), "task-1", "session-a", false).unwrap();
+        let interrupted = claim_task(root.path(), "task-1", "session-b", false).unwrap();
+        assert_eq!(interrupted.status, "interrupted");
+        assert_eq!(interrupted.task.owner_session, None);
+        let revision = interrupted.task.revision;
+
+        let still_interrupted = claim_task(root.path(), "task-1", "session-b", false).unwrap();
+        assert_eq!(still_interrupted.status, "interrupted");
+        assert_eq!(still_interrupted.task.owner_session, None);
+        assert_eq!(still_interrupted.task.revision, revision);
+
+        let resumed = claim_task(root.path(), "task-1", "session-b", true).unwrap();
+        assert_eq!(resumed.status, "claimed");
+        assert_eq!(resumed.task.owner_session.as_deref(), Some("session-b"));
+    }
+
+    #[test]
+    fn incomplete_create_directory_is_recreated_after_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = task_dir(root.path(), "task-1").unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".task-leftover.json"), b"partial").unwrap();
+
+        let created = create_task(root.path(), task("task-1")).unwrap();
+
+        assert_eq!(created.task_id, "task-1");
+        assert!(task_file(root.path(), "task-1").unwrap().is_file());
+        assert!(!dir.join(".task-leftover.json").exists());
+    }
+
+    #[test]
+    fn store_lock_excludes_a_second_file_handle() {
+        let root = tempfile::tempdir().unwrap();
+        let first = acquire_store_lock(root.path()).unwrap();
+        let second = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join(".task-store.lock"))
+            .unwrap();
+        assert!(second.try_lock_exclusive().is_err());
+        drop(first);
+        assert!(second.try_lock_exclusive().is_ok());
     }
 
     #[test]

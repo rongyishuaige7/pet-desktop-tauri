@@ -245,8 +245,9 @@
 - 新增 Rust `generation_tasks` 任务存储：`generation-tasks/<taskId>/task.json`，schemaVersion=1，原子写临时文件后改名。
 - 任务字段包含 taskId、revision、ownerSession、stage、pendingPetId、photoDigest、species、appearanceNotes、promptVersion、characterRevision、confirmedCharacterRevision、逐动作状态、请求回执和 committedPetId；不包含 Key、上传地址、照片 data URL 或原始响应。
 - 任务 id 只允许字母/数字/-/_；未知阶段、物种、动作、超过 60 帧、错误 schemaVersion 拒绝。列表跳过损坏任务。
-- 新增 create/load/list/update/claim/release 命令；update 条件校验 revision、ownerSession 和 pendingPetId；第二个 session claim 时标记 interrupted 并清空 owner，显式 resume 才能重新领取。
-- 验证：64 项 Rust 测试（任务创建/读取/列表、秘密字段排除、路径拒绝、revision/owner 冲突、重启中断与恢复、损坏任务跳过）。
+- 新增 create/load/list/update/claim/release 命令；update 条件校验 revision、ownerSession 和 pendingPetId；第二个 session claim 时标记 interrupted 并清空 owner。处于 interrupted 阶段的任务即使 owner 为空也必须显式 resume，不能再次普通 claim。
+- 任务存储使用跨进程独占文件锁（`.task-store.lock`）覆盖读取、校验和写回，进程内 Mutex 仍保留；创建失败会清理本次暂存和未完成任务目录，之后可安全重试。
+- 验证：67 项 Rust 测试（任务创建/读取/列表、秘密字段排除、路径拒绝、revision/owner 冲突、interrupted 必须显式 resume、文件锁互斥、未完成目录重试、损坏任务跳过）。
 - 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体版本文件、任务清理与引用检查。G01 仍为部分完成。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过。
 
 ## 本轮之外的依赖维护
