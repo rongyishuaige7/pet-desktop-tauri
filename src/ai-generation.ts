@@ -35,6 +35,16 @@ export function createGenerationCheckpoint(): GenerationCheckpoint {
     frameRoot: undefined
   };
 }
+export interface GenerationRequestAttempt {
+  attemptId: string;
+  action: string;
+}
+
+export interface GenerationRequestResult {
+  attemptId: string;
+  status: "received" | "uncertain";
+}
+
 export interface GenerateFramePackOptions {
   apiKey: string; uploadUrl: string; referencePhoto: string; petName: string; species: PetSpecies;
   appearanceNotes?: string;
@@ -44,6 +54,8 @@ export interface GenerateFramePackOptions {
   removeBackground?: boolean;
   mode?: "sheet" | "frames";
   checkpoint?: GenerationCheckpoint;
+  onRequestStart?: (attempt: GenerationRequestAttempt) => Promise<void> | void;
+  onRequestEnd?: (result: GenerationRequestResult) => Promise<void> | void;
 }
 export interface GenerateCharacterOptions extends Omit<GenerateFramePackOptions, "petName"> {
   petName?: string;
@@ -81,6 +93,28 @@ async function generateImage(apiKey: string, prompt: string, referenceImageUrl: 
   });
   if (!image) throw new Error("Minimax 没有返回图片");
   return image;
+}
+
+async function requestImage(
+  options: GenerateFramePackOptions,
+  prompt: string,
+  referenceImageUrl: string,
+  action: string,
+  aspectRatio: "1:1" | "3:2" = "1:1"
+) {
+  const attemptId =
+    globalThis.crypto && "randomUUID" in globalThis.crypto
+      ? globalThis.crypto.randomUUID()
+      : `attempt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await options.onRequestStart?.({ attemptId, action });
+  try {
+    const image = await generateImage(options.apiKey, prompt, referenceImageUrl, aspectRatio);
+    await options.onRequestEnd?.({ attemptId, status: "received" });
+    return image;
+  } catch (error) {
+    await options.onRequestEnd?.({ attemptId, status: "uncertain" });
+    throw error;
+  }
 }
 
 function validateBase(options: GenerateFramePackOptions) {
@@ -169,10 +203,11 @@ export async function generateCharacter(options: GenerateCharacterOptions): Prom
   ensureNotCancelled(options.isCancelled);
   if (!state.characterRaw) {
     progress("生成角色设定图...");
-    state.characterRaw = await generateImage(
-      apiKey,
+    state.characterRaw = await requestImage(
+      options as GenerateFramePackOptions,
       buildCharacterPrompt(contextFor(options as GenerateFramePackOptions, state.referenceUrl)),
-      state.referenceUrl
+      state.referenceUrl,
+      "character"
     );
   }
   ensureNotCancelled(options.isCancelled);
@@ -235,10 +270,11 @@ export async function generateActionPack(
         if (!state.sheets[id]) {
           ensureNotCancelled(options.isCancelled);
           progress(`生成「${actionLabel(id)}」动作序列图...`);
-          state.sheets[id] = await generateImage(
-            apiKey,
+          state.sheets[id] = await requestImage(
+            options,
             buildSpriteSheetPrompt(contextFor(options, state.characterUrl), id),
             state.characterUrl,
+            id,
             "3:2"
           );
         }
@@ -253,10 +289,11 @@ export async function generateActionPack(
           ensureNotCancelled(options.isCancelled);
           progress(`生成「${actionLabel(id)}」帧 ${index + 1}/${FRAMES_PER_ACTION}...`);
           if (!state.rawFrames[id][index]) {
-            state.rawFrames[id][index] = await generateImage(
-              apiKey,
+            state.rawFrames[id][index] = await requestImage(
+              options,
               buildActionPrompt(contextFor(options, state.characterUrl), id, index),
-              state.characterUrl
+              state.characterUrl,
+              id
             );
           }
           ensureNotCancelled(options.isCancelled);

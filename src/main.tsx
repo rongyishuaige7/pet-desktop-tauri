@@ -353,6 +353,7 @@ function StudioApp() {
     actions: ActionFrameSet;
     inputSignature: string;
   } | null>(null);
+  const [aiUncertain, setAiUncertain] = useState(false);
   const activeGenerationTaskRef = useRef<GenerationTask | null>(null);
   const aiCharacterUrlRef = useRef("");
   const aiCharacterImageRef = useRef("");
@@ -2540,6 +2541,49 @@ function StudioApp() {
     return JSON.stringify([uploadUrl, referencePhoto, species, appearanceNotes]);
   }
 
+  async function recordRequestStart(attempt: { attemptId: string; action: string }) {
+    const task = activeGenerationTaskRef.current;
+    if (!task) throw new Error("当前制作任务已失效");
+    const updated = await updateGenerationTask(
+      {
+        ...task,
+        receipts: [
+          ...task.receipts,
+          {
+            attemptId: attempt.attemptId,
+            action: attempt.action,
+            startedAt: new Date().toISOString(),
+            status: "started"
+          }
+        ]
+      },
+      task.revision
+    );
+    activeGenerationTaskRef.current = updated;
+    await refreshGenerationTasks();
+  }
+
+  async function recordRequestEnd(result: { attemptId: string; status: string }) {
+    const task = activeGenerationTaskRef.current;
+    if (!task) return;
+    const updated = await updateGenerationTask(
+      {
+        ...task,
+        receipts: task.receipts.map((receipt) =>
+          receipt.attemptId === result.attemptId
+            ? { ...receipt, status: result.status }
+            : receipt
+        )
+      },
+      task.revision
+    );
+    activeGenerationTaskRef.current = updated;
+  }
+
+  function hasUnsettledReceipts(task: GenerationTask | null) {
+    return Boolean(task?.receipts.some((receipt) => receipt.status !== "succeeded"));
+  }
+
   function generationCandidate(mode: "initial" | "regenerate") {
     const active = activeGenerationTaskRef.current;
     const existing = aiCandidateRef.current;
@@ -2599,9 +2643,11 @@ function StudioApp() {
     stage: string,
     extra: Partial<GenerationTask> = {}
   ): Promise<GenerationTask> {
+    const latest = activeGenerationTaskRef.current;
+    const base = latest && latest.taskId === task.taskId ? latest : task;
     const updated = await updateGenerationTask(
-      { ...task, stage, ...extra },
-      task.revision
+      { ...base, stage, ...extra },
+      base.revision
     );
     activeGenerationTaskRef.current = updated;
     await refreshGenerationTasks();
@@ -2636,6 +2682,7 @@ function StudioApp() {
     if (aiCancelRef.current || isLoading) return;
 
     setAiLog([]);
+    setAiUncertain(false);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
@@ -2657,6 +2704,8 @@ function StudioApp() {
         appearanceNotes,
         checkpoint: candidate.checkpoint,
         forceNewCharacter: candidate.forceNewCharacter,
+        onRequestStart: recordRequestStart,
+        onRequestEnd: recordRequestEnd,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2678,6 +2727,7 @@ function StudioApp() {
       aiCharacterImageRef.current = character.characterImage;
       aiCandidateRef.current = null;
       setAiSampleReview(null);
+      setAiUncertain(false);
       setAiCharacterReview((previous) => ({
         image: character.characterImage,
         reference: referencePhoto ?? "",
@@ -2688,9 +2738,17 @@ function StudioApp() {
       setCanResumeAI(false);
     } catch (err) {
       if (generationTask) {
+        const unsettled = hasUnsettledReceipts(
+          activeGenerationTaskRef.current ?? generationTask
+        );
+        setAiUncertain(unsettled);
         await advanceGenerationTask(
           generationTask,
-          err instanceof GenerationCancelled ? "interrupted" : "failed"
+          err instanceof GenerationCancelled
+            ? "interrupted"
+            : unsettled
+              ? "uncertain"
+              : "failed"
         ).catch(() => {});
       }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
@@ -2713,6 +2771,7 @@ function StudioApp() {
     }
     if (aiCancelRef.current || isLoading || !aiCharacterReview) return;
     setAiLog([]);
+    setAiUncertain(false);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
@@ -2734,6 +2793,8 @@ function StudioApp() {
         appearanceNotes,
         checkpoint: candidate.checkpoint,
         forceNewCharacter: candidate.forceNewCharacter,
+        onRequestStart: recordRequestStart,
+        onRequestEnd: recordRequestEnd,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2755,6 +2816,7 @@ function StudioApp() {
       aiCharacterImageRef.current = character.characterImage;
       aiCandidateRef.current = null;
       setAiSampleReview(null);
+      setAiUncertain(false);
       setAiCharacterReview((previous) => ({
         image: character.characterImage,
         reference: referencePhoto ?? "",
@@ -2764,9 +2826,17 @@ function StudioApp() {
       }));
     } catch (err) {
       if (generationTask) {
+        const unsettled = hasUnsettledReceipts(
+          activeGenerationTaskRef.current ?? generationTask
+        );
+        setAiUncertain(unsettled);
         await advanceGenerationTask(
           generationTask,
-          err instanceof GenerationCancelled ? "interrupted" : "failed"
+          err instanceof GenerationCancelled
+            ? "interrupted"
+            : unsettled
+              ? "uncertain"
+              : "failed"
         ).catch(() => {});
       }
       if (err instanceof GenerationCancelled) {
@@ -2805,6 +2875,7 @@ function StudioApp() {
     }
     aiCandidateRef.current = null;
     setAiLog([]);
+    setAiUncertain(false);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
@@ -2828,6 +2899,8 @@ function StudioApp() {
         characterUrl: aiCharacterUrlRef.current,
         characterImage: aiCharacterImageRef.current,
         checkpoint: aiCheckpointRef.current,
+        onRequestStart: recordRequestStart,
+        onRequestEnd: recordRequestEnd,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2836,12 +2909,21 @@ function StudioApp() {
         throw new Error("照片或描述已变化，已丢弃本次试动作结果，请重新生成角色");
       }
       generationTask = await advanceGenerationTask(generationTask, "sampleReview");
+      setAiUncertain(false);
       setAiSampleReview({ actions: sample.actions, inputSignature });
     } catch (err) {
       if (generationTask) {
+        const unsettled = hasUnsettledReceipts(
+          activeGenerationTaskRef.current ?? generationTask
+        );
+        setAiUncertain(unsettled);
         await advanceGenerationTask(
           generationTask,
-          err instanceof GenerationCancelled ? "interrupted" : "failed"
+          err instanceof GenerationCancelled
+            ? "interrupted"
+            : unsettled
+              ? "uncertain"
+              : "failed"
         ).catch(() => {});
       }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
@@ -2880,6 +2962,7 @@ function StudioApp() {
       return;
     }
     setAiLog([]);
+    setAiUncertain(false);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
@@ -2899,6 +2982,8 @@ function StudioApp() {
         characterUrl: aiCharacterUrlRef.current,
         characterImage: aiCharacterImageRef.current,
         checkpoint: aiCheckpointRef.current,
+        onRequestStart: recordRequestStart,
+        onRequestEnd: recordRequestEnd,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2941,9 +3026,17 @@ function StudioApp() {
       setCurrentTab("stage");
     } catch (err) {
       if (generationTask) {
+        const unsettled = hasUnsettledReceipts(
+          activeGenerationTaskRef.current ?? generationTask
+        );
+        setAiUncertain(unsettled);
         await advanceGenerationTask(
           generationTask,
-          err instanceof GenerationCancelled ? "interrupted" : "failed"
+          err instanceof GenerationCancelled
+            ? "interrupted"
+            : unsettled
+              ? "uncertain"
+              : "failed"
         ).catch(() => {});
       }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
@@ -3631,6 +3724,7 @@ function StudioApp() {
                   onResumeGenerationTask={handleResumeGenerationTask}
                   aiCharacterReview={aiCharacterReview}
                   aiSampleReview={aiSampleReview}
+                  aiUncertain={aiUncertain}
                   onConfirmAICharacter={handleConfirmAICharacter}
                   onConfirmAISample={handleConfirmAISample}
                   onRegenerateAICharacter={handleRegenerateAICharacter}

@@ -1236,6 +1236,22 @@ await record('ai_failed_stage_retry_reuses_candidate',async()=>{
   return {passed:failed.generations===2&&failed.review.includes('v1')&&retried.generations===2&&retried.review.includes('v2')&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
+await record('ai_request_receipts_and_uncertain',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.failGenerationAt=1;});
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'角色生成失败'}).waitFor();
+  const failed=await page.evaluate(()=>({task:window.__review.activeGenerationTask,note:document.querySelector('.ai-uncertain-note')?.textContent??''}));
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.ai-character-review').waitFor();
+  const retried=await page.evaluate(()=>({task:window.__review.activeGenerationTask,note:Boolean(document.querySelector('.ai-uncertain-note')),review:Boolean(document.querySelector('.ai-character-review'))}));
+  const uncertainReceipt=failed.task?.receipts?.find(r=>r.status==='uncertain');
+  const receivedReceipt=retried.task?.receipts?.find(r=>r.status==='received');
+  return {passed:Boolean(uncertainReceipt?.attemptId)&&failed.task?.stage==='uncertain'&&failed.note.includes('结果尚未确认')&&!retried.note&&retried.review&&Boolean(receivedReceipt?.attemptId)&&errors.length===0,failed,retried,uncertainReceipt,receivedReceipt,errors};
+ }finally{await context.close();}
+});
 await record('ai_stops_when_task_update_fails',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{

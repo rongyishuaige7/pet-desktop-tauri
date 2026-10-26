@@ -62,6 +62,7 @@ interface WorkshopProps {
     actions: ActionFrameSet;
     inputSignature: string;
   } | null;
+  aiUncertain: boolean;
   onConfirmAICharacter: () => Promise<void> | void;
   onConfirmAISample: () => Promise<void> | void;
   onRegenerateAICharacter: () => Promise<void> | void;
@@ -121,6 +122,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
   onResumeGenerationTask,
   aiCharacterReview,
   aiSampleReview,
+  aiUncertain,
   onConfirmAICharacter,
   onConfirmAISample,
   onRegenerateAICharacter,
@@ -513,6 +515,11 @@ export const Workshop: React.FC<WorkshopProps> = ({
         {/* Task: photo generation */}
         {task === "ai" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {aiUncertain && (
+              <p className="ai-uncertain-note">
+                上次生成请求的结果尚未确认；继续重试可能新增一次生成请求。
+              </p>
+            )}
             {generationTasks.length > 0 && (
               <div className="generation-task-list">
                 <div className="generation-task-head">
