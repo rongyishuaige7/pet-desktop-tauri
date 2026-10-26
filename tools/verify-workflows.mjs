@@ -41,7 +41,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
    metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},
    transformCallback:(fn)=>{const id=seq++;callbacks.set(id,fn);return id;},
    invoke:async(cmd,args={})=>{
-    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,sourceDir:args.sourceDir,assetId:args.assetId,parentDir:args.parentDir,name:args.name,exportFrameRoot:args.frameRoot,action:args.action,request:args.request,expectedPetId:args.expectedPetId});
+    state.calls.push({cmd,root:args.rootDir??args.request?.rootDir,sourceDir:args.sourceDir,assetId:args.assetId,parentDir:args.parentDir,name:args.name,exportFrameRoot:args.frameRoot,action:args.action,request:args.request,expectedPetId:args.expectedPetId,taskId:args.taskId,resume:args.resume,ownerSession:args.ownerSession,stage:args.task?.stage});
     if(cmd==='plugin:event|listen'){const id=seq++;listeners.set(id,args);if(state.dragLeaveDelay&&args.event==='tauri://drag-leave')await new Promise(resolve=>setTimeout(resolve,state.dragLeaveDelay));return id;}
     if(cmd==='plugin:event|unlisten'){listeners.delete(args.eventId);return;}
     if(cmd==='get_native_pet_settings')return {frameRoot:state.root,scale:1,currentAction:settingsAction,petId:state.native.petId};
@@ -144,6 +144,15 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      if(state.generations===state.failGenerationAt)throw new Error('mock temporary generation failure');
      return state.makeImage(args.request.aspectRatio==='3:2');
     }
+    if(cmd==='list_generation_tasks')return state.generationTasks??[];
+    if(cmd==='create_generation_task'){
+     const task={...args.task,revision:1,ownerSession:null,createdAt:'2026-10-26T00:00:00Z',updatedAt:'2026-10-26T00:00:00Z'};
+     return task;
+    }
+    if(cmd==='claim_generation_task')return {status:'claimed',task:{...(state.activeGenerationTask??{taskId:args.taskId,pendingPetId:'mock-pending',stage:'draft'}),ownerSession:args.ownerSession,revision:2,updatedAt:'2026-10-26T00:00:00Z'}};
+    if(cmd==='update_generation_task')return {...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};
+    if(cmd==='release_generation_task')return null;
+    if(cmd==='load_generation_task')return state.activeGenerationTask??null;
     if(cmd==='save_manual_frame_pack'){
      state.saves++;state.savedActions=args.request.actions;state.saving=true;
      if(state.manualSaveDelay)await new Promise(resolve=>setTimeout(resolve,state.manualSaveDelay));
@@ -196,6 +205,7 @@ async function openAI(page){
  await page.getByPlaceholder('https://your-domain.example/upload').fill('https://example.test/upload');
  const data=await page.evaluate(()=>window.__review.makeImage().split(',')[1]);
  await page.locator('input[type=file]').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:Buffer.from(data,'base64')});
+ await page.getByRole('checkbox',{name:/我了解照片/}).check();
  await page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true}).waitFor();
 }
 try{
@@ -2320,6 +2330,24 @@ await record('assembly_two_pages_conflict_keeps_latest_draft',async()=>{
   await page.locator('.draft-status.is-conflict').waitFor();
   const state=await page.evaluate(async()=>{const s=await import('/src/storage.ts');const d=await s.loadCreationDraft('manual-assembly');return {input:document.querySelector('#workshop-name')?.value,draftName:d?.name,revision:d?.revision};});
   return {passed:state.input==='甲窗口'&&state.draftName==='乙窗口'&&state.revision===revisionAfterSecond&&errors.length===0,revisionAfterSecond,state,errors};
+ }finally{await context.close();}
+});
+await record('generation_task_list_and_consent',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await page.evaluate(()=>{window.__review.generationTasks=[{taskId:'task-old',revision:2,stage:'interrupted',pendingPetId:'pending-old',species:'cat',completedActions:2,updatedAt:'2026-10-26T00:00:00Z'}];});
+  await openWorkshopTask(page,'用照片制作');
+  await page.locator('.generation-task-list').waitFor();
+  const listText=await page.locator('.generation-task-list').textContent();
+  const consent=page.getByRole('checkbox',{name:/我了解照片/});
+  const generate=page.getByRole('button',{name:'开始 AI 自动生成全套帧包',exact:true});
+  const before=await generate.isDisabled();
+  await consent.check();
+  const after=await generate.isDisabled();
+  await page.getByRole('button',{name:'继续',exact:true}).click();
+  await page.locator('.toast-message').filter({hasText:'已领取上次制作任务'}).waitFor();
+  const claims=await page.evaluate(()=>window.__review.calls.filter(c=>c.cmd==='claim_generation_task').map(c=>({taskId:c.taskId,resume:c.resume})));
+  return {passed:listText?.includes('上次制作未完成')&&listText?.includes('2/6')&&before&&!after&&claims.length===1&&claims[0].taskId==='task-old'&&claims[0].resume===true&&errors.length===0,listText,before,after,claims,errors};
  }finally{await context.close();}
 });
 await record('assembly_draft_conflict_keeps_local_input',async()=>{
