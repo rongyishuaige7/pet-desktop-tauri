@@ -246,7 +246,7 @@
 - 任务阶段新增 sampleGenerating/sampleReview，随后进入 actionsGenerating；试动作失败/取消保留确认页，可再次确认重试；试动作页可重新生成角色，重新生成会清空动作缓存。
 - 验证：67 项 Rust 测试、145 项前端单元测试、127 个隔离浏览器流程；新增“角色确认后只发 idle、确认试动作后共 7 次请求、保存 1 次”回归。
 - 未完成：逐动作请求回执/attemptId、已发送未落盘的 uncertain 状态、提交幂等故障注入、任务清理与引用检查。G03 仍为部分完成。CI：[40321569799](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40321569799) 通过。
-- 修复：重新生成角色使用独立候选 checkpoint 和候选 URL/图片；只有 `characterReview` 阶段写入成功后才替换展示版本和生成上下文。阶段写入失败时旧确认页、旧 checkpoint 和旧角色引用保持不变。新增故障回归断言 v1 展示版本、确认版本与 idle 请求引用一致。验证：145 项前端单元测试、128 个隔离浏览器流程。
+- 修复：重新生成角色使用独立候选 checkpoint 和候选 URL/图片；只有 `characterReview` 阶段写入成功后才替换展示版本和生成上下文。阶段写入失败时旧确认页、旧 checkpoint 和旧角色引用保持不变。新增故障回归断言 v1 展示版本、确认版本与 idle 请求引用一致。验证：145 项前端单元测试、128 个隔离浏览器流程。修复 CI：[40327213285](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40327213285) 通过。
 
 ## v0.5 G02 角色确认（2026-10-26，部分）
 

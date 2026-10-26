@@ -100,7 +100,7 @@
 - 试动作失败/取消保留确认，可重试；可重新生成角色并清空动作缓存。
 - 验证：67 项 Rust、145 项前端单元测试、127 个隔离浏览器流程。
 - 未完成：请求回执/uncertain、提交幂等故障注入、任务清理与引用检查。
-- 修复：角色重生成使用候选 checkpoint；阶段写入成功后才替换确认页/上下文，失败保留旧版本。验证：145 项前端单元测试、128 个隔离浏览器流程。CI：[40321569799](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40321569799) 通过。
+- 修复：角色重生成使用候选 checkpoint；阶段写入成功后才替换确认页/上下文，失败保留旧版本。验证：145 项前端单元测试、128 个隔离浏览器流程。修复 CI：[40327213285](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40327213285) 通过。CI：[40321569799](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40321569799) 通过。
 
 ## v0.5 G02 当前记录（2026-10-26，部分）
 
