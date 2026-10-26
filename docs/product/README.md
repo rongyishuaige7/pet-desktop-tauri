@@ -100,7 +100,7 @@
 - create/load/list/update/claim/release 命令；revision、ownerSession、pendingPetId 条件校验；第二 session 标记 interrupted，之后必须显式 resume。跨进程文件锁覆盖读改写；创建失败清理未完成目录并可重试。
 - 验证：67 项 Rust 测试、144 项前端单元测试、121 个隔离浏览器流程。
 - 服务配置/用途确认卡片、本机任务列表与继续领取已接入；开始 AI 生成时创建并领取任务，阶段随生成推进，正式伙伴使用稳定 pendingPetId，失败/取消标记并释放执行权。
-- 未完成：角色确认/试动作/整套生成（G02/G03）、媒体版本文件、清理与引用检查、真实服务授权测试。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过；中断/文件锁/创建重试修复 CI：[40289182439](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40289182439) 通过。
+- 未完成：角色确认/试动作/整套生成（G02/G03）、媒体版本文件、清理与引用检查、真实服务授权测试。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过；中断/文件锁/创建重试修复 CI：[40289182439](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40289182439) 通过；服务配置/任务列表/流程接入 CI：[40293402550](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40293402550) 通过。
 
 ## v0.4 A04 当前记录（2026-10-24，自动化完成；真实磁盘配额未实测）
 

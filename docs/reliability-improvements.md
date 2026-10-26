@@ -251,7 +251,7 @@
 - 服务配置从制作流程中独立成卡片，说明照片上传去向、本机处理、Key 仅本次会话有效和可能产生费用；首次生成前必须勾选用途/费用确认。
 - AI 任务显示本机任务列表、阶段、已完成动作数和继续入口；开始生成时创建并领取任务，阶段从 draft → characterGenerating → readyToSave → committed，失败/取消标记 failed/interrupted 并释放执行权；正式伙伴使用任务的稳定 pendingPetId。
 - 验证：67 项 Rust 测试、144 项前端单元测试、121 个隔离浏览器流程；新增服务配置/任务列表/继续领取回归。
-- 未完成：角色确认/试动作/整套生成（G02/G03）、媒体版本文件、任务清理与引用检查、真实服务授权测试。G01 仍为部分完成。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过；中断/文件锁/创建重试修复 CI：[40289182439](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40289182439) 通过。
+- 未完成：角色确认/试动作/整套生成（G02/G03）、媒体版本文件、任务清理与引用检查、真实服务授权测试。G01 仍为部分完成。CI：[40273859161](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40273859161) 通过；中断/文件锁/创建重试修复 CI：[40289182439](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40289182439) 通过；服务配置/任务列表/流程接入 CI：[40293402550](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40293402550) 通过。
 
 ## 本轮之外的依赖维护
 
