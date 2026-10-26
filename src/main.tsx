@@ -2617,13 +2617,14 @@ function StudioApp() {
         generationTask,
         "characterGenerating"
       );
+      const candidate = cloneGenerationCheckpoint(aiCheckpointRef.current);
       const character = await generateCharacter({
         apiKey,
         uploadUrl,
         referencePhoto: referencePhoto ?? "",
         species,
         appearanceNotes,
-        checkpoint: aiCheckpointRef.current,
+        checkpoint: candidate,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
@@ -2631,8 +2632,6 @@ function StudioApp() {
       if (inputSignature !== aiInputSignature()) {
         throw new Error("照片或描述已变化，已丢弃本次角色结果，请重新生成");
       }
-      aiCharacterUrlRef.current = character.characterUrl;
-      aiCharacterImageRef.current = character.characterImage;
       const revision = generationTask.characterRevision + 1;
       generationTask = await advanceGenerationTask(
         generationTask,
@@ -2642,6 +2641,10 @@ function StudioApp() {
           confirmedCharacterRevision: null
         }
       );
+      aiCheckpointRef.current = candidate;
+      aiCharacterUrlRef.current = character.characterUrl;
+      aiCharacterImageRef.current = character.characterImage;
+      setAiSampleReview(null);
       setAiCharacterReview((previous) => ({
         image: character.characterImage,
         reference: referencePhoto ?? "",
@@ -2677,7 +2680,6 @@ function StudioApp() {
     }
     if (aiCancelRef.current || isLoading || !aiCharacterReview) return;
     setAiLog([]);
-    setAiSampleReview(null);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
@@ -2690,13 +2692,14 @@ function StudioApp() {
         generationTask,
         "characterGenerating"
       );
+      const candidate = cloneGenerationCheckpoint(aiCheckpointRef.current);
       const character = await generateCharacter({
         apiKey,
         uploadUrl,
         referencePhoto: referencePhoto ?? "",
         species,
         appearanceNotes,
-        checkpoint: aiCheckpointRef.current,
+        checkpoint: candidate,
         forceNewCharacter: true,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
@@ -2705,8 +2708,6 @@ function StudioApp() {
       if (inputSignature !== aiInputSignature()) {
         throw new Error("照片或描述已变化，已丢弃本次角色结果，请重新生成");
       }
-      aiCharacterUrlRef.current = character.characterUrl;
-      aiCharacterImageRef.current = character.characterImage;
       const revision = generationTask.characterRevision + 1;
       generationTask = await advanceGenerationTask(
         generationTask,
@@ -2716,6 +2717,10 @@ function StudioApp() {
           confirmedCharacterRevision: null
         }
       );
+      aiCheckpointRef.current = candidate;
+      aiCharacterUrlRef.current = character.characterUrl;
+      aiCharacterImageRef.current = character.characterImage;
+      setAiSampleReview(null);
       setAiCharacterReview((previous) => ({
         image: character.characterImage,
         reference: referencePhoto ?? "",
@@ -3695,6 +3700,12 @@ function StudioApp() {
       )}
     </div>
   );
+}
+
+function cloneGenerationCheckpoint(
+  checkpoint: ReturnType<typeof createGenerationCheckpoint>
+): ReturnType<typeof createGenerationCheckpoint> {
+  return JSON.parse(JSON.stringify(checkpoint)) as ReturnType<typeof createGenerationCheckpoint>;
 }
 
 async function sha256Hex(value: string): Promise<string> {

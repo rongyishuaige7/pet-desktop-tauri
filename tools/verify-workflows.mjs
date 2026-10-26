@@ -137,7 +137,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      await state.emitNative();
      return {accepted:true,state:n};
     }
-    if(cmd==='upload_reference_image')return 'https://example.test/mock-reference.png';
+    if(cmd==='upload_reference_image'){state.uploadSeq=(state.uploadSeq??0)+1;const url=`https://example.test/upload-${state.uploadSeq}.png`;state.uploadUrls=[...(state.uploadUrls??[]),url];return url;}
     if(cmd==='generate_minimax_image'){
      state.generations++;
      if(state.generationDelay)await new Promise(resolve=>setTimeout(resolve,state.generationDelay));
@@ -151,7 +151,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      return task;
     }
     if(cmd==='claim_generation_task')return {status:'claimed',task:{...(state.activeGenerationTask??{taskId:args.taskId,pendingPetId:'mock-pending',stage:'draft'}),ownerSession:args.ownerSession,revision:2,updatedAt:'2026-10-26T00:00:00Z'}};
-    if(cmd==='update_generation_task'){if(state.failTaskUpdate){state.failTaskUpdate=false;throw new Error('TASK_OWNER：当前窗口没有执行权');}const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};state.activeGenerationTask=task;return task;}
+    if(cmd==='update_generation_task'){if(state.failTaskUpdate||(state.failTaskUpdateStage&&args.task.stage===state.failTaskUpdateStage)){state.failTaskUpdate=false;state.failTaskUpdateStage=null;throw new Error('TASK_OWNER：当前窗口没有执行权');}const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};state.activeGenerationTask=task;return task;}
     if(cmd==='release_generation_task')return null;
     if(cmd==='load_generation_task')return state.activeGenerationTask??null;
     if(cmd==='save_manual_frame_pack'){
@@ -1173,6 +1173,23 @@ await record('ai_idle_sample_gate',async()=>{
   await page.locator('.companion-title').waitFor({timeout:15000});
   const done=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length}));
   return {passed:sample.generations===2&&sample.saves===0&&sample.frames===5&&sample.text.includes('不会重复生成')&&done.generations===7&&done.saves===1&&done.pets===1&&errors.length===0,sample,done,errors};
+ }finally{await context.close();}
+});
+await record('ai_failed_character_stage_update_keeps_old_context',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  const v1=await page.evaluate(()=>({urls:window.__review.uploadUrls,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  await page.evaluate(()=>{window.__review.failTaskUpdateStage='characterReview';});
+  await page.getByRole('button',{name:'调整描述后重新生成',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'角色重新生成失败'}).waitFor();
+  const afterFail=await page.evaluate(()=>({urls:window.__review.uploadUrls,review:document.querySelector('.ai-character-review')?.textContent??''}));
+  await confirmAICharacter(page);
+  const idle=await page.evaluate(()=>({reference:window.__review.calls.filter(c=>c.cmd==='generate_minimax_image').at(-1)?.request?.referenceImageUrl,generations:window.__review.generations}));
+  const v1CharacterUrl=v1.urls[1];
+  const v2CharacterUrl=afterFail.urls[afterFail.urls.length-1];
+  return {passed:afterFail.review.includes('v1')&&v1CharacterUrl!==v2CharacterUrl&&idle.reference===v1CharacterUrl&&idle.generations===3&&errors.length===0,v1,afterFail,v1CharacterUrl,v2CharacterUrl,idle,errors};
  }finally{await context.close();}
 });
 await record('ai_stops_when_task_update_fails',async()=>{
