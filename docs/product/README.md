@@ -93,6 +93,14 @@
 - 托盘修复 `b44f9ed` 的 macOS / Linux CI 通过（[运行 39917162018](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39917162018)）。
 - 结论：C06 未通过，不能标记可发布；详见[验收清单 C06 记录](v0.3-acceptance.md#51-c06-macos-执行记录2026-10-23)。
 
+## v0.5 G01 当前记录（2026-10-26，后端切片）
+
+- Rust 持久任务存储 `generation-tasks/<taskId>/task.json`，schemaVersion=1，原子写入。
+- 字段含 revision/ownerSession/stage/pendingPetId/角色版本/动作状态/回执；不含 Key、上传地址、照片 data URL 或原始响应。
+- create/load/list/update/claim/release 命令；revision、ownerSession、pendingPetId 条件校验；第二 session 标记 interrupted，显式 resume 才能继续。
+- 验证：64 项 Rust 测试。
+- 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体文件、清理与引用检查。
+
 ## v0.4 A04 当前记录（2026-10-24，自动化完成；真实磁盘配额未实测）
 
 - DB v4 `creation_drafts`；800ms 防抖自动保存、重启恢复、revision 条件写入与冲突提示。

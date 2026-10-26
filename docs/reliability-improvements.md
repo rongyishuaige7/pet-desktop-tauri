@@ -240,6 +240,15 @@
 - 离开装配页时立即补存待保存内容；若旧保存仍在途，先等待其结束，再独立保存最新内容，不依赖装配页自动保存 effect。离页补存作为可等待的流程登记；正式提交/丢弃会先等待补存和在途保存结束，再读取 revision，避免补存递增 revision 后提交仍带旧版本而误报冲突。丢弃草稿后的首笔编辑会清除暂停/抑制标记，立即重新启动自动保存。草稿保存失败（模拟配额/磁盘）显示“未保存”，保留本地输入和上一版草稿，恢复后可继续保存。
 - 真实双窗口冲突已用同一浏览上下文的两页面回归覆盖：乙窗口保存后记录 revision，甲窗口旧 revision 保存返回冲突并保留本地输入，冲突后 revision 严格保持不变。草稿帧改为逐帧 Blob 存入 IndexedDB（读取时转回 data URL，兼容旧 manualFrames 记录），不再把整组 data URL 直接写入草稿对象。冲突结果收窄为不含 manualFrames 的摘要，避免原始存储记录被强转成完整草稿；图片 Blob 仅在实际读取二进制时解码，不再先做一次文本解码。Blob 冲突摘要与图片解码收尾已复核关闭。真实磁盘配额未实测；用户于 2026-10-26 接受模拟故障证据并收口 A04 自动化范围，不声称真实配额通过。原子提交修复 CI：[40165126275](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40165126275) 通过；提交后同步修复 CI：[40166707033](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40166707033) 通过；加载后选择复核 CI：[40178502111](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40178502111) 通过；attach 失败过期回滚修复 CI：[40179624537](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40179624537) 通过；选择读取失败不回滚 CI：[40180764347](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40180764347) 通过；离开补存/保存失败 CI：[40185807275](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40185807275) 通过；在途离页/丢弃首笔编辑 CI：[40187367744](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40187367744) 通过；离页补存/提交串行化 CI：[40191775128](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40191775128) 通过；待补存返回提交回归 CI：[40201710277](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40201710277) 通过；回归灵敏度修复 CI：[40203911678](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40203911678) 通过；双页面冲突回归 CI：[40206009148](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40206009148) 通过；精确 revision 断言 CI：[40207792121](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40207792121) 通过；Blob 草稿存储 CI：[40249703906](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40249703906) 通过；冲突摘要/图片解码收尾 CI：[40264210408](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40264210408) 通过。CI：[40092982191](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40092982191) 通过。
 
+## v0.5 G01 配置与持久任务（2026-10-26，后端切片）
+
+- 新增 Rust `generation_tasks` 任务存储：`generation-tasks/<taskId>/task.json`，schemaVersion=1，原子写临时文件后改名。
+- 任务字段包含 taskId、revision、ownerSession、stage、pendingPetId、photoDigest、species、appearanceNotes、promptVersion、characterRevision、confirmedCharacterRevision、逐动作状态、请求回执和 committedPetId；不包含 Key、上传地址、照片 data URL 或原始响应。
+- 任务 id 只允许字母/数字/-/_；未知阶段、物种、动作、超过 60 帧、错误 schemaVersion 拒绝。列表跳过损坏任务。
+- 新增 create/load/list/update/claim/release 命令；update 条件校验 revision、ownerSession 和 pendingPetId；第二个 session claim 时标记 interrupted 并清空 owner，显式 resume 才能重新领取。
+- 验证：64 项 Rust 测试（任务创建/读取/列表、秘密字段排除、路径拒绝、revision/owner 冲突、重启中断与恢复、损坏任务跳过）。
+- 未完成：服务配置/用途确认 UI、任务列表与继续入口、生成流程接入、媒体版本文件、任务清理与引用检查。G01 仍为部分完成。
+
 ## 本轮之外的依赖维护
 
 只读 `npm audit` 发现开发工具链 6 项告警（3 high / 3 moderate）：Vite 8.1.4 的编辑器启动接口、Vitest / @vitest/mocker 4.1.10 的测试服务路径读取，以及 PostCSS、nanoid、source-map-js 的传递依赖告警。`npm audit --omit=dev` 返回 0 项，不能据此忽略开发环境风险。本轮保持既有依赖版本，未执行 `audit fix` 或升级；应在独立的工具链更新中调整锁文件并验证插件兼容性。

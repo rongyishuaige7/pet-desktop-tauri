@@ -14,6 +14,7 @@ use tauri::{
 
 mod ai_transport;
 mod autostart;
+mod generation_tasks;
 mod native_pet;
 
 #[tauri::command]
@@ -332,6 +333,95 @@ fn save_manual_frame_pack(
     })
 }
 
+fn generation_tasks_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("generation-tasks"))
+        .map_err(|err| format!("读取应用数据目录失败：{err}"))
+}
+
+#[tauri::command]
+async fn create_generation_task(
+    app: tauri::AppHandle,
+    task: generation_tasks::GenerationTask,
+) -> Result<generation_tasks::GenerationTask, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::create_task(&root, task)
+    })
+    .await
+    .map_err(|err| format!("创建生成任务失败：{err}"))?
+}
+
+#[tauri::command]
+async fn load_generation_task(
+    app: tauri::AppHandle,
+    task_id: String,
+) -> Result<generation_tasks::GenerationTask, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::load_task(&root, &task_id)
+    })
+    .await
+    .map_err(|err| format!("读取生成任务失败：{err}"))?
+}
+
+#[tauri::command]
+async fn list_generation_tasks(
+    app: tauri::AppHandle,
+) -> Result<Vec<generation_tasks::TaskSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::list_tasks(&root)
+    })
+    .await
+    .map_err(|err| format!("读取生成任务列表失败：{err}"))?
+}
+
+#[tauri::command]
+async fn update_generation_task(
+    app: tauri::AppHandle,
+    task: generation_tasks::GenerationTask,
+    expected_revision: u64,
+    owner_session: String,
+) -> Result<generation_tasks::GenerationTask, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::update_task(&root, task, expected_revision, &owner_session)
+    })
+    .await
+    .map_err(|err| format!("更新生成任务失败：{err}"))?
+}
+
+#[tauri::command]
+async fn claim_generation_task(
+    app: tauri::AppHandle,
+    task_id: String,
+    owner_session: String,
+    resume: bool,
+) -> Result<generation_tasks::ClaimResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::claim_task(&root, &task_id, &owner_session, resume)
+    })
+    .await
+    .map_err(|err| format!("领取生成任务失败：{err}"))?
+}
+
+#[tauri::command]
+async fn release_generation_task(
+    app: tauri::AppHandle,
+    task_id: String,
+    owner_session: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::release_task(&root, &task_id, &owner_session)
+    })
+    .await
+    .map_err(|err| format!("释放生成任务失败：{err}"))?
+}
+
 #[tauri::command]
 async fn export_pet_package(
     parent_dir: String,
@@ -567,6 +657,12 @@ pub fn run() {
             generate_minimax_image,
             upload_reference_image,
             inspect_frame_directory,
+            create_generation_task,
+            load_generation_task,
+            list_generation_tasks,
+            update_generation_task,
+            claim_generation_task,
+            release_generation_task,
             export_pet_package,
             inspect_pet_package,
             import_pet_package,
