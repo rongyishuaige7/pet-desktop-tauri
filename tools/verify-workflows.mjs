@@ -214,7 +214,11 @@ async function generateCharacterReview(page){
  await page.locator('.ai-character-review').waitFor();
 }
 async function confirmAICharacter(page){
- await page.getByRole('button',{name:'确认角色并生成动作',exact:true}).click();
+ await page.getByRole('button',{name:'确认角色并生成试动作',exact:true}).click();
+ await page.locator('.ai-sample-review').waitFor();
+}
+async function confirmAISample(page){
+ await page.getByRole('button',{name:'确认试动作并生成其余动作',exact:true}).click();
 }
 try{
  await record('manual_upload_errors_and_recovery',async()=>{
@@ -242,14 +246,15 @@ try{
    await page.evaluate(()=>{window.__review.blockSave=true;});
    await generateCharacterReview(page);
    await confirmAICharacter(page);
+   await confirmAISample(page);
    await page.waitForFunction(()=>window.__review.saving===true);
    const frozen=await page.getByPlaceholder('例如：糖宝、奶茶').isDisabled();
    await page.getByRole('button',{name:'取消',exact:true}).click();
    await page.evaluate(()=>{window.__review.releaseSave();});
-   await page.getByRole('button',{name:'确认角色并生成动作',exact:true}).waitFor();
+   await page.getByRole('button',{name:'确认试动作并生成其余动作',exact:true}).waitFor();
    const cancelled=await page.evaluate(async()=>({active:(await (await import('/src/storage.ts')).loadPet())?.id,generations:window.__review.generations,saves:window.__review.saves}));
    await page.evaluate(()=>{window.__review.delayGeneratedCommit=500;});
-   await confirmAICharacter(page);
+   await confirmAISample(page);
    await page.waitForFunction(()=>window.__review.committing===true);
    const committingLocked=await page.getByRole('button',{name:'取消',exact:true}).count()===0&&await page.getByRole('button',{name:'完成入住中...',exact:true}).isDisabled();
    await page.locator('.companion-title').waitFor();
@@ -263,20 +268,22 @@ try{
    await openAI(page);await page.evaluate(()=>{window.__review.failGenerationAt=3;});
    await generateCharacterReview(page);
    await confirmAICharacter(page);
-   await page.locator('.toast-message.error').filter({hasText:'动作生成失败'}).first().waitFor();
-   const afterFail=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves,review:Boolean(document.querySelector('.ai-character-review'))}));
-   await confirmAICharacter(page);
+   await confirmAISample(page);
+   await page.locator('.toast-message.error').filter({hasText:'其余动作生成失败'}).first().waitFor();
+   const afterFail=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves,review:Boolean(document.querySelector('.ai-sample-review'))}));
+   await confirmAISample(page);
    await page.locator('.companion-title').waitFor();
    const resumed=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves}));
    await openAI(page);
-   const beforeName=await page.evaluate(()=>window.__review.generations);
-   await page.evaluate(()=>{window.__review.failGenerationAt=window.__review.generations+2;});
    await generateCharacterReview(page);
    await confirmAICharacter(page);
-   await page.locator('.toast-message.error').filter({hasText:'动作生成失败'}).first().waitFor();
+   const beforeName=await page.evaluate(()=>window.__review.generations);
+   await page.evaluate(()=>{window.__review.failGenerationAt=window.__review.generations+1;});
+   await confirmAISample(page);
+   await page.locator('.toast-message.error').filter({hasText:'其余动作生成失败'}).first().waitFor();
    await page.getByPlaceholder('例如：糖宝、奶茶').fill('新的名字');
-   const afterName=await page.evaluate(()=>({generations:window.__review.generations,review:Boolean(document.querySelector('.ai-character-review'))}));
-   return {passed:afterFail.review&&resumed.generations===8&&resumed.saves===1&&afterName.review&&afterName.generations===beforeName+2&&errors.length===0,afterFail,resumed,beforeName,afterName,errors};
+   const afterName=await page.evaluate(()=>({generations:window.__review.generations,review:Boolean(document.querySelector('.ai-sample-review'))}));
+   return {passed:afterFail.review&&resumed.generations===8&&resumed.saves===1&&afterName.review&&afterName.generations===beforeName+1&&errors.length===0,afterFail,resumed,beforeName,afterName,errors};
   }finally{await context.close();}
  });
  await record('generated_frame_pixels_and_sheet_validation',async()=>{
@@ -1155,6 +1162,19 @@ await record('assembly_show_failure_retries_display_only',async()=>{
   return {passed:failed.pets===1&&failed.saves===1&&failed.shows===1&&failed.visible===false&&!failed.toasts.some(text=>text?.includes('同步至桌面'))&&retried.pets===1&&retried.saves===1&&retried.shows===2&&retried.visible===true&&errors.length===0,failed,retried,errors};
  }finally{await context.close();}
 });
+await record('ai_idle_sample_gate',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  await confirmAICharacter(page);
+  const sample=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves,frames:document.querySelectorAll('.ai-sample-frames img').length,text:document.querySelector('.ai-sample-review')?.textContent??''}));
+  await confirmAISample(page);
+  await page.locator('.companion-title').waitFor({timeout:15000});
+  const done=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length}));
+  return {passed:sample.generations===2&&sample.saves===0&&sample.frames===5&&sample.text.includes('不会重复生成')&&done.generations===7&&done.saves===1&&done.pets===1&&errors.length===0,sample,done,errors};
+ }finally{await context.close();}
+});
 await record('ai_stops_when_task_update_fails',async()=>{
  const {context,page,errors}=await newCase({desktop:true});
  try{
@@ -1173,10 +1193,12 @@ await record('ai_regenerated_character_invalidates_action_cache',async()=>{
   await page.evaluate(()=>{window.__review.failGenerationAt=3;});
   await generateCharacterReview(page);
   await confirmAICharacter(page);
-  await page.locator('.toast-message.error').filter({hasText:'动作生成失败'}).first().waitFor();
-  await page.getByRole('button',{name:'调整描述后重新生成',exact:true}).click();
+  await confirmAISample(page);
+  await page.locator('.toast-message.error').filter({hasText:'其余动作生成失败'}).first().waitFor();
+  await page.getByRole('button',{name:'重新生成角色',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.ai-character-review')?.textContent?.includes('v2'),null,{timeout:10000});
   await confirmAICharacter(page);
+  await confirmAISample(page);
   await page.locator('.companion-title').waitFor({timeout:15000});
   const state=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves}));
   return {passed:state.generations===10&&state.saves===1&&errors.length===0,state,errors};
@@ -1193,6 +1215,7 @@ await record('ai_photo_change_invalidates_character_review',async()=>{
   const afterChange=await page.evaluate(()=>({review:Boolean(document.querySelector('.ai-character-review')),generations:window.__review.generations}));
   await generateCharacterReview(page);
   await confirmAICharacter(page);
+  await confirmAISample(page);
   await page.locator('.companion-title').waitFor({timeout:15000});
   const done=await page.evaluate(()=>({generations:window.__review.generations,pets:window.__review.saves}));
   return {passed:!afterChange.review&&afterChange.generations===1&&done.generations===8&&done.pets===1&&errors.length===0,afterChange,done,errors};
@@ -1203,7 +1226,7 @@ await record('ai_consent_recheck_disables_confirm',async()=>{
  try{
   await openAI(page);
   await generateCharacterReview(page);
-  const confirm=page.getByRole('button',{name:'确认角色并生成动作',exact:true});
+  const confirm=page.getByRole('button',{name:'确认角色并生成试动作',exact:true});
   const regenerate=page.getByRole('button',{name:'调整描述后重新生成',exact:true});
   const consent=page.getByRole('checkbox',{name:/我了解照片/});
   await consent.uncheck();
@@ -1226,6 +1249,7 @@ await record('ai_character_confirmation_blocks_actions',async()=>{
   await page.getByPlaceholder('例如：糖宝、奶茶').fill('改名不重生成');
   const afterName=await page.evaluate(()=>window.__review.generations);
   await confirmAICharacter(page);
+  await confirmAISample(page);
   await page.locator('.companion-title').waitFor({timeout:15000});
   const done=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length}));
   return {passed:first.generations===1&&first.saves===0&&first.review.includes('v1')&&second.generations===2&&second.review.includes('v2')&&second.review.includes('旧角色版本已保留 1 个')&&afterName===beforeName&&done.generations===8&&done.saves===1&&done.pets===1&&errors.length===0,first,second,beforeName,afterName,done,errors};
@@ -1238,6 +1262,7 @@ await record('ai_show_failure_retries_display_only',async()=>{
   await page.evaluate(()=>{window.__review.failPreference=true;});
   await generateCharacterReview(page);
   await confirmAICharacter(page);
+  await confirmAISample(page);
   await page.locator('.toast-message.error').filter({hasText:'暂时没能显示'}).waitFor();
   const read=()=>page.evaluate(async()=>{const s=await import('/src/storage.ts');return {pets:(await s.loadAllPets()).length,generations:window.__review.generations,saves:window.__review.saves,shows:window.__review.calls.filter(c=>c.cmd==='update_native_pet_preferences'&&c.request?.kind==='show').length,visible:window.__review.native.visible,toasts:[...document.querySelectorAll('.toast-message')].map(node=>node.textContent)};});
   const failed=await read();
@@ -1700,6 +1725,7 @@ await record('workshop_long_task_survives_page_switch',async()=>{
   await page.evaluate(()=>{window.__review.generationDelay=250;});
   await generateCharacterReview(page);
   await confirmAICharacter(page);
+  await confirmAISample(page);
   await page.waitForTimeout(120);
   await page.getByRole('button',{name:'陪伴',exact:true}).click();
   await page.waitForTimeout(180);

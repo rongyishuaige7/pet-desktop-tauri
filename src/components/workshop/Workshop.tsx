@@ -58,7 +58,12 @@ interface WorkshopProps {
     revision: number;
     history: string[];
   } | null;
+  aiSampleReview: {
+    actions: ActionFrameSet;
+    inputSignature: string;
+  } | null;
   onConfirmAICharacter: () => Promise<void> | void;
+  onConfirmAISample: () => Promise<void> | void;
   onRegenerateAICharacter: () => Promise<void> | void;
   onGenerateAI: () => Promise<void>;
   onCancelAI: () => void;
@@ -115,7 +120,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
   generationTasks,
   onResumeGenerationTask,
   aiCharacterReview,
+  aiSampleReview,
   onConfirmAICharacter,
+  onConfirmAISample,
   onRegenerateAICharacter,
   onGenerateAI,
   onCancelAI
@@ -536,7 +543,44 @@ export const Workshop: React.FC<WorkshopProps> = ({
               </div>
             )}
 
-            {aiCharacterReview && (
+            {aiSampleReview && (
+              <div className="ai-sample-review">
+                <div className="generation-task-head">
+                  <strong>确认试动作（idle）</strong>
+                  <span>确认后生成其余五个动作；已确认的 idle 不会重复生成。</span>
+                </div>
+                <div className="ai-sample-frames">
+                  {aiSampleReview.actions.idle.map((src, index) => (
+                    <img key={`${index}-${src.slice(0, 24)}`} src={src} alt={`idle 帧 ${index + 1}`} />
+                  ))}
+                </div>
+                <div className="ai-character-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy || !aiConsent}
+                    onClick={() => void onConfirmAISample()}
+                  >
+                    {aiRunning ? "生成其余动作中..." : "确认试动作并生成其余动作"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={busy || !aiConsent}
+                    onClick={() => void onRegenerateAICharacter()}
+                  >
+                    重新生成角色
+                  </button>
+                  {aiRunning && !aiCommitting && (
+                    <button type="button" className="btn-secondary" onClick={onCancelAI}>
+                      取消
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!aiSampleReview && aiCharacterReview && (
               <div className="ai-character-review">
                 <div className="generation-task-head">
                   <strong>确认角色版本 v{aiCharacterReview.revision}</strong>
@@ -562,7 +606,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                     disabled={busy || !aiConsent}
                     onClick={() => void onConfirmAICharacter()}
                   >
-                    {aiRunning ? "动作生成中..." : "确认角色并生成动作"}
+                    {aiRunning ? "试动作生成中..." : "确认角色并生成试动作"}
                   </button>
                   <button
                     type="button"
@@ -673,7 +717,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 type="button"
                 className="btn-primary"
                 onClick={onGenerateAI}
-                disabled={busy || !isTauri || !aiConsent || Boolean(aiCharacterReview)}
+                disabled={busy || !isTauri || !aiConsent || Boolean(aiCharacterReview) || Boolean(aiSampleReview)}
               >
                 {aiCommitting
                   ? "完成入住中..."

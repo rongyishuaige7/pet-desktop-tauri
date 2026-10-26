@@ -240,6 +240,13 @@
 - 离开装配页时立即补存待保存内容；若旧保存仍在途，先等待其结束，再独立保存最新内容，不依赖装配页自动保存 effect。离页补存作为可等待的流程登记；正式提交/丢弃会先等待补存和在途保存结束，再读取 revision，避免补存递增 revision 后提交仍带旧版本而误报冲突。丢弃草稿后的首笔编辑会清除暂停/抑制标记，立即重新启动自动保存。草稿保存失败（模拟配额/磁盘）显示“未保存”，保留本地输入和上一版草稿，恢复后可继续保存。
 - 真实双窗口冲突已用同一浏览上下文的两页面回归覆盖：乙窗口保存后记录 revision，甲窗口旧 revision 保存返回冲突并保留本地输入，冲突后 revision 严格保持不变。草稿帧改为逐帧 Blob 存入 IndexedDB（读取时转回 data URL，兼容旧 manualFrames 记录），不再把整组 data URL 直接写入草稿对象。冲突结果收窄为不含 manualFrames 的摘要，避免原始存储记录被强转成完整草稿；图片 Blob 仅在实际读取二进制时解码，不再先做一次文本解码。Blob 冲突摘要与图片解码收尾已复核关闭。真实磁盘配额未实测；用户于 2026-10-26 接受模拟故障证据并收口 A04 自动化范围，不声称真实配额通过。原子提交修复 CI：[40165126275](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40165126275) 通过；提交后同步修复 CI：[40166707033](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40166707033) 通过；加载后选择复核 CI：[40178502111](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40178502111) 通过；attach 失败过期回滚修复 CI：[40179624537](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40179624537) 通过；选择读取失败不回滚 CI：[40180764347](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40180764347) 通过；离开补存/保存失败 CI：[40185807275](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40185807275) 通过；在途离页/丢弃首笔编辑 CI：[40187367744](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40187367744) 通过；离页补存/提交串行化 CI：[40191775128](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40191775128) 通过；待补存返回提交回归 CI：[40201710277](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40201710277) 通过；回归灵敏度修复 CI：[40203911678](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40203911678) 通过；双页面冲突回归 CI：[40206009148](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40206009148) 通过；精确 revision 断言 CI：[40207792121](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40207792121) 通过；Blob 草稿存储 CI：[40249703906](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40249703906) 通过；冲突摘要/图片解码收尾 CI：[40264210408](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40264210408) 通过。CI：[40092982191](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40092982191) 通过。
 
+## v0.5 G03 试动作与整套（2026-10-26，部分）
+
+- 角色确认后先生成 idle 五帧并停在试动作确认页，确认前不生成其余动作；确认后复用已完成的 idle，只生成 sit/sleep/happy/walk/jump。
+- 任务阶段新增 sampleGenerating/sampleReview，随后进入 actionsGenerating；试动作失败/取消保留确认页，可再次确认重试；试动作页可重新生成角色，重新生成会清空动作缓存。
+- 验证：67 项 Rust 测试、145 项前端单元测试、127 个隔离浏览器流程；新增“角色确认后只发 idle、确认试动作后共 7 次请求、保存 1 次”回归。
+- 未完成：逐动作请求回执/attemptId、已发送未落盘的 uncertain 状态、提交幂等故障注入、任务清理与引用检查。G03 仍为部分完成。
+
 ## v0.5 G02 角色确认（2026-10-26，部分）
 
 - AI 生成拆成 `generateCharacter` 与 `generateActionPack`：先生成角色图并停在确认页，确认前不发出任何动作请求。

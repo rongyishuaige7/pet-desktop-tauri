@@ -55,6 +55,13 @@ export interface GeneratedCharacter {
   characterUrl: string;
 }
 export interface GeneratedFramePack { actions: ActionFrameSet; characterImage: string; frameRoot: string }
+export interface GenerateActionPackOptions
+  extends GenerateFramePackOptions,
+    Omit<GeneratedCharacter, "referenceUrl"> {
+  referenceUrl?: string;
+  actionIds?: PetAction[];
+  save?: boolean;
+}
 export class GenerationCancelled extends Error {
   constructor() { super("生成已取消"); this.name = "GenerationCancelled"; }
 }
@@ -202,7 +209,7 @@ export async function generateCharacter(options: GenerateCharacterOptions): Prom
 }
 
 export async function generateActionPack(
-  options: GenerateFramePackOptions & Omit<GeneratedCharacter, "referenceUrl"> & { referenceUrl?: string }
+  options: GenerateActionPackOptions
 ): Promise<GeneratedFramePack> {
   const { apiKey, uploadUrl } = validateBase(options);
   const progress = (message: string) => options.onProgress?.(message);
@@ -219,7 +226,8 @@ export async function generateActionPack(
   const mode = options.mode ?? "sheet";
   const transparent = options.removeBackground ?? true;
   ensureNotCancelled(options.isCancelled);
-  for (const { id } of PET_ACTIONS) {
+  const requested = new Set(options.actionIds ?? PET_ACTIONS.map(({ id }) => id));
+  for (const { id } of PET_ACTIONS.filter(({ id }) => requested.has(id))) {
     if (state.actions[id].length === FRAMES_PER_ACTION) continue;
     try {
       const cleaned = state.cleanedFrames[id];
@@ -275,6 +283,13 @@ export async function generateActionPack(
     }
   }
   ensureNotCancelled(options.isCancelled);
+  if (options.save === false) {
+    return {
+      actions: state.actions,
+      characterImage: options.characterImage,
+      frameRoot: state.frameRoot ?? ""
+    };
+  }
   if (!state.frameRoot) {
     progress("写入本地帧包...");
     const saved = await invoke<SavedManualFramePack>("save_manual_frame_pack", {
@@ -288,6 +303,22 @@ export async function generateActionPack(
     characterImage: options.characterImage,
     frameRoot: state.frameRoot
   };
+}
+
+export async function generateIdleSample(
+  options: GenerateActionPackOptions
+): Promise<GeneratedFramePack> {
+  return generateActionPack({ ...options, actionIds: ["idle"], save: false });
+}
+
+export async function generateRemainingActions(
+  options: GenerateActionPackOptions
+): Promise<GeneratedFramePack> {
+  return generateActionPack({
+    ...options,
+    actionIds: ["sit", "sleep", "happy", "walk", "jump"],
+    save: true
+  });
 }
 
 /** Legacy one-shot flow used by non-staged callers. */
