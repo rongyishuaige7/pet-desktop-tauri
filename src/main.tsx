@@ -10,7 +10,7 @@ import {
   PRESET_FRAME_DIR_STORAGE,
   UPLOAD_URL_STORAGE
 } from "./config";
-import { createGenerationCheckpoint, generatePetFramePack, GenerationCancelled } from "./ai-generation";
+import { createGenerationCheckpoint, generateActionPack, generateCharacter, GenerationCancelled } from "./ai-generation";
 import {
   GENERATION_STAGE_LABELS,
   claimGenerationTask,
@@ -336,7 +336,14 @@ function StudioApp() {
   const [aiLog, setAiLog] = useState<string[]>([]);
   const [aiConsent, setAiConsent] = useState(false);
   const [generationTasks, setGenerationTasks] = useState<GenerationTaskSummary[]>([]);
+  const [aiCharacterReview, setAiCharacterReview] = useState<{
+    image: string;
+    reference: string;
+    revision: number;
+    history: string[];
+  } | null>(null);
   const activeGenerationTaskRef = useRef<GenerationTask | null>(null);
+  const aiCharacterUrlRef = useRef("");
   const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
   const aiCheckpointRef = useRef(createGenerationCheckpoint());
 
@@ -2589,18 +2596,151 @@ function StudioApp() {
         generationTask,
         "characterGenerating"
       );
-      const result = await generatePetFramePack({
+      const character = await generateCharacter({
         apiKey,
         uploadUrl,
         referencePhoto: referencePhoto ?? "",
-        petName: name,
         species,
         appearanceNotes,
         checkpoint: aiCheckpointRef.current,
         onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
         isCancelled: () => cancelToken.cancelled
       });
+      if (cancelToken.cancelled) throw new GenerationCancelled();
+      aiCharacterUrlRef.current = character.characterUrl;
+      const revision = generationTask.characterRevision + 1;
+      generationTask = await advanceGenerationTask(
+        generationTask,
+        "characterReview",
+        {
+          characterRevision: revision,
+          confirmedCharacterRevision: null
+        }
+      );
+      setAiCharacterReview((previous) => ({
+        image: character.characterImage,
+        reference: referencePhoto ?? "",
+        revision,
+        history: previous ? [...previous.history, previous.image] : []
+      }));
+      setCanResumeAI(false);
+    } catch (err) {
+      if (generationTask) {
+        await advanceGenerationTask(
+          generationTask,
+          err instanceof GenerationCancelled ? "interrupted" : "failed"
+        );
+      }
+      setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
+      if (err instanceof GenerationCancelled) {
+        showToast("角色生成已取消，可以稍后重新生成。", "info");
+      } else {
+        showToast(`角色生成失败：${formatError(err)}`, "error");
+      }
+    } finally {
+      setAiRunning(false);
+      setAiCommitting(false);
+      aiCancelRef.current = null;
+    }
+  }
 
+  async function handleRegenerateAICharacter() {
+    if (aiCancelRef.current || isLoading || !aiCharacterReview) return;
+    setAiLog([]);
+    const cancelToken = { cancelled: false, committing: false };
+    aiCancelRef.current = cancelToken;
+    setAiRunning(true);
+    let generationTask: GenerationTask | null = activeGenerationTaskRef.current;
+
+    try {
+      if (!generationTask) throw new Error("当前制作任务已失效，请重新开始");
+      generationTask = await advanceGenerationTask(
+        generationTask,
+        "characterGenerating"
+      );
+      const character = await generateCharacter({
+        apiKey,
+        uploadUrl,
+        referencePhoto: referencePhoto ?? "",
+        species,
+        appearanceNotes,
+        checkpoint: aiCheckpointRef.current,
+        forceNewCharacter: true,
+        onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
+        isCancelled: () => cancelToken.cancelled
+      });
+      if (cancelToken.cancelled) throw new GenerationCancelled();
+      aiCharacterUrlRef.current = character.characterUrl;
+      const revision = generationTask.characterRevision + 1;
+      generationTask = await advanceGenerationTask(
+        generationTask,
+        "characterReview",
+        {
+          characterRevision: revision,
+          confirmedCharacterRevision: null
+        }
+      );
+      setAiCharacterReview((previous) => ({
+        image: character.characterImage,
+        reference: referencePhoto ?? "",
+        revision,
+        history: previous ? [...previous.history, previous.image] : []
+      }));
+    } catch (err) {
+      if (generationTask) {
+        await advanceGenerationTask(
+          generationTask,
+          err instanceof GenerationCancelled ? "interrupted" : "failed"
+        );
+      }
+      if (err instanceof GenerationCancelled) {
+        showToast("角色重新生成已取消，旧版本仍保留。", "info");
+      } else {
+        showToast(`角色重新生成失败：${formatError(err)}`, "error");
+      }
+    } finally {
+      setAiRunning(false);
+      setAiCommitting(false);
+      aiCancelRef.current = null;
+    }
+  }
+
+  async function handleConfirmAICharacter() {
+    if (
+      !isTauri ||
+      aiCancelRef.current ||
+      isLoading ||
+      !aiCharacterReview ||
+      !aiCharacterUrlRef.current
+    ) {
+      return;
+    }
+    setAiLog([]);
+    const cancelToken = { cancelled: false, committing: false };
+    aiCancelRef.current = cancelToken;
+    setAiRunning(true);
+    let generationTask: GenerationTask | null = activeGenerationTaskRef.current;
+
+    try {
+      if (!generationTask) throw new Error("当前制作任务已失效，请重新开始");
+      generationTask = await advanceGenerationTask(
+        generationTask,
+        "actionsGenerating",
+        { confirmedCharacterRevision: aiCharacterReview.revision }
+      );
+      const result = await generateActionPack({
+        apiKey,
+        uploadUrl,
+        referencePhoto: referencePhoto ?? "",
+        petName: name,
+        species,
+        appearanceNotes,
+        characterUrl: aiCharacterUrlRef.current,
+        characterImage: aiCharacterReview.image,
+        checkpoint: aiCheckpointRef.current,
+        onProgress: (msg) => setAiLog((prev) => [...prev, msg]),
+        isCancelled: () => cancelToken.cancelled
+      });
       if (cancelToken.cancelled) throw new GenerationCancelled();
       generationTask = await advanceGenerationTask(generationTask, "readyToSave");
       cancelToken.committing = true;
@@ -2624,24 +2764,23 @@ function StudioApp() {
       activeGenerationTaskRef.current = null;
       await refreshGenerationTasks();
       aiCheckpointRef.current = createGenerationCheckpoint();
+      aiCharacterUrlRef.current = "";
+      setAiCharacterReview(null);
       setCanResumeAI(false);
       announceActivation(activation, `AI 宠物「${newPet.name}」制作完成并已入住桌面！`);
       setCurrentTab("stage");
     } catch (err) {
       if (generationTask) {
-        generationTask = await advanceGenerationTask(
+        await advanceGenerationTask(
           generationTask,
           err instanceof GenerationCancelled ? "interrupted" : "failed"
         );
-        await releaseGenerationTask(generationTask.taskId).catch(() => {});
-        activeGenerationTaskRef.current = null;
-        await refreshGenerationTasks();
       }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
       if (err instanceof GenerationCancelled) {
-        showToast("AI 生成已取消，已完成的图片可在本次会话内继续使用", "info");
+        showToast("动作生成已取消，角色确认仍保留，可以再次生成动作。", "info");
       } else {
-        showToast(`AI 生成失败：${formatError(err)}`, "error");
+        showToast(`动作生成失败：${formatError(err)}`, "error");
       }
     } finally {
       setAiRunning(false);
@@ -3320,6 +3459,9 @@ function StudioApp() {
                   onChangeAiConsent={setAiConsent}
                   generationTasks={generationTasks}
                   onResumeGenerationTask={handleResumeGenerationTask}
+                  aiCharacterReview={aiCharacterReview}
+                  onConfirmAICharacter={handleConfirmAICharacter}
+                  onRegenerateAICharacter={handleRegenerateAICharacter}
                   onGenerateAI={handleGenerateAI}
                   onCancelAI={handleCancelAI}
                 />

@@ -93,6 +93,15 @@
 - 托盘修复 `b44f9ed` 的 macOS / Linux CI 通过（[运行 39917162018](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/39917162018)）。
 - 结论：C06 未通过，不能标记可发布；详见[验收清单 C06 记录](v0.3-acceptance.md#51-c06-macos-执行记录2026-10-23)。
 
+## v0.5 G02 当前记录（2026-10-26，部分）
+
+- 角色图与动作生成拆分；确认页显示原照片/角色图和版本，确认前动作请求为零。
+- 调整描述可重新生成角色，旧版本保留在会话历史；改名不触发付费重做。
+- 任务阶段 characterGenerating → characterReview → actionsGenerating → readyToSave → committed，确认时记录 confirmedCharacterRevision。
+- 动作失败/取消保留角色确认，可再次确认重试。
+- 验证：67 项 Rust、145 项前端单元测试、122 个隔离浏览器流程。
+- 未完成：角色/动作媒体持久化与重启恢复预览。
+
 ## v0.5 G01 当前记录（2026-10-26，后端切片）
 
 - Rust 持久任务存储 `generation-tasks/<taskId>/task.json`，schemaVersion=1，原子写入。

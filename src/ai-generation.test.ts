@@ -160,10 +160,18 @@ describe("AI frame pack generation", () => {
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(36);
   });
 
-  it("invalidates cached images when the generation inputs change", async () => {
+  it("does not invalidate cached images for a display-name change", async () => {
     const checkpoint = createGenerationCheckpoint();
     await generatePetFramePack({ ...options, checkpoint });
     await generatePetFramePack({ ...options, checkpoint, petName: "另一只" });
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(31);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "save_manual_frame_pack")).toHaveLength(1);
+  });
+
+  it("invalidates cached images when the appearance inputs change", async () => {
+    const checkpoint = createGenerationCheckpoint();
+    await generatePetFramePack({ ...options, checkpoint });
+    await generatePetFramePack({ ...options, checkpoint, appearanceNotes: "戴红围巾" });
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_minimax_image")).toHaveLength(62);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "save_manual_frame_pack")).toHaveLength(2);
   });

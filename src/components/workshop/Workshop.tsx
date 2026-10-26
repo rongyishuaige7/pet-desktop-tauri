@@ -52,6 +52,14 @@ interface WorkshopProps {
   onChangeAiConsent: (value: boolean) => void;
   generationTasks: GenerationTaskSummary[];
   onResumeGenerationTask: (taskId: string) => Promise<void> | void;
+  aiCharacterReview: {
+    image: string;
+    reference: string;
+    revision: number;
+    history: string[];
+  } | null;
+  onConfirmAICharacter: () => Promise<void> | void;
+  onRegenerateAICharacter: () => Promise<void> | void;
   onGenerateAI: () => Promise<void>;
   onCancelAI: () => void;
 }
@@ -106,6 +114,9 @@ export const Workshop: React.FC<WorkshopProps> = ({
   onChangeAiConsent,
   generationTasks,
   onResumeGenerationTask,
+  aiCharacterReview,
+  onConfirmAICharacter,
+  onRegenerateAICharacter,
   onGenerateAI,
   onCancelAI
 }) => {
@@ -525,6 +536,51 @@ export const Workshop: React.FC<WorkshopProps> = ({
               </div>
             )}
 
+            {aiCharacterReview && (
+              <div className="ai-character-review">
+                <div className="generation-task-head">
+                  <strong>确认角色版本 v{aiCharacterReview.revision}</strong>
+                  <span>确认前不会生成动作；改名不会触发重新生成。</span>
+                </div>
+                <div className="ai-character-compare">
+                  <figure>
+                    <img src={aiCharacterReview.reference} alt="原始宠物照片" />
+                    <figcaption>原照片</figcaption>
+                  </figure>
+                  <figure>
+                    <img src={aiCharacterReview.image} alt={`角色版本 v${aiCharacterReview.revision}`} />
+                    <figcaption>角色图</figcaption>
+                  </figure>
+                </div>
+                {aiCharacterReview.history.length > 0 && (
+                  <p>旧角色版本已保留 {aiCharacterReview.history.length} 个，可继续调整描述后重新生成。</p>
+                )}
+                <div className="ai-character-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy}
+                    onClick={() => void onConfirmAICharacter()}
+                  >
+                    {aiRunning ? "动作生成中..." : "确认角色并生成动作"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={busy}
+                    onClick={() => void onRegenerateAICharacter()}
+                  >
+                    调整描述后重新生成
+                  </button>
+                  {aiRunning && !aiCommitting && (
+                    <button type="button" className="btn-secondary" onClick={onCancelAI}>
+                      取消
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="ai-service-config">
               <div className="generation-task-head">
                 <strong>服务配置</strong>
@@ -617,11 +673,17 @@ export const Workshop: React.FC<WorkshopProps> = ({
                 type="button"
                 className="btn-primary"
                 onClick={onGenerateAI}
-                disabled={busy || !isTauri || !aiConsent}
+                disabled={busy || !isTauri || !aiConsent || Boolean(aiCharacterReview)}
               >
-                {aiCommitting ? "完成入住中..." : aiRunning ? "AI 生成中（请耐心等待）..." : canResumeAI ? "继续上次生成" : "开始 AI 自动生成全套帧包"}
+                {aiCommitting
+                  ? "完成入住中..."
+                  : aiRunning
+                    ? "生成中（请耐心等待）..."
+                    : aiCharacterReview
+                      ? "请先确认角色"
+                      : "生成角色图"}
               </button>
-              {aiRunning && !aiCommitting && (
+              {aiRunning && !aiCommitting && !aiCharacterReview && (
                 <button type="button" className="btn-secondary" onClick={onCancelAI}>
                   取消
                 </button>
