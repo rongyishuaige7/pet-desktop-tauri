@@ -930,6 +930,38 @@ describe("recent removals", () => {
     expect((await loadPet())?.name).toBe("甲窗口伙伴");
   });
 
+  it("stores draft frames as Blobs instead of data-url strings", async () => {
+    const base = {
+      schemaVersion: 1 as const,
+      draftId: "manual-assembly",
+      pendingPetId: "pending-blob",
+      name: "Blob 草稿",
+      species: "cat" as const,
+      manualFrames: Object.fromEntries(
+        PET_ACTIONS.map(({ id }) => [id, [`data:text/plain;base64,${btoa(id)}`]])
+      ) as ActionFrameSet
+    };
+    await saveCreationDraft(base, null);
+    const stored = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const req = indexedDB.open("desktop-sticker-pet-db", 4);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(["creation_drafts"], "readonly");
+        const get = tx.objectStore("creation_drafts").get("manual-assembly");
+        get.onsuccess = () => {
+          db.close();
+          resolve(get.result as Record<string, unknown>);
+        };
+        get.onerror = () => reject(get.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+    expect(stored.manualFrames).toBeUndefined();
+    const frameBlobs = stored.frameBlobs as Record<string, Blob[]>;
+    expect(frameBlobs.idle[0]).toBeInstanceOf(Blob);
+    expect(await blobText(frameBlobs.idle[0])).toBe("idle");
+  });
+
   it("saves a profile without changing the active selection", async () => {
     await savePet(pet("A"));
     const revision = await loadSelectionRevision();
@@ -964,3 +996,7 @@ describe("recent removals", () => {
     expect(await loadAllPets()).toEqual([]);
   });
 });
+
+async function blobText(blob: Blob): Promise<string> {
+  return blob.text();
+}

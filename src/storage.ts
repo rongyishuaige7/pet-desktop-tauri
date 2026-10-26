@@ -182,13 +182,60 @@ export async function savePet(pet: PetProfile, _broadcastPet: PetProfile = pet) 
   notifyPetChanged();
 }
 
+interface StoredCreationDraft extends Omit<CreationDraft, "manualFrames"> {
+  frameBlobs?: Record<string, Blob[]>;
+  manualFrames?: ActionFrameSet;
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  if (!dataUrl.startsWith("data:")) {
+    return new Blob([dataUrl], { type: "text/plain" });
+  }
+  const match = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(dataUrl);
+  if (!match) return new Blob([dataUrl], { type: "text/plain" });
+  const mime = match[1] || "application/octet-stream";
+  const payload = match[3];
+  let binary = "";
+  if (match[2]) {
+    binary = atob(payload);
+  } else {
+    binary = decodeURIComponent(payload);
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const text = await blob.text();
+  if (blob.type === "text/plain" && !text.startsWith("data:")) return text;
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return `data:${blob.type || "application/octet-stream"};base64,${btoa(binary)}`;
+}
+
 export async function loadCreationDraft(draftId: string): Promise<CreationDraft | null> {
   const delay = (globalThis as { __review?: { draftLoadDelay?: number } }).__review?.draftLoadDelay;
   if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-  return transaction<CreationDraft | null>("readonly", (tx, done) => {
+  const stored = await transaction<StoredCreationDraft | null>("readonly", (tx, done) => {
     const req = tx.objectStore("creation_drafts").get(draftId);
-    req.onsuccess = () => done((req.result as CreationDraft | undefined) ?? null);
+    req.onsuccess = () =>
+      done((req.result as StoredCreationDraft | undefined) ?? null);
   });
+  if (!stored) return null;
+  if (stored.manualFrames) return stored as CreationDraft;
+  const frames = {} as ActionFrameSet;
+  for (const { id } of PET_ACTIONS) {
+    const blobs = stored.frameBlobs?.[id] ?? [];
+    frames[id] = await Promise.all(blobs.map(blobToDataUrl));
+  }
+  return { ...stored, manualFrames: frames } as unknown as CreationDraft;
 }
 
 export type SaveDraftResult =
@@ -223,15 +270,28 @@ export async function saveCreationDraft(
   }
   const delay = review?.draftSaveDelay;
   if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+  const frameBlobs = Object.fromEntries(
+    await Promise.all(
+      PET_ACTIONS.map(async ({ id }) => [
+        id,
+        await Promise.all((draft.manualFrames[id] ?? []).map(dataUrlToBlob))
+      ])
+    )
+  ) as Record<string, Blob[]>;
+  const stored = {
+    ...draft,
+    frameBlobs
+  } as Omit<StoredCreationDraft, "revision" | "updatedAt">;
+  delete (stored as { manualFrames?: ActionFrameSet }).manualFrames;
   return transaction<SaveDraftResult>("readwrite", (tx, done) => {
     const store = tx.objectStore("creation_drafts");
     const req = store.get(draft.draftId);
     req.onsuccess = () => {
-      const current = req.result as CreationDraft | undefined;
+      const current = req.result as StoredCreationDraft | undefined;
       const currentRevision = current?.revision ?? 0;
       if (expectedRevision === null) {
         if (current) {
-          done({ status: "conflict", draft: current });
+          done({ status: "conflict", draft: current as unknown as CreationDraft });
           return;
         }
       } else if (
@@ -239,16 +299,19 @@ export async function saveCreationDraft(
         (expectedPendingPetId !== undefined &&
           current?.pendingPetId !== expectedPendingPetId)
       ) {
-        done({ status: "conflict", draft: current ?? null });
+        done({ status: "conflict", draft: (current ?? null) as unknown as CreationDraft | null });
         return;
       }
-      const next: CreationDraft = {
-        ...draft,
+      const next: StoredCreationDraft = {
+        ...stored,
         revision: currentRevision + 1,
         updatedAt: new Date().toISOString()
       };
       store.put(next);
-      done({ status: "saved", draft: next });
+      done({
+        status: "saved",
+        draft: { ...next, manualFrames: draft.manualFrames } as CreationDraft
+      });
     };
   });
 }
@@ -322,7 +385,7 @@ export async function deleteCreationDraft(
     const store = tx.objectStore("creation_drafts");
     const req = store.get(draftId);
     req.onsuccess = () => {
-      const current = req.result as CreationDraft | undefined;
+      const current = req.result as StoredCreationDraft | undefined;
       if (expectedRevision !== undefined) {
         if (
           !current ||
