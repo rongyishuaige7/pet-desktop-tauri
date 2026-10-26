@@ -151,7 +151,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      return task;
     }
     if(cmd==='claim_generation_task')return {status:'claimed',task:{...(state.activeGenerationTask??{taskId:args.taskId,pendingPetId:'mock-pending',stage:'draft'}),ownerSession:args.ownerSession,revision:2,updatedAt:'2026-10-26T00:00:00Z'}};
-    if(cmd==='update_generation_task'){const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};state.activeGenerationTask=task;return task;}
+    if(cmd==='update_generation_task'){if(state.failTaskUpdate){state.failTaskUpdate=false;throw new Error('TASK_OWNER：当前窗口没有执行权');}const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};state.activeGenerationTask=task;return task;}
     if(cmd==='release_generation_task')return null;
     if(cmd==='load_generation_task')return state.activeGenerationTask??null;
     if(cmd==='save_manual_frame_pack'){
@@ -1153,6 +1153,64 @@ await record('assembly_show_failure_retries_display_only',async()=>{
   await page.waitForFunction(()=>window.__review.native.visible===true);
   const retried=await read();
   return {passed:failed.pets===1&&failed.saves===1&&failed.shows===1&&failed.visible===false&&!failed.toasts.some(text=>text?.includes('同步至桌面'))&&retried.pets===1&&retried.saves===1&&retried.shows===2&&retried.visible===true&&errors.length===0,failed,retried,errors};
+ }finally{await context.close();}
+});
+await record('ai_stops_when_task_update_fails',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.failTaskUpdate=true;});
+  await page.getByRole('button',{name:'生成角色图',exact:true}).click();
+  await page.locator('.toast-message.error').filter({hasText:'角色生成失败'}).waitFor();
+  const state=await page.evaluate(()=>({generations:window.__review.generations,review:Boolean(document.querySelector('.ai-character-review')),updates:window.__review.calls.filter(c=>c.cmd==='update_generation_task').map(c=>c.stage)}));
+  return {passed:state.generations===0&&!state.review&&state.updates.includes('characterGenerating')&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('ai_regenerated_character_invalidates_action_cache',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await page.evaluate(()=>{window.__review.failGenerationAt=3;});
+  await generateCharacterReview(page);
+  await confirmAICharacter(page);
+  await page.locator('.toast-message.error').filter({hasText:'动作生成失败'}).first().waitFor();
+  await page.getByRole('button',{name:'调整描述后重新生成',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.ai-character-review')?.textContent?.includes('v2'),null,{timeout:10000});
+  await confirmAICharacter(page);
+  await page.locator('.companion-title').waitFor({timeout:15000});
+  const state=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves}));
+  return {passed:state.generations===10&&state.saves===1&&errors.length===0,state,errors};
+ }finally{await context.close();}
+});
+await record('ai_photo_change_invalidates_character_review',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=80;const x=c.getContext('2d');x.fillStyle='#1f6f8b';x.fillRect(10,10,60,60);return c.toDataURL().split(',')[1];});
+  await page.locator('input[type=file]').setInputFiles({name:'new-reference.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await page.waitForFunction(()=>!document.querySelector('.ai-character-review'));
+  const afterChange=await page.evaluate(()=>({review:Boolean(document.querySelector('.ai-character-review')),generations:window.__review.generations}));
+  await generateCharacterReview(page);
+  await confirmAICharacter(page);
+  await page.locator('.companion-title').waitFor({timeout:15000});
+  const done=await page.evaluate(()=>({generations:window.__review.generations,pets:window.__review.saves}));
+  return {passed:!afterChange.review&&afterChange.generations===1&&done.generations===8&&done.pets===1&&errors.length===0,afterChange,done,errors};
+ }finally{await context.close();}
+});
+await record('ai_consent_recheck_disables_confirm',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  const confirm=page.getByRole('button',{name:'确认角色并生成动作',exact:true});
+  const regenerate=page.getByRole('button',{name:'调整描述后重新生成',exact:true});
+  const consent=page.getByRole('checkbox',{name:/我了解照片/});
+  await consent.uncheck();
+  const disabled=await confirm.isDisabled()&&await regenerate.isDisabled();
+  await consent.check();
+  const enabled=!(await confirm.isDisabled());
+  return {passed:disabled&&enabled&&errors.length===0,disabled,enabled,errors};
  }finally{await context.close();}
 });
 await record('ai_character_confirmation_blocks_actions',async()=>{

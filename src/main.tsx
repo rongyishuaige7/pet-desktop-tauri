@@ -341,6 +341,7 @@ function StudioApp() {
     reference: string;
     revision: number;
     history: string[];
+    inputSignature: string;
   } | null>(null);
   const activeGenerationTaskRef = useRef<GenerationTask | null>(null);
   const aiCharacterUrlRef = useRef("");
@@ -533,7 +534,9 @@ function StudioApp() {
       aiCheckpointRef.current = createGenerationCheckpoint();
       setCanResumeAI(false);
     }
-  }, [name, species, uploadUrl, referencePhoto, appearanceNotes]);
+    aiCharacterUrlRef.current = "";
+    setAiCharacterReview(null);
+  }, [species, uploadUrl, referencePhoto, appearanceNotes]);
 
   useEffect(() => {
     if (!isTauri || currentTab !== "workshop" || workshopTask !== "ai") return;
@@ -2513,6 +2516,10 @@ function StudioApp() {
     }
   }
 
+  function aiInputSignature() {
+    return JSON.stringify([uploadUrl, referencePhoto, species, appearanceNotes]);
+  }
+
   async function ensureGenerationTask(): Promise<GenerationTask> {
     const existing = activeGenerationTaskRef.current;
     if (existing) return existing;
@@ -2548,17 +2555,13 @@ function StudioApp() {
     stage: string,
     extra: Partial<GenerationTask> = {}
   ): Promise<GenerationTask> {
-    try {
-      const updated = await updateGenerationTask(
-        { ...task, stage, ...extra },
-        task.revision
-      );
-      activeGenerationTaskRef.current = updated;
-      await refreshGenerationTasks();
-      return updated;
-    } catch {
-      return task;
-    }
+    const updated = await updateGenerationTask(
+      { ...task, stage, ...extra },
+      task.revision
+    );
+    activeGenerationTaskRef.current = updated;
+    await refreshGenerationTasks();
+    return updated;
   }
 
   async function handleResumeGenerationTask(taskId: string) {
@@ -2582,6 +2585,10 @@ function StudioApp() {
       showToast("AI 生成需在桌面版环境中运行", "error");
       return;
     }
+    if (!aiConsent) {
+      showToast("请先确认照片用途和可能产生的生成费用", "error");
+      return;
+    }
     if (aiCancelRef.current || isLoading) return;
 
     setAiLog([]);
@@ -2589,6 +2596,7 @@ function StudioApp() {
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
     let generationTask: GenerationTask | null = null;
+    const inputSignature = aiInputSignature();
 
     try {
       generationTask = await ensureGenerationTask();
@@ -2607,6 +2615,9 @@ function StudioApp() {
         isCancelled: () => cancelToken.cancelled
       });
       if (cancelToken.cancelled) throw new GenerationCancelled();
+      if (inputSignature !== aiInputSignature()) {
+        throw new Error("照片或描述已变化，已丢弃本次角色结果，请重新生成");
+      }
       aiCharacterUrlRef.current = character.characterUrl;
       const revision = generationTask.characterRevision + 1;
       generationTask = await advanceGenerationTask(
@@ -2621,7 +2632,8 @@ function StudioApp() {
         image: character.characterImage,
         reference: referencePhoto ?? "",
         revision,
-        history: previous ? [...previous.history, previous.image] : []
+        history: previous ? [...previous.history, previous.image] : [],
+        inputSignature
       }));
       setCanResumeAI(false);
     } catch (err) {
@@ -2629,7 +2641,7 @@ function StudioApp() {
         await advanceGenerationTask(
           generationTask,
           err instanceof GenerationCancelled ? "interrupted" : "failed"
-        );
+        ).catch(() => {});
       }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
       if (err instanceof GenerationCancelled) {
@@ -2645,12 +2657,17 @@ function StudioApp() {
   }
 
   async function handleRegenerateAICharacter() {
+    if (!aiConsent) {
+      showToast("请先确认照片用途和可能产生的生成费用", "error");
+      return;
+    }
     if (aiCancelRef.current || isLoading || !aiCharacterReview) return;
     setAiLog([]);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
     let generationTask: GenerationTask | null = activeGenerationTaskRef.current;
+    const inputSignature = aiInputSignature();
 
     try {
       if (!generationTask) throw new Error("当前制作任务已失效，请重新开始");
@@ -2670,6 +2687,9 @@ function StudioApp() {
         isCancelled: () => cancelToken.cancelled
       });
       if (cancelToken.cancelled) throw new GenerationCancelled();
+      if (inputSignature !== aiInputSignature()) {
+        throw new Error("照片或描述已变化，已丢弃本次角色结果，请重新生成");
+      }
       aiCharacterUrlRef.current = character.characterUrl;
       const revision = generationTask.characterRevision + 1;
       generationTask = await advanceGenerationTask(
@@ -2684,14 +2704,15 @@ function StudioApp() {
         image: character.characterImage,
         reference: referencePhoto ?? "",
         revision,
-        history: previous ? [...previous.history, previous.image] : []
+        history: previous ? [...previous.history, previous.image] : [],
+        inputSignature
       }));
     } catch (err) {
       if (generationTask) {
         await advanceGenerationTask(
           generationTask,
           err instanceof GenerationCancelled ? "interrupted" : "failed"
-        );
+        ).catch(() => {});
       }
       if (err instanceof GenerationCancelled) {
         showToast("角色重新生成已取消，旧版本仍保留。", "info");
@@ -2706,6 +2727,10 @@ function StudioApp() {
   }
 
   async function handleConfirmAICharacter() {
+    if (!aiConsent) {
+      showToast("请先确认照片用途和可能产生的生成费用", "error");
+      return;
+    }
     if (
       !isTauri ||
       aiCancelRef.current ||
@@ -2715,11 +2740,18 @@ function StudioApp() {
     ) {
       return;
     }
+    if (aiCharacterReview.inputSignature !== aiInputSignature()) {
+      setAiCharacterReview(null);
+      aiCharacterUrlRef.current = "";
+      showToast("照片或描述已变化，请重新生成并确认角色", "error");
+      return;
+    }
     setAiLog([]);
     const cancelToken = { cancelled: false, committing: false };
     aiCancelRef.current = cancelToken;
     setAiRunning(true);
     let generationTask: GenerationTask | null = activeGenerationTaskRef.current;
+    const inputSignature = aiInputSignature();
 
     try {
       if (!generationTask) throw new Error("当前制作任务已失效，请重新开始");
@@ -2742,6 +2774,9 @@ function StudioApp() {
         isCancelled: () => cancelToken.cancelled
       });
       if (cancelToken.cancelled) throw new GenerationCancelled();
+      if (inputSignature !== aiInputSignature()) {
+        throw new Error("照片或描述已变化，已丢弃本次动作结果，请重新生成角色");
+      }
       generationTask = await advanceGenerationTask(generationTask, "readyToSave");
       cancelToken.committing = true;
       setAiCommitting(true);
@@ -2757,9 +2792,13 @@ function StudioApp() {
       });
 
       const activation = await activatePet(newPet, true);
-      generationTask = await advanceGenerationTask(generationTask, "committed", {
-        committedPetId: newPet.id
-      });
+      try {
+        generationTask = await advanceGenerationTask(generationTask, "committed", {
+          committedPetId: newPet.id
+        });
+      } catch {
+        showToast("伙伴已保存，但制作任务状态未能更新；桌面显示不受影响。", "info");
+      }
       await releaseGenerationTask(generationTask.taskId).catch(() => {});
       activeGenerationTaskRef.current = null;
       await refreshGenerationTasks();
@@ -2774,7 +2813,7 @@ function StudioApp() {
         await advanceGenerationTask(
           generationTask,
           err instanceof GenerationCancelled ? "interrupted" : "failed"
-        );
+        ).catch(() => {});
       }
       setCanResumeAI(Boolean(aiCheckpointRef.current.referenceUrl));
       if (err instanceof GenerationCancelled) {

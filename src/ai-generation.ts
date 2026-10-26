@@ -142,6 +142,11 @@ export async function generateCharacter(options: GenerateCharacterOptions): Prom
     state.characterRaw = undefined;
     state.characterImage = undefined;
     state.characterUrl = undefined;
+    state.sheets = {};
+    state.rawFrames = emptyActions();
+    state.cleanedFrames = emptyActions();
+    state.actions = emptyActions();
+    state.frameRoot = undefined;
   }
   ensureNotCancelled(options.isCancelled);
   if (!state.referenceUrl) {
@@ -206,6 +211,9 @@ export async function generateActionPack(
     throw new Error("角色版本已变化，请重新确认角色");
   }
   if (!options.characterUrl) throw new Error("请先生成并确认角色");
+  if (state.characterUrl && state.characterUrl !== options.characterUrl) {
+    throw new Error("角色版本已变化，请重新确认角色");
+  }
   state.characterUrl = options.characterUrl;
   state.characterImage = options.characterImage;
   const mode = options.mode ?? "sheet";

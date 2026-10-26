@@ -559,7 +559,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                   <button
                     type="button"
                     className="btn-primary"
-                    disabled={busy}
+                    disabled={busy || !aiConsent}
                     onClick={() => void onConfirmAICharacter()}
                   >
                     {aiRunning ? "动作生成中..." : "确认角色并生成动作"}
@@ -567,7 +567,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
                   <button
                     type="button"
                     className="btn-secondary"
-                    disabled={busy}
+                    disabled={busy || !aiConsent}
                     onClick={() => void onRegenerateAICharacter()}
                   >
                     调整描述后重新生成
