@@ -249,7 +249,7 @@
 - 请求回执：每次角色/动作图片请求生成唯一 attemptId，请求前写入 started 回执，响应后写 received，失败/取消写 uncertain；阶段更新使用最新任务 revision，回执写入失败会阻止后续请求。失败时若存在未完成回执，任务阶段标记 uncertain，界面提示“结果尚未确认；继续可能新增请求”。新增浏览器回归。验证：145 项前端单元测试、132 个隔离浏览器流程。
 - 修复：图片返回后先把 attemptId+图片放入候选 pendingRequest，再写 received；回执写入失败保留图片，重试补写回执并复用图片，不重复生成。started 写入完成后、网络请求前再次检查取消；未发送的取消写 cancelled，不标记 uncertain。新增两个回归。验证：145 项前端单元测试、134 个隔离浏览器流程。修复 CI：[40347169386](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40347169386) 通过。
 - 回执收尾：整套帧包成功写入本地后，把 received 回执统一标记 succeeded；回归确认 7 次请求各有唯一 attemptId 且最终均为 succeeded。验证：145 项前端单元测试、134 个隔离浏览器流程。
-修复：候选回执记录 attemptId；确认旧角色或放弃候选时把这些回执标记 abandoned，落盘成功只升级实际使用版本的回执。成功回执写入失败不再静默：保留已保存伙伴和 committed 阶段，提示“任务回执待同步”，制作页提供只补写元数据的“补写任务回执”。验证：145 项前端单元测试、135 个隔离浏览器流程。
+修复：候选回执记录 attemptId；确认旧角色或放弃候选时把这些回执标记 abandoned，落盘成功只升级实际使用版本的回执。成功回执写入失败不再静默：保留已保存伙伴和 committed 阶段，提示“任务回执待同步”，制作页提供只补写元数据的“补写任务回执”。验证：145 项前端单元测试、135 个隔离浏览器流程。修复 CI：[40465650977](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40465650977) 通过。
 - 未完成：提交幂等故障注入、任务清理与引用检查。
 - 修复：重新生成角色使用独立候选 checkpoint 和候选 URL/图片；只有 `characterReview` 阶段写入成功后才替换展示版本和生成上下文。阶段写入失败时旧确认页、旧 checkpoint 和旧角色引用保持不变。新增故障回归断言 v1 展示版本、确认版本与 idle 请求引用一致。验证：145 项前端单元测试、131 个隔离浏览器流程。修复 CI：[40327213285](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40327213285) 通过。
 - 修复：同任务/同输入的角色候选工作缓存独立保留；首次生成取消或角色图上传失败后，重试复用已收到的角色结果，只补处理/上传/阶段写入，不重复生成请求。阶段写入失败后重试也复用候选；输入变化、新任务或确认旧版本时丢弃候选。新增取消后重试、上传失败重试、阶段失败重试三个回归。修复 CI：[40331437977](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40331437977) 通过。
