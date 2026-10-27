@@ -159,6 +159,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
       state.receiptStartBlocked=false;
      }
      if(state.failReceiptReceived&&args.task?.receipts?.some(r=>r.status==='received')){state.failReceiptReceived=false;throw new Error('mock receipt write failed');}
+     if(state.failReceiptSucceeded&&args.task?.receipts?.some(r=>r.status==='succeeded')){state.failReceiptSucceeded=false;throw new Error('mock receipt sync failed');}
      if(state.failTaskUpdate||(state.failTaskUpdateStage&&args.task.stage===state.failTaskUpdateStage)){state.failTaskUpdate=false;state.failTaskUpdateStage=null;throw new Error('TASK_OWNER：当前窗口没有执行权');}
      const task={...args.task,revision:args.expectedRevision+1,ownerSession:args.ownerSession,updatedAt:'2026-10-26T00:00:00Z'};
      state.activeGenerationTask=task;return task;
@@ -1198,10 +1199,11 @@ await record('ai_failed_character_stage_update_keeps_old_context',async()=>{
   await page.locator('.toast-message.error').filter({hasText:'角色重新生成失败'}).waitFor();
   const afterFail=await page.evaluate(()=>({urls:window.__review.uploadUrls,review:document.querySelector('.ai-character-review')?.textContent??''}));
   await confirmAICharacter(page);
-  const idle=await page.evaluate(()=>({reference:window.__review.calls.filter(c=>c.cmd==='generate_minimax_image').at(-1)?.request?.referenceImageUrl,generations:window.__review.generations}));
+  const idle=await page.evaluate(()=>({reference:window.__review.calls.filter(c=>c.cmd==='generate_minimax_image').at(-1)?.request?.referenceImageUrl,generations:window.__review.generations,task:window.__review.activeGenerationTask}));
   const v1CharacterUrl=v1.urls[1];
   const v2CharacterUrl=afterFail.urls[afterFail.urls.length-1];
-  return {passed:afterFail.review.includes('v1')&&v1CharacterUrl!==v2CharacterUrl&&idle.reference===v1CharacterUrl&&idle.generations===3&&errors.length===0,v1,afterFail,v1CharacterUrl,v2CharacterUrl,idle,errors};
+  const characterReceipts=(idle.task?.receipts??[]).filter(r=>r.action==='character');
+  return {passed:afterFail.review.includes('v1')&&v1CharacterUrl!==v2CharacterUrl&&idle.reference===v1CharacterUrl&&idle.generations===3&&characterReceipts.some(r=>r.status==='abandoned')&&characterReceipts.filter(r=>r.status==='abandoned').length===1&&errors.length===0,v1,afterFail,v1CharacterUrl,v2CharacterUrl,idle,characterReceipts,errors};
  }finally{await context.close();}
 });
 await record('ai_cancelled_character_result_is_reused',async()=>{
@@ -1291,6 +1293,26 @@ await record('ai_cancel_while_started_receipt_is_blocked',async()=>{
   const state=await page.evaluate(()=>({generations:window.__review.generations,task:window.__review.activeGenerationTask,note:Boolean(document.querySelector('.ai-uncertain-note'))}));
   const cancelled=state.task?.receipts?.at(-1);
   return {passed:state.generations===0&&cancelled?.status==='cancelled'&&state.task?.stage==='interrupted'&&!state.note&&errors.length===0,state,cancelled,errors};
+ }finally{await context.close();}
+});
+await record('ai_receipt_sync_failure_keeps_saved_pet',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  await confirmAICharacter(page);
+  await page.evaluate(()=>{window.__review.failReceiptSucceeded=true;});
+  await confirmAISample(page);
+  await page.locator('.companion-title').waitFor({timeout:15000});
+  await openWorkshopTask(page,'用照片制作');
+  await page.locator('.ai-receipt-sync').waitFor();
+  const failed=await page.evaluate(async()=>({pets:(await (await import('/src/storage.ts')).loadAllPets()).length,task:window.__review.activeGenerationTask,pending:Boolean(document.querySelector('.ai-receipt-sync')),toasts:[...document.querySelectorAll('.toast-message')].map(n=>n.textContent)}));
+  const received=failed.task?.receipts?.every(r=>r.status==='received');
+  await page.getByRole('button',{name:'补写任务回执',exact:true}).click();
+  await page.locator('.toast-message.success').filter({hasText:'回执已补写'}).waitFor();
+  const recovered=await page.evaluate(()=>({task:window.__review.activeGenerationTask,pending:Boolean(document.querySelector('.ai-receipt-sync'))}));
+  const succeeded=recovered.task?.receipts?.every(r=>r.status==='succeeded');
+  return {passed:failed.pets===1&&failed.task?.stage==='committed'&&received&&failed.pending&&failed.toasts.some(t=>t?.includes('回执待同步'))&&!recovered.pending&&succeeded&&errors.length===0,failed,received,recovered,succeeded,errors};
  }finally{await context.close();}
 });
 await record('ai_stops_when_task_update_fails',async()=>{

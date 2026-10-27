@@ -354,6 +354,7 @@ function StudioApp() {
     inputSignature: string;
   } | null>(null);
   const [aiUncertain, setAiUncertain] = useState(false);
+  const [aiReceiptSyncPending, setAiReceiptSyncPending] = useState(false);
   const activeGenerationTaskRef = useRef<GenerationTask | null>(null);
   const aiCharacterUrlRef = useRef("");
   const aiCharacterImageRef = useRef("");
@@ -362,6 +363,7 @@ function StudioApp() {
     inputSignature: string;
     mode: "initial" | "regenerate";
     checkpoint: ReturnType<typeof createGenerationCheckpoint>;
+    attemptIds: string[];
   } | null>(null);
   const aiCancelRef = useRef<{ cancelled: boolean; committing: boolean } | null>(null);
   const aiCheckpointRef = useRef(createGenerationCheckpoint());
@@ -554,7 +556,7 @@ function StudioApp() {
     }
     aiCharacterUrlRef.current = "";
     aiCharacterImageRef.current = "";
-    aiCandidateRef.current = null;
+    void abandonCandidateReceipts();
     setAiCharacterReview(null);
     setAiSampleReview(null);
   }, [species, uploadUrl, referencePhoto, appearanceNotes]);
@@ -2541,6 +2543,28 @@ function StudioApp() {
     return JSON.stringify([uploadUrl, referencePhoto, species, appearanceNotes]);
   }
 
+  async function abandonCandidateReceipts() {
+    const candidate = aiCandidateRef.current;
+    aiCandidateRef.current = null;
+    if (!candidate?.attemptIds.length) return;
+    const task = activeGenerationTaskRef.current;
+    if (!task) return;
+    const receipts = task.receipts.map((receipt) =>
+      candidate.attemptIds.includes(receipt.attemptId)
+        ? { ...receipt, status: "abandoned" }
+        : receipt
+    );
+    try {
+      const updated = await updateGenerationTask(
+        { ...task, receipts },
+        task.revision
+      );
+      activeGenerationTaskRef.current = updated;
+    } catch {
+      // Keep the candidate receipts explicit as received; no success claim.
+    }
+  }
+
   async function recordRequestStart(attempt: { attemptId: string; action: string }) {
     const task = activeGenerationTaskRef.current;
     if (!task) throw new Error("当前制作任务已失效");
@@ -2560,6 +2584,10 @@ function StudioApp() {
       task.revision
     );
     activeGenerationTaskRef.current = updated;
+    const candidate = aiCandidateRef.current;
+    if (candidate && candidate.taskId === task.taskId) {
+      candidate.attemptIds.push(attempt.attemptId);
+    }
     await refreshGenerationTasks();
   }
 
@@ -2602,7 +2630,9 @@ function StudioApp() {
     return Boolean(
       task?.receipts.some(
         (receipt) =>
-          receipt.status !== "succeeded" && receipt.status !== "cancelled"
+          receipt.status !== "succeeded" &&
+          receipt.status !== "cancelled" &&
+          receipt.status !== "abandoned"
       )
     );
   }
@@ -2625,7 +2655,8 @@ function StudioApp() {
       taskId: active?.taskId ?? "",
       inputSignature: signature,
       mode,
-      checkpoint
+      checkpoint,
+      attemptIds: []
     };
     return { checkpoint, forceNewCharacter: mode === "regenerate" };
   }
@@ -2635,7 +2666,8 @@ function StudioApp() {
     if (existing) return existing;
     if (!referencePhoto) throw new Error("请先选择宠物照片");
     const digest = await sha256Hex(referencePhoto);
-    aiCandidateRef.current = null;
+    await abandonCandidateReceipts();
+    setAiReceiptSyncPending(false);
     const created = await createGenerationTask({
       schemaVersion: 1,
       taskId: crypto.randomUUID(),
@@ -2896,7 +2928,7 @@ function StudioApp() {
       showToast("照片或描述已变化，请重新生成并确认角色", "error");
       return;
     }
-    aiCandidateRef.current = null;
+    await abandonCandidateReceipts();
     setAiLog([]);
     setAiUncertain(false);
     const cancelToken = { cancelled: false, committing: false };
@@ -3014,7 +3046,13 @@ function StudioApp() {
       if (inputSignature !== aiInputSignature()) {
         throw new Error("照片或描述已变化，已丢弃本次动作结果，请重新生成角色");
       }
-      await markReceivedReceiptsSucceeded().catch(() => {});
+      let receiptSyncFailed = false;
+      try {
+        await markReceivedReceiptsSucceeded();
+      } catch {
+        receiptSyncFailed = true;
+        setAiReceiptSyncPending(true);
+      }
       generationTask = await advanceGenerationTask(generationTask, "readyToSave");
       cancelToken.committing = true;
       setAiCommitting(true);
@@ -3037,8 +3075,10 @@ function StudioApp() {
       } catch {
         showToast("伙伴已保存，但制作任务状态未能更新；桌面显示不受影响。", "info");
       }
-      await releaseGenerationTask(generationTask.taskId).catch(() => {});
-      activeGenerationTaskRef.current = null;
+      if (!receiptSyncFailed) {
+        await releaseGenerationTask(generationTask.taskId).catch(() => {});
+        activeGenerationTaskRef.current = null;
+      }
       await refreshGenerationTasks();
       aiCheckpointRef.current = createGenerationCheckpoint();
       aiCharacterUrlRef.current = "";
@@ -3047,6 +3087,12 @@ function StudioApp() {
       setAiSampleReview(null);
       setCanResumeAI(false);
       announceActivation(activation, `AI 宠物「${newPet.name}」制作完成并已入住桌面！`);
+      if (receiptSyncFailed) {
+        showToast(
+          "伙伴已保存，但制作任务回执待同步；补写只更新元数据，不会重新生成。",
+          "info"
+        );
+      }
       setCurrentTab("stage");
     } catch (err) {
       if (generationTask) {
@@ -3073,6 +3119,22 @@ function StudioApp() {
       setAiRunning(false);
       setAiCommitting(false);
       aiCancelRef.current = null;
+    }
+  }
+
+  async function handleSyncGenerationReceipts() {
+    try {
+      await markReceivedReceiptsSucceeded();
+      setAiReceiptSyncPending(false);
+      const task = activeGenerationTaskRef.current;
+      if (task) {
+        await releaseGenerationTask(task.taskId).catch(() => {});
+        activeGenerationTaskRef.current = null;
+      }
+      await refreshGenerationTasks();
+      showToast("制作任务回执已补写完成。", "success");
+    } catch (err) {
+      showToast(`回执补写失败，可稍后重试：${formatError(err)}`, "error");
     }
   }
 
@@ -3749,6 +3811,8 @@ function StudioApp() {
                   aiCharacterReview={aiCharacterReview}
                   aiSampleReview={aiSampleReview}
                   aiUncertain={aiUncertain}
+                  aiReceiptSyncPending={aiReceiptSyncPending}
+                  onSyncGenerationReceipts={handleSyncGenerationReceipts}
                   onConfirmAICharacter={handleConfirmAICharacter}
                   onConfirmAISample={handleConfirmAISample}
                   onRegenerateAICharacter={handleRegenerateAICharacter}

@@ -63,6 +63,8 @@ interface WorkshopProps {
     inputSignature: string;
   } | null;
   aiUncertain: boolean;
+  aiReceiptSyncPending: boolean;
+  onSyncGenerationReceipts: () => Promise<void> | void;
   onConfirmAICharacter: () => Promise<void> | void;
   onConfirmAISample: () => Promise<void> | void;
   onRegenerateAICharacter: () => Promise<void> | void;
@@ -123,6 +125,8 @@ export const Workshop: React.FC<WorkshopProps> = ({
   aiCharacterReview,
   aiSampleReview,
   aiUncertain,
+  aiReceiptSyncPending,
+  onSyncGenerationReceipts,
   onConfirmAICharacter,
   onConfirmAISample,
   onRegenerateAICharacter,
@@ -519,6 +523,22 @@ export const Workshop: React.FC<WorkshopProps> = ({
               <p className="ai-uncertain-note">
                 上次生成请求的结果尚未确认；继续重试可能新增一次生成请求。
               </p>
+            )}
+            {aiReceiptSyncPending && (
+              <div className="ai-receipt-sync">
+                <p>
+                  伙伴已保存，但制作任务回执待同步。补写只更新本地任务元数据，
+                  不会重新生成或重建伙伴。
+                </p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={busy}
+                  onClick={() => void onSyncGenerationReceipts()}
+                >
+                  补写任务回执
+                </button>
+              </div>
             )}
             {generationTasks.length > 0 && (
               <div className="generation-task-list">
