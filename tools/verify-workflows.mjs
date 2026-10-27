@@ -167,6 +167,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
     if(cmd==='release_generation_task')return null;
     if(cmd==='load_generation_task')return state.activeGenerationTask??null;
     if(cmd==='save_manual_frame_pack'){
+     if(state.failPackSave){state.failPackSave=false;throw new Error('mock pack save failed');}
      state.saves++;state.savedActions=args.request.actions;state.saving=true;
      if(state.manualSaveDelay)await new Promise(resolve=>setTimeout(resolve,state.manualSaveDelay));
      if(state.blockSave)await new Promise(resolve=>state.releaseSave=resolve);
@@ -1313,6 +1314,23 @@ await record('ai_receipt_sync_failure_keeps_saved_pet',async()=>{
   const recovered=await page.evaluate(()=>({task:window.__review.activeGenerationTask,pending:Boolean(document.querySelector('.ai-receipt-sync'))}));
   const succeeded=recovered.task?.receipts?.every(r=>r.status==='succeeded');
   return {passed:failed.pets===1&&failed.task?.stage==='committed'&&received&&failed.pending&&failed.toasts.some(t=>t?.includes('回执待同步'))&&!recovered.pending&&succeeded&&errors.length===0,failed,received,recovered,succeeded,errors};
+ }finally{await context.close();}
+});
+await record('ai_pack_save_failure_retries_without_generation',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  await openAI(page);
+  await generateCharacterReview(page);
+  await confirmAICharacter(page);
+  await page.evaluate(()=>{window.__review.failPackSave=true;});
+  await confirmAISample(page);
+  await page.locator('.toast-message.error').filter({hasText:'其余动作生成失败'}).waitFor();
+  const failed=await page.evaluate(()=>({generations:window.__review.generations,saves:window.__review.saves,review:Boolean(document.querySelector('.ai-sample-review'))}));
+  await confirmAISample(page);
+  await page.locator('.companion-title').waitFor({timeout:15000});
+  const retried=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length,task:window.__review.activeGenerationTask}));
+  const succeeded=retried.task?.receipts?.every(r=>r.status==='succeeded');
+  return {passed:failed.generations===7&&failed.saves===0&&failed.review&&retried.generations===7&&retried.saves===1&&retried.pets===1&&succeeded&&errors.length===0,failed,retried,succeeded,errors};
  }finally{await context.close();}
 });
 await record('ai_stops_when_task_update_fails',async()=>{
