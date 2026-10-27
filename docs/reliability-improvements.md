@@ -251,7 +251,8 @@
 - 回执收尾：整套帧包成功写入本地后，把 received 回执统一标记 succeeded；回归确认 7 次请求各有唯一 attemptId 且最终均为 succeeded。验证：145 项前端单元测试、134 个隔离浏览器流程。
 修复：候选回执记录 attemptId；确认旧角色或放弃候选时把这些回执标记 abandoned，落盘成功只升级实际使用版本的回执。成功回执写入失败不再静默：保留已保存伙伴和 committed 阶段，提示“任务回执待同步”，制作页提供只补写元数据的“补写任务回执”。验证：145 项前端单元测试、135 个隔离浏览器流程。修复 CI：[40465650977](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40465650977) 通过。
 提交/落盘故障：整套动作已生成但 `save_manual_frame_pack` 失败时，重试只重试落盘，不重新生成动作；伙伴只创建一次，回执最终全部 succeeded。验证：145 项前端单元测试、136 个隔离浏览器流程。CI：[40482107888](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40482107888) 通过。
-- 未完成：任务清理与引用检查。
+任务清理：新增 `delete_generation_task`，文件锁下校验 revision/owner，已提交任务或 committedPetId 拒绝删除；前端清理前再检查正式伙伴和最近移除引用，只删除该 taskId 的本地记录，不触碰伙伴/备份。制作任务列表提供“清除”，已提交任务无入口。验证：68 项 Rust 测试、145 项前端单元测试、137 个隔离浏览器流程。
+- 未完成：角色/动作媒体持久化与重启恢复（G02 遗留）、真实服务授权测试。G03 主链路与清理已收口，仍为部分完成。
 - 修复：重新生成角色使用独立候选 checkpoint 和候选 URL/图片；只有 `characterReview` 阶段写入成功后才替换展示版本和生成上下文。阶段写入失败时旧确认页、旧 checkpoint 和旧角色引用保持不变。新增故障回归断言 v1 展示版本、确认版本与 idle 请求引用一致。验证：145 项前端单元测试、131 个隔离浏览器流程。修复 CI：[40327213285](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40327213285) 通过。
 - 修复：同任务/同输入的角色候选工作缓存独立保留；首次生成取消或角色图上传失败后，重试复用已收到的角色结果，只补处理/上传/阶段写入，不重复生成请求。阶段写入失败后重试也复用候选；输入变化、新任务或确认旧版本时丢弃候选。新增取消后重试、上传失败重试、阶段失败重试三个回归。修复 CI：[40331437977](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40331437977) 通过。
 

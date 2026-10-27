@@ -52,6 +52,7 @@ interface WorkshopProps {
   onChangeAiConsent: (value: boolean) => void;
   generationTasks: GenerationTaskSummary[];
   onResumeGenerationTask: (taskId: string) => Promise<void> | void;
+  onDeleteGenerationTask: (entry: GenerationTaskSummary) => Promise<void> | void;
   aiCharacterReview: {
     image: string;
     reference: string;
@@ -122,6 +123,7 @@ export const Workshop: React.FC<WorkshopProps> = ({
   onChangeAiConsent,
   generationTasks,
   onResumeGenerationTask,
+  onDeleteGenerationTask,
   aiCharacterReview,
   aiSampleReview,
   aiUncertain,
@@ -557,14 +559,26 @@ export const Workshop: React.FC<WorkshopProps> = ({
                         {formatGenerationTime(entry.updatedAt)}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      disabled={busy}
-                      onClick={() => void onResumeGenerationTask(entry.taskId)}
-                    >
-                      继续
-                    </button>
+                    <div className="generation-task-actions">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={busy}
+                        onClick={() => void onResumeGenerationTask(entry.taskId)}
+                      >
+                        继续
+                      </button>
+                      {!entry.committedPetId && entry.stage !== "committed" && entry.stage !== "committing" && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={busy}
+                          onClick={() => void onDeleteGenerationTask(entry)}
+                        >
+                          清除
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

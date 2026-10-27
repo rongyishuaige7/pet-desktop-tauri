@@ -104,7 +104,8 @@
 - 整套帧包落盘后将 received 回执标记 succeeded；7 次请求均有唯一 attemptId。验证：145 项前端单元测试、134 个隔离浏览器流程。
 - 候选回执按 attemptId 标记 abandoned，确认旧角色不会把 v2 回执标成 succeeded；成功回执写入失败保留伙伴、提示回执待同步并提供只补写元数据入口。验证：145 项前端单元测试、135 个隔离浏览器流程。修复 CI：[40465650977](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40465650977) 通过。
 整套动作已生成但帧包落盘失败时，重试只重试落盘，不重新生成动作；伙伴只创建一次。验证：145 项前端单元测试、136 个隔离浏览器流程。CI：[40482107888](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40482107888) 通过。
-- 未完成：任务清理与引用检查。
+任务清理：`delete_generation_task` 在文件锁下校验 revision/owner，已提交任务拒绝；前端检查正式伙伴/最近移除引用后只删除该任务本地记录，不触碰伙伴。已提交任务无清除入口。验证：68 项 Rust、145 项前端单元测试、137 个隔离浏览器流程。
+- 未完成：角色/动作媒体持久化与重启恢复（G02 遗留）、真实服务授权测试。
 - 修复：角色重生成使用候选 checkpoint；阶段写入成功后才替换确认页/上下文，失败保留旧版本。验证：145 项前端单元测试、132 个隔离浏览器流程。修复 CI：[40327213285](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40327213285) 通过。角色候选缓存按任务/输入保留，取消、上传失败或阶段失败重试不重复生成；输入变化/新任务/确认旧版本时丢弃。修复 CI：[40331437977](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40331437977) 通过。CI：[40321569799](https://github.com/rongyishuaige7/pet-desktop-tauri/actions/runs/40321569799) 通过。
 
 ## v0.5 G02 当前记录（2026-10-26，部分）

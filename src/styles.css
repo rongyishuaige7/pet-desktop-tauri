@@ -848,6 +848,12 @@ button {
   font-size: 12px;
 }
 
+.generation-task-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .generation-task-row span {
   color: var(--text-tertiary);
   font-size: 11px;

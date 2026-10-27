@@ -72,6 +72,7 @@ pub struct TaskSummary {
     pub pending_pet_id: String,
     pub species: String,
     pub completed_actions: usize,
+    pub committed_pet_id: Option<String>,
     pub updated_at: String,
 }
 
@@ -246,6 +247,7 @@ pub fn list_tasks(root: &Path) -> Result<Vec<TaskSummary>, String> {
                 pending_pet_id: task.pending_pet_id,
                 species: task.species,
                 completed_actions,
+                committed_pet_id: task.committed_pet_id,
                 updated_at: task.updated_at,
             });
         }
@@ -319,6 +321,31 @@ pub fn claim_task(
         status: "claimed".into(),
         task,
     })
+}
+
+pub fn delete_task(
+    root: &Path,
+    task_id: &str,
+    expected_revision: u64,
+    owner_session: &str,
+) -> Result<(), String> {
+    let _guard = TASK_LOCK.lock().map_err(|_| "任务锁不可用")?;
+    let _file_lock = acquire_store_lock(root)?;
+    let task = read_task(root, task_id)?;
+    if task.revision != expected_revision {
+        return Err("TASK_CONFLICT：任务已被其他窗口更新".into());
+    }
+    if let Some(owner) = task.owner_session.as_deref() {
+        if owner != owner_session {
+            return Err("TASK_OWNER：当前窗口没有执行权".into());
+        }
+    }
+    if task.committed_pet_id.is_some() || task.stage == "committed" {
+        return Err("TASK_COMMITTED：已提交任务不清理，避免影响正式伙伴".into());
+    }
+    let dir = task_dir(root, task_id)?;
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("清理任务失败：{err}"))?;
+    Ok(())
 }
 
 pub fn release_task(root: &Path, task_id: &str, owner_session: &str) -> Result<(), String> {
@@ -452,6 +479,27 @@ mod tests {
         assert!(second.try_lock_exclusive().is_err());
         drop(first);
         assert!(second.try_lock_exclusive().is_ok());
+    }
+
+    #[test]
+    fn delete_requires_revision_owner_and_refuses_committed_tasks() {
+        let root = tempfile::tempdir().unwrap();
+        create_task(root.path(), task("task-1")).unwrap();
+        claim_task(root.path(), "task-1", "session-a", false).unwrap();
+        let claimed = load_task(root.path(), "task-1").unwrap();
+        assert!(delete_task(root.path(), "task-1", 1, "session-a").is_err());
+        assert!(delete_task(root.path(), "task-1", claimed.revision, "session-b").is_err());
+        delete_task(root.path(), "task-1", claimed.revision, "session-a").unwrap();
+        assert!(!task_dir(root.path(), "task-1").unwrap().exists());
+
+        let mut committed = task("task-2");
+        committed.committed_pet_id = Some("pet-1".into());
+        create_task(root.path(), committed).unwrap();
+        let committed = load_task(root.path(), "task-2").unwrap();
+        assert!(delete_task(root.path(), "task-2", committed.revision, "session-a")
+            .unwrap_err()
+            .contains("TASK_COMMITTED"));
+        assert!(task_file(root.path(), "task-2").unwrap().is_file());
     }
 
     #[test]

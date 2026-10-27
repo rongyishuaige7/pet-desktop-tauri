@@ -423,6 +423,21 @@ async fn release_generation_task(
 }
 
 #[tauri::command]
+async fn delete_generation_task(
+    app: tauri::AppHandle,
+    task_id: String,
+    expected_revision: u64,
+    owner_session: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = generation_tasks_root(&app)?;
+        generation_tasks::delete_task(&root, &task_id, expected_revision, &owner_session)
+    })
+    .await
+    .map_err(|err| format!("清理生成任务失败：{err}"))?
+}
+
+#[tauri::command]
 async fn export_pet_package(
     parent_dir: String,
     name: String,
@@ -663,6 +678,7 @@ pub fn run() {
             update_generation_task,
             claim_generation_task,
             release_generation_task,
+            delete_generation_task,
             export_pet_package,
             inspect_pet_package,
             import_pet_package,

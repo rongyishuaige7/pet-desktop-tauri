@@ -40,6 +40,7 @@ export interface GenerationTaskSummary {
   pendingPetId: string;
   species: "cat" | "dog";
   completedActions: number;
+  committedPetId: string | null;
   updatedAt: string;
 }
 
@@ -88,6 +89,14 @@ export function claimGenerationTask(taskId: string, resume = false) {
 export function releaseGenerationTask(taskId: string) {
   return invoke("release_generation_task", {
     taskId,
+    ownerSession: generationSessionId
+  });
+}
+
+export function deleteGenerationTask(taskId: string, expectedRevision: number) {
+  return invoke("delete_generation_task", {
+    taskId,
+    expectedRevision,
     ownerSession: generationSessionId
   });
 }

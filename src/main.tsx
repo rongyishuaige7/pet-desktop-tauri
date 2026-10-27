@@ -21,8 +21,10 @@ import {
   GENERATION_STAGE_LABELS,
   claimGenerationTask,
   createGenerationTask,
+  deleteGenerationTask,
   generationSessionId,
   listGenerationTasks,
+  loadGenerationTask,
   releaseGenerationTask,
   updateGenerationTask,
   type GenerationTask,
@@ -2709,6 +2711,33 @@ function StudioApp() {
     return updated;
   }
 
+  async function handleDeleteGenerationTask(entry: GenerationTaskSummary) {
+    if (
+      !window.confirm(
+        "清除这条本机制作任务？只会删除该任务的本地记录，不会删除已保存伙伴或最近的移除记录。"
+      )
+    ) {
+      return;
+    }
+    try {
+      const task = await loadGenerationTask(entry.taskId);
+      if (task.committedPetId || task.stage === "committed") {
+        showToast("已提交的任务不清理，避免影响正式伙伴。", "info");
+        return;
+      }
+      const [pets, removed] = await Promise.all([loadAllPets(), loadRemovedPets()]);
+      if ([...pets, ...removed].some((pet) => pet.id === task.pendingPetId)) {
+        showToast("该任务仍被伙伴或最近移除记录引用，保留本地文件。", "info");
+        return;
+      }
+      await deleteGenerationTask(task.taskId, task.revision);
+      await refreshGenerationTasks();
+      showToast("已清除这条本机制作任务。", "success");
+    } catch (err) {
+      showToast(`清除制作任务失败：${formatError(err)}`, "error");
+    }
+  }
+
   async function handleResumeGenerationTask(taskId: string) {
     try {
       const claimed = await claimGenerationTask(taskId, true);
@@ -3808,6 +3837,7 @@ function StudioApp() {
                   onChangeAiConsent={setAiConsent}
                   generationTasks={generationTasks}
                   onResumeGenerationTask={handleResumeGenerationTask}
+                  onDeleteGenerationTask={handleDeleteGenerationTask}
                   aiCharacterReview={aiCharacterReview}
                   aiSampleReview={aiSampleReview}
                   aiUncertain={aiUncertain}

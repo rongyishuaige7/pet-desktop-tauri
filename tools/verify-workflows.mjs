@@ -165,6 +165,7 @@ async function newCase({desktop=false,settingsAction='idle',missing=false,packDe
      state.activeGenerationTask=task;return task;
     }
     if(cmd==='release_generation_task')return null;
+    if(cmd==='delete_generation_task'){state.generationTasks=(state.generationTasks??[]).filter(t=>t.taskId!==args.taskId);state.activeGenerationTask=null;return null;}
     if(cmd==='load_generation_task')return state.activeGenerationTask??null;
     if(cmd==='save_manual_frame_pack'){
      if(state.failPackSave){state.failPackSave=false;throw new Error('mock pack save failed');}
@@ -1331,6 +1332,28 @@ await record('ai_pack_save_failure_retries_without_generation',async()=>{
   const retried=await page.evaluate(async()=>({generations:window.__review.generations,saves:window.__review.saves,pets:(await (await import('/src/storage.ts')).loadAllPets()).length,task:window.__review.activeGenerationTask}));
   const succeeded=retried.task?.receipts?.every(r=>r.status==='succeeded');
   return {passed:failed.generations===7&&failed.saves===0&&failed.review&&retried.generations===7&&retried.saves===1&&retried.pets===1&&succeeded&&errors.length===0,failed,retried,succeeded,errors};
+ }finally{await context.close();}
+});
+await record('generation_task_cleanup_checks_references',async()=>{
+ const {context,page,errors}=await newCase({desktop:true});
+ try{
+  const task={taskId:'task-clean',revision:2,stage:'failed',pendingPetId:'pending-clean',species:'cat',completedActions:0,committedPetId:null,updatedAt:'2026-10-27T00:00:00Z'};
+  await page.evaluate((task)=>{window.__review.generationTasks=[task];window.__review.activeGenerationTask={...task,schemaVersion:1,ownerSession:null,photoDigest:'d',appearanceNotes:'',promptVersion:'v1',characterRevision:0,confirmedCharacterRevision:null,actions:{},receipts:[],createdAt:'2026-10-27T00:00:00Z'};},task);
+  await openWorkshopTask(page,'用照片制作');
+  await page.waitForTimeout(800);
+  const debug=await page.evaluate(()=>({body:document.body.innerText.slice(0,500),calls:window.__review.calls.filter(c=>c.cmd==='list_generation_tasks').length,tasks:window.__review.generationTasks}));
+  if(!(await page.locator('.generation-task-list').count())) return {passed:false,debug,errors};
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'清除',exact:true}).click();
+  await page.locator('.toast-message.success').filter({hasText:'已清除'}).waitFor();
+  const deleted=await page.evaluate(()=>({tasks:window.__review.generationTasks,calls:window.__review.calls.filter(c=>c.cmd==='delete_generation_task').map(c=>c.taskId)}));
+  const committed={...task,taskId:'task-committed',stage:'committed',committedPetId:'pet-1'};
+  await page.evaluate((task)=>{window.__review.generationTasks=[task];window.__review.activeGenerationTask={...task,schemaVersion:1,ownerSession:null,photoDigest:'d',appearanceNotes:'',promptVersion:'v1',characterRevision:1,confirmedCharacterRevision:1,actions:{},receipts:[],createdAt:'2026-10-27T00:00:00Z'};},committed);
+  await page.getByRole('button',{name:'陪伴',exact:true}).click();
+  await openWorkshopTask(page,'用照片制作');
+  await page.locator('.generation-task-list').waitFor();
+  const clearButtons=await page.getByRole('button',{name:'清除',exact:true}).count();
+  return {passed:deleted.tasks.length===0&&deleted.calls[0]==='task-clean'&&clearButtons===0&&errors.length===0,deleted,clearButtons,errors};
  }finally{await context.close();}
 });
 await record('ai_stops_when_task_update_fails',async()=>{
