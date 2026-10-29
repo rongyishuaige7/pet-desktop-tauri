@@ -123,7 +123,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
             {pet ? `今天，${pet.name}陪着你` : "这里暂时没有伙伴"}
           </h1>
           <p className="companion-subtitle">
-            {pet ? "留一点空间，给一位小伙伴。" : "可以领养咕唧，也可以带回你已经制作好的伙伴。"}
+            {pet ? "留一点空间，给一位小伙伴。" : "可以领养奶蛙，也可以带回你已经制作好的伙伴。"}
           </p>
         </div>
         <div className="companion-head-status">
@@ -368,7 +368,7 @@ export const CompanionPage: React.FC<CompanionPageProps> = ({
         <section className="card companion-empty">
           <span className="companion-empty-icon" aria-hidden="true">🌱</span>
           <h2>为今天添一位小伙伴</h2>
-          <p>可以领养咕唧，也可以带回你已经制作好的伙伴。</p>
+          <p>可以领养奶蛙，也可以带回你已经制作好的伙伴。</p>
           <div className="companion-empty-actions">
             <button type="button" className="btn-primary" onClick={onStartAdoption}>
               去领养

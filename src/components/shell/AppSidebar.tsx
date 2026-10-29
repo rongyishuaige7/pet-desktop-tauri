@@ -7,7 +7,6 @@ interface AppSidebarProps {
   activePet: PetProfile | null;
   petCount: number;
   status: string;
-  webMode: boolean;
   onOpenSettings: () => void;
 }
 
@@ -17,7 +16,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   activePet,
   petCount,
   status,
-  webMode,
   onOpenSettings
 }) => {
   return (
@@ -94,7 +92,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </div>
             <div className="widget-details">
               <span className="widget-name">{activePet.name}</span>
-              <span className="widget-status">{webMode ? `网页演示 · ${status}` : status}</span>
+              <span className="widget-status">{status}</span>
             </div>
           </div>
         ) : (
@@ -103,7 +101,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             <div className="widget-details">
               <span className="widget-name">等待入住</span>
               <span className="widget-status" style={{ color: "var(--text-tertiary)" }}>
-                {webMode ? "网页演示" : status}
+                {status}
               </span>
             </div>
           </div>

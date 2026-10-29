@@ -25,7 +25,7 @@ const TASKS: Array<{
     task: "presets",
     icon: "🐾",
     title: "领养现成伙伴",
-    description: "从咕唧开始，选一位现成伙伴并完成见面。"
+    description: "从奶蛙开始，选一位现成伙伴并完成见面。"
   },
   {
     task: "import",

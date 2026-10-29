@@ -6,8 +6,8 @@ export type AdoptionPhase = "draft" | "prepared" | "committed";
 
 export const ONBOARDING_KEY = "onboarding_v1";
 export const ONBOARDING_VERSION = 1;
-export const DEFAULT_PET_NAME = "咕唧";
-export const BUILTIN_PRESET_ID = "guji";
+export const DEFAULT_PET_NAME = "奶蛙";
+export const BUILTIN_PRESET_ID = "naiwa";
 export const MAX_PET_NAME_LENGTH = 20;
 
 export interface OnboardingRecord {
@@ -205,7 +205,7 @@ export function prepareAdoption(
 ): AdoptionPlan {
   const trimmed = name.trim().slice(0, MAX_PET_NAME_LENGTH);
   if (!trimmed) {
-    throw new Error("给伙伴起个名字，或直接使用咕唧");
+    throw new Error("给伙伴起个名字，或直接使用奶蛙");
   }
   const adoptionId = record.adoptionId ?? idFactory();
   const pendingPetId = record.pendingPetId ?? idFactory();

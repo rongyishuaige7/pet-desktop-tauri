@@ -47,7 +47,7 @@ describe("onboarding records", () => {
     expect(record?.adoptionId).toBe("adoption-a");
     expect(record?.pendingPetId).toBeNull();
     expect(record?.phase).toBeNull();
-    expect(record?.presetId).toBe("guji");
+    expect(record?.presetId).toBe("naiwa");
   });
 });
 

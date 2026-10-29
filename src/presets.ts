@@ -13,12 +13,16 @@ export interface BuiltinPreset {
 /**
  * The first release ships one complete role. New roles join this static list
  * only after their frames and action coverage are reviewed.
+ *
+ * `species` stays "dog" for the built-in role: the profile schema predates any
+ * non-cat/dog character, and every surface that shows a species treats the
+ * bundled pack as “原创伙伴” instead of naming an animal.
  */
 export const BUILTIN_PRESETS: BuiltinPreset[] = [
   {
-    id: "guji",
-    name: "咕唧",
-    description: "一个安静陪着你的桌面伙伴。圆圆的肚子，有一点好奇，也喜欢收到摸摸。",
+    id: "naiwa",
+    name: "奶蛙",
+    description: "夜市摊上的小奶蛙，也想陪你上班。圆眼睛、奶油肚皮，最喜欢被摸摸头。",
     frameRoot: DEFAULT_PRESET_FRAME_DIR,
     species: "dog",
     thumbnail: "/frame-pack/idle/000.png"

@@ -56,6 +56,14 @@ function closeMenu(event: React.MouseEvent<HTMLElement>) {
   event.currentTarget.closest("details")?.removeAttribute("open");
 }
 
+
+/** The shipped role may be stored with either the relative or the resolved absolute root. */
+function isBuiltinCompanion(pet: PetProfile) {
+  if (pet.species !== "dog" || pet.storageMode !== "preset-root") return false;
+  const root = pet.frameRoot?.replace(/\/+$/, "") ?? "";
+  return root === DEFAULT_PRESET_FRAME_DIR || root.endsWith("/frame-pack");
+}
+
 export const PetShelf: React.FC<PetShelfProps> = ({
   pets,
   activePetId,
@@ -218,7 +226,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
           <span style={{ fontSize: "40px" }}>🌱</span>
           <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>这里暂时没有伙伴</p>
           <p style={{ color: "var(--text-tertiary)", fontSize: "12px" }}>
-            可以领养咕唧，也可以带回你已经制作好的伙伴。
+            可以领养奶蛙，也可以带回你已经制作好的伙伴。
           </p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}>
             <button type="button" className="btn-primary" onClick={onStartAdoption}>
@@ -377,7 +385,7 @@ export const PetShelf: React.FC<PetShelfProps> = ({
                       </button>
                     </div>
                     <span className="pet-card-species">
-                      {pet.frameRoot === DEFAULT_PRESET_FRAME_DIR && pet.species === "dog"
+                      {isBuiltinCompanion(pet)
                         ? "原创伙伴"
                         : pet.species === "cat"
                           ? "小猫"

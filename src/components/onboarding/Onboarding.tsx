@@ -128,9 +128,9 @@ export const Onboarding: React.FC<OnboardingProps> = ({
               {steps}
               <h2 id="onboarding-title">给今天添一点陪伴</h2>
               <p id="onboarding-description" className="onboarding-lead">
-                咕唧已经准备好了。选个名字，就可以把它带到桌面。
+                奶蛙已经在摊子后头等你。选个名字，就可以把它带到桌面。
               </p>
-              <img className="onboarding-portrait" src={DEFAULT_PRESET.thumbnail} alt="原创伙伴咕唧" />
+              <img className="onboarding-portrait" src={DEFAULT_PRESET.thumbnail} alt="原创伙伴奶蛙" />
               <p className="onboarding-hint">使用内置伙伴，无需照片和在线生成服务。</p>
               <div className="onboarding-actions">
                 <button type="button" className="btn-secondary" onClick={onBrowse} disabled={busy}>
@@ -176,12 +176,12 @@ export const Onboarding: React.FC<OnboardingProps> = ({
               </p>
               {!trimmed && (
                 <p className="onboarding-field-error" role="alert">
-                  给伙伴起个名字，或直接使用咕唧
+                  给伙伴起个名字，或直接使用奶蛙
                 </p>
               )}
               <div className="onboarding-actions">
                 <button type="button" className="btn-secondary" onClick={onUseDefault} disabled={busy || starting}>
-                  直接使用咕唧
+                  直接使用奶蛙
                 </button>
                 <button
                   type="button"

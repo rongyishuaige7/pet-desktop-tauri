@@ -1505,7 +1505,7 @@ function StudioApp() {
     if (!base) return;
     const name = (nameOverride ?? base.draftName).trim();
     if (!name) {
-      setOnboardingError("给伙伴起个名字，或直接使用咕唧");
+      setOnboardingError("给伙伴起个名字，或直接使用奶蛙");
       return;
     }
 
@@ -2241,7 +2241,7 @@ function StudioApp() {
           return;
         }
         const newPet = createManualPet({
-          name: name.trim() || "咕唧 (萌宠小怪兽)",
+          name: name.trim() || "奶蛙",
           species,
           sourceImage: loadedActions.idle[0],
           manualFrames: loadedActions,
@@ -3687,7 +3687,6 @@ function StudioApp() {
         activePet={activePet}
         petCount={pets.length}
         status={companionStatus}
-        webMode={!isTauri}
         onOpenSettings={handleOpenSettings}
       />
 

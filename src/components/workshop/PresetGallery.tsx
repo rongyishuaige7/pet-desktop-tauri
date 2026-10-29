@@ -42,7 +42,7 @@ export const PresetGallery: React.FC<PresetGalleryProps> = ({
             <p>{preset.description}</p>
             <div className="preset-actions">
               <button type="button" className="btn-primary" onClick={onAdopt}>
-                {activePet ? "再领养一只" : "领养咕唧"}
+                {activePet ? "再领养一只" : "领养奶蛙"}
               </button>
               {activePet && (
                 <button type="button" className="btn-secondary" onClick={onViewCompanion}>
